@@ -97,14 +97,9 @@ final class SetupState {
 
     func refreshPacks() async {
         let availability = LanguageAvailability()
-        for direction in Direction.allCases where packs[direction] != .busy {
+        for direction in Direction.allCases where AppRules.packRefreshable(light: (packs[direction] ?? .unknown).light) {
             let status = await availability.status(from: direction.source.language, to: direction.target.language)
-            switch status {
-            case .installed: packs[direction] = .ok
-            case .supported: packs[direction] = .unknown
-            case .unsupported: packs[direction] = .bad
-            @unknown default: packs[direction] = .unknown
-            }
+            packs[direction] = Check(light: AppRules.packLight(status: AppleTranslator.availabilityCode(status)))
         }
     }
 
@@ -271,10 +266,13 @@ struct SetupWizardView: View {
                 .foregroundStyle(.secondary)
             StepRow(icon: "mic", title: "Микрофон", detail: "Слушать вашу русскую речь.",
                     check: check(state.mic)) {
-                if state.mic == .denied {
+                switch AppRules.permissionAction(state: state.mic.code) {
+                case AppRules.PA_OPEN_SETTINGS:
                     Button("Открыть настройки") { Permissions.openPrivacySettings("Privacy_Microphone") }
-                } else if state.mic != .granted {
+                case AppRules.PA_REQUEST:
                     Button("Разрешить") { Task { state.mic = await Permissions.requestMicrophone() } }
+                default:
+                    EmptyView()
                 }
             }
             StepRow(icon: "speaker.wave.2", title: "Запись звука программ",
@@ -282,21 +280,24 @@ struct SetupWizardView: View {
                     check: state.capture) {
                 Button("Проверить") { Task { await state.checkCapture() } }
                     .disabled(state.capture == .busy)
-                if state.capture == .bad || state.capture == .warn {
+                if AppRules.captureNeedsSettings(light: state.capture.light) {
                     Button("Открыть настройки") { Permissions.openPrivacySettings("Privacy_ScreenCapture") }
                 }
             }
             StepRow(icon: "waveform", title: "Распознавание речи", detail: "Превращать речь в текст на этом Маке.",
                     check: check(state.speech)) {
-                if state.speech == .denied {
+                switch AppRules.permissionAction(state: state.speech.code) {
+                case AppRules.PA_OPEN_SETTINGS:
                     Button("Открыть настройки") { Permissions.openPrivacySettings("Privacy_SpeechRecognition") }
-                } else if state.speech != .granted {
+                case AppRules.PA_REQUEST:
                     Button("Разрешить") { Task { state.speech = await Permissions.requestSpeech() } }
+                default:
+                    EmptyView()
                 }
             }
             StepRow(icon: "keyboard", title: "Универсальный доступ (необязательно)",
                     detail: "Чтобы клавиша push-to-talk работала, когда активно окно звонка.",
-                    check: model.accessibilityGranted ? .ok : .unknown) {
+                    check: Check(light: AppRules.accessibilityLight(granted: model.accessibilityGranted))) {
                 if !model.accessibilityGranted {
                     Button("Разрешить…") { model.requestAccessibility() }
                 }
@@ -342,7 +343,7 @@ struct SetupWizardView: View {
                         detail: state.packErrors[direction] ?? (state.packs[direction] == .ok ? "Установлен." : "Нужно скачать."),
                         check: state.packs[direction] ?? .unknown) {
                     Button("Скачать") { state.downloadPack(direction) }
-                        .disabled(state.packs[direction] == .busy || state.packs[direction] == .ok)
+                        .disabled(!AppRules.packDownloadEnabled(light: (state.packs[direction] ?? .unknown).light))
                 }
             }
             Button("Проверить снова") { Task { await state.refreshPacks() } }
@@ -462,11 +463,7 @@ struct SetupWizardView: View {
     }
 
     private func check(_ permission: PermissionState) -> Check {
-        switch permission {
-        case .granted: .ok
-        case .denied: .bad
-        default: .unknown
-        }
+        Check(light: AppRules.permissionLight(state: permission.code))
     }
 }
 
@@ -478,7 +475,7 @@ private final class CaptureMeter: @unchecked Sendable {
 
     func add(_ buffer: AVAudioPCMBuffer) {
         let (rms, peak) = buffer.laneLevels
-        let heard = AudioRules.levelCode(peak: peak, rms: rms) != AudioRules.levelDigitalSilence
+        let heard = AudioRules.hasSignal(peak: peak, rms: rms)
         lock.withLock {
             frames += Int(buffer.frameLength)
             signal = signal || heard

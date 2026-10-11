@@ -11,6 +11,16 @@ import PonteSpeech
 enum Check: Equatable {
     case unknown, ok, bad, busy, warn
 
+    var light: Int32 {
+        switch self {
+        case .unknown: AppRules.LIGHT_UNKNOWN
+        case .ok: AppRules.LIGHT_OK
+        case .bad: AppRules.LIGHT_BAD
+        case .busy: AppRules.LIGHT_BUSY
+        case .warn: AppRules.LIGHT_WARN
+        }
+    }
+
     init(light: Int32) {
         switch light {
         case AppRules.LIGHT_OK: self = .ok
@@ -53,7 +63,18 @@ enum WizardStep: Int, CaseIterable, Identifiable {
 }
 
 struct Banner: Identifiable, Equatable {
-    enum Kind { case error, warning, info }
+    enum Kind {
+        case error, warning, info
+
+        /// AppRules.BK_* (BK_NONE never makes a banner; it reads as info).
+        init(code: Int32) {
+            switch code {
+            case AppRules.BK_ERROR: self = .error
+            case AppRules.BK_WARNING: self = .warning
+            default: self = .info
+            }
+        }
+    }
     enum Action: Equatable {
         case openWizard(WizardStep)
         case reveal(URL)
@@ -200,19 +221,23 @@ final class AppModel {
     init(launch: LaunchOptions = .current) {
         self.launch = launch
         let d = UserDefaults.standard
-        sourceKey = d.string(forKey: PrefKey.source) ?? "system"
+        sourceKey = d.string(forKey: PrefKey.source) ?? AppRules.SOURCE_SYSTEM_KEY
         micUID = d.string(forKey: PrefKey.micUID) ?? ""
         headphonesUID = d.string(forKey: PrefKey.headphonesUID) ?? ""
         callOutputUID = d.string(forKey: PrefKey.callOutputUID) ?? ""
         voicePT = d.string(forKey: PrefKey.voicePT) ?? ""
         voiceRU = d.string(forKey: PrefKey.voiceRU) ?? ""
-        speakRussian = d.bool(forKey: PrefKey.speakRussian)
-        translatorKind = TranslatorKind(rawValue: d.string(forKey: PrefKey.translator) ?? "") ?? .apple
+        speakRussian = d.object(forKey: PrefKey.speakRussian) == nil ? AppRules.DEFAULT_SPEAK_RUSSIAN
+            : d.bool(forKey: PrefKey.speakRussian)
+        translatorKind = TranslatorKind(rawValue: d.string(forKey: PrefKey.translator) ?? "")
+            ?? TranslatorKind(ruleCode: AppRules.DEFAULT_TRANSLATOR)
         glossary = GlossaryTerm.decode(d.string(forKey: PrefKey.glossary) ?? "[]")
-        outgoingMode = CaptureMode(rawValue: d.string(forKey: PrefKey.outgoingMode) ?? "") ?? .continuous
-        pttKey = PTTKey(rawValue: d.string(forKey: PrefKey.pttKey) ?? "") ?? .rightOption
+        outgoingMode = CaptureMode(rawValue: d.string(forKey: PrefKey.outgoingMode) ?? "")
+            ?? CaptureMode(ruleCode: AppRules.DEFAULT_MODE)
+        pttKey = PTTKey(rawValue: d.string(forKey: PrefKey.pttKey) ?? "") ?? PTTKey(ruleCode: AppRules.DEFAULT_PTT_KEY)
         fontSize = Double(AppRules.translationFontSize(stored: Int32(d.integer(forKey: PrefKey.fontSize))))
-        overlayVisible = d.bool(forKey: PrefKey.overlayVisible)
+        overlayVisible = d.object(forKey: PrefKey.overlayVisible) == nil ? AppRules.DEFAULT_OVERLAY_VISIBLE
+            : d.bool(forKey: PrefKey.overlayVisible)
         setupCompleted = d.bool(forKey: PrefKey.setupCompleted)
         // Launch arguments for demos, screenshots and end-to-end checks (LaunchOptions):
         //   open dist/Ponte.app --args -PonteWizardStep 3 -PonteAutostart YES
@@ -278,41 +303,47 @@ final class AppModel {
     var outgoingLines: [ConversationLine] { lines.filter { $0.direction == .outgoing } }
     var micDevice: AudioDevice? { devices.first { $0.uid == micUID && $0.inputChannels > 0 } }
     var headphonesDevice: AudioDevice? { devices.first { $0.uid == headphonesUID && $0.outputChannels > 0 } }
-    var inputDevices: [AudioDevice] { devices.filter { $0.inputChannels > 0 && !$0.isVirtualMic } }
+    var inputDevices: [AudioDevice] { devices.filter { $0.inputChannels > 0 && !AudioRules.isBlackHole(name: $0.name) } }
     var outputDevices: [AudioDevice] { devices.filter { $0.outputChannels > 0 } }
 
     /// Where the user hears things: chosen headphones or the system output.
     var listeningDevice: AudioDevice? { headphonesDevice ?? defaultOutput }
 
     private func refreshSpeakerWarning() {
-        speakerWarning = listeningDevice.map { deviceCatalog.echoRisk(of: $0) == AudioRules.echoSpeaker } ?? false
+        speakerWarning = listeningDevice.map { AudioRules.needsHeadphones(kind: deviceCatalog.kind(of: $0)) } ?? false
     }
 
     var source: SourceChoice { SourceChoice(key: sourceKey) }
 
     var sourceTitle: String {
-        switch source {
-        case .system: return "Весь звук Мака"
-        case .app(let id):
-            return audioApps.first { $0.bundleID == id }?.name ?? AudioApp.knownCallApps[id] ?? id
+        var id = ""
+        if case .app(let bundleID) = source { id = bundleID }
+        let running = audioApps.first { $0.bundleID == id }?.name
+        let label = AudioApp.knownCallApps[id]
+        switch AppRules.sourceTitle(isSystem: source == .system, hasRunningName: running != nil, hasLabel: label != nil) {
+        case AppRules.TITLE_SYSTEM: return "Весь звук Мака"
+        case AppRules.TITLE_RUNNING: return running ?? id
+        case AppRules.TITLE_LABEL: return label ?? id
+        default: return id
         }
     }
 
     /// Tooltip of «Звук источника».
     var sourceHelp: String {
-        guard isRunning else { return "Идёт ли звук из выбранной программы" }
-        switch sourceTapStatus {
-        case AppRules.TAP_WAITING:
+        switch AppRules.sourceHelp(runState: runState.code, tapStatus: sourceTapStatus, sourceLight: sourceCheck.light) {
+        case AppRules.HELP_IDLE:
+            return "Идёт ли звук из выбранной программы"
+        case AppRules.HELP_WAITING:
             return "Ждём звук: «\(activeSourceName ?? "")» ещё не выводит звук. Ponte подключится сам, когда начнётся звонок."
-        case AppRules.TAP_FAILED:
+        case AppRules.HELP_FAILED:
             return "Не удалось подключиться к звуку: \(sourceTapDetail ?? "")"
-        case AppRules.TAP_NONE:
+        case AppRules.HELP_FILE:
             return "Тестовый режим: звук из файла \(launch.incomingFile?.lastPathComponent ?? "")"
+        case AppRules.HELP_SILENCE:
+            return Self.silenceText(activeSourceName)
         default:
-            break
+            return "Звук из «\(activeSourceName ?? "")» идёт"
         }
-        if sourceCheck == .warn { return Self.silenceText(activeSourceName) }
-        return "Звук из «\(activeSourceName ?? "")» идёт"
     }
 
     static func silenceText(_ name: String?) -> String {
@@ -323,8 +354,8 @@ final class AppModel {
     var blackHoleCheck: Check { Check(light: AppRules.blackHoleLight(found: blackHoleDevice != nil)) }
 
     var modelsCheck: Check {
-        Check(light: AppRules.modelsLight(runState: runState.code, everStarted: everStarted,
-                                          lanesStarted: lanesStarted, lanesFailed: lanesFailed + translatorsFailed))
+        Check(light: AppRules.modelsLightAll(runState: runState.code, everStarted: everStarted, lanesStarted: lanesStarted,
+                                             lanesFailed: lanesFailed, translatorsFailed: translatorsFailed))
     }
 
     /// AppRules.LAT_* for the last phrase.
@@ -377,10 +408,10 @@ final class AppModel {
         devices = deviceCatalog.devices()
         defaultOutput = deviceCatalog.defaultOutput()
         audioApps = appCatalog.apps()
-        if !callOutputUID.isEmpty, let chosen = devices.first(where: { $0.uid == callOutputUID }) {
-            blackHoleDevice = chosen
-        } else {
-            blackHoleDevice = BlackHoleCheck.find(in: deviceCatalog)
+        let chosen = devices.first { $0.uid == callOutputUID }
+        switch AppRules.deviceChoice(hasSetting: !callOutputUID.isEmpty, found: chosen != nil) {
+        case AppRules.DEV_SAVED: blackHoleDevice = chosen
+        default: blackHoleDevice = BlackHoleCheck.find(in: deviceCatalog)
         }
         refreshSpeakerWarning()
     }
@@ -388,13 +419,13 @@ final class AppModel {
     private func startPolling() {
         pollTask?.cancel()
         pollTask = Task { [weak self] in
-            var tick = 0
+            var tick: Int64 = 0
             while !Task.isCancelled {
                 guard let self else { return }
                 self.pollAudioStats()
-                if tick % 6 == 5 { self.refreshCatalogs() }
+                if AppRules.pollRefreshesCatalogs(tick: tick) { self.refreshCatalogs() }
                 tick += 1
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .milliseconds(AppRules.POLL_INTERVAL_MS))
             }
         }
     }
@@ -410,23 +441,23 @@ final class AppModel {
                                               msSinceBuffer: since(incoming?.lastBufferAt),
                                               msSinceSignal: since(incoming?.lastSignalAt))
         sourceCheck = Check(light: sourceCode)
-        sourceLevel = sourceCode == AppRules.LIGHT_OK ? incoming?.level ?? 0 : 0
+        sourceLevel = AppRules.showsLevel(light: sourceCode) ? incoming?.level ?? 0 : 0
 
         let outgoing = outgoingLane?.audioStats
         let micCode = AppRules.audioLight(runState: runState.code, laneActive: outgoingLane != nil,
                                           msSinceStart: sinceStart, msSinceBuffer: since(outgoing?.lastBufferAt))
         micCheck = Check(light: micCode)
-        micLevel = micCode == AppRules.LIGHT_OK ? outgoing?.level ?? 0 : 0
+        micLevel = AppRules.showsLevel(light: micCode) ? outgoing?.level ?? 0 : 0
 
         if isRunning {
             translatorsFailed = Int32([incomingLane, outgoingLane].compactMap { $0 }.filter { $0.translatorError != nil }.count)
         }
-        if sourceCheck == .warn && !silenceWarned {
-            silenceWarned = true
-            if banner?.kind != .error {
-                banner = Banner(kind: .warning, text: Self.silenceText(activeSourceName),
-                                action: .privacySettings("Privacy_ScreenCapture"), actionTitle: "Открыть настройки")
-            }
+        let silence = AppRules.silenceBanner(sourceLight: sourceCode, alreadyWarned: silenceWarned,
+                                             errorShown: banner?.kind == .error)
+        if silence != AppRules.SB_NONE { silenceWarned = true }
+        if silence == AppRules.SB_SHOW {
+            banner = Banner(kind: .warning, text: Self.silenceText(activeSourceName),
+                            action: .privacySettings("Privacy_ScreenCapture"), actionTitle: "Открыть настройки")
         }
     }
 
@@ -451,7 +482,7 @@ final class AppModel {
     }
 
     private func makeIncomingSource() -> AudioSource {
-        if let url = launch.incomingFile {
+        if AppRules.sourceKind(hasTestFile: launch.incomingFile != nil) == AppRules.SOURCE_FILE, let url = launch.incomingFile {
             incomingTap = nil
             sourceTapStatus = AppRules.TAP_NONE
             return fileSource(url, direction: .incoming)
@@ -513,9 +544,9 @@ final class AppModel {
         pollAudioStats()
 
         // The microphone prompt comes before the engine starts: MicSource refuses an undecided permission.
-        let micIsLive = launch.outgoingFile == nil
-        if micIsLive,
-           AudioRules.micStartDecision(authorizationStatus: MicSource.permission.rawValue) == AudioRules.micRequestFirst {
+        let micIsLive = AppRules.sourceKind(hasTestFile: launch.outgoingFile != nil) == AppRules.SOURCE_LIVE
+        if AppRules.requestsMicPermission(
+            micIsLive: micIsLive, micDecision: AudioRules.micStartDecision(authorizationStatus: MicSource.permission.rawValue)) {
             _ = await MicSource.requestPermission()
         }
 
@@ -524,8 +555,24 @@ final class AppModel {
         let synth = SystemSpeechSynth(voiceIdentifiers: voiceMap)
         let echoOutput = AppRules.echoGuardApplies(speakerOutput: speakerWarning, micIsLive: micIsLive)
         echoGuard.configure(speakerOutput: echoOutput)
-        let callOutput: AudioPlayer? = launch.outgoingSink.map { WAVFileSink(url: $0) }
-            ?? blackHoleDevice.map { DeviceAudioPlayer(device: $0) }
+        let callOutput: AudioPlayer?
+        switch AppRules.callOutput(hasSink: launch.outgoingSink != nil, hasBlackHole: blackHoleDevice != nil) {
+        case AppRules.OUT_SINK: callOutput = launch.outgoingSink.map { WAVFileSink(url: $0) }
+        case AppRules.OUT_DEVICE: callOutput = blackHoleDevice.map { DeviceAudioPlayer(device: $0) }
+        default: callOutput = nil
+        }
+        let outgoingSource: AudioSource
+        if !micIsLive, let url = launch.outgoingFile {
+            outgoingSource = fileSource(url, direction: .outgoing)
+        } else {
+            outgoingSource = MicSource(device: micDevice)
+        }
+        func mode(_ direction: Direction) -> CaptureMode {
+            CaptureMode(ruleCode: AppRules.laneMode(direction: AppRules.directionCode(direction), outgoingMode: outgoingMode.ruleCode))
+        }
+        func speaks(_ direction: Direction) -> Bool {
+            AppRules.laneSpeaks(direction: AppRules.directionCode(direction), speakRussian: speakRussian)
+        }
         let incoming = TranslationLane(
             direction: .incoming,
             source: makeIncomingSource(),
@@ -534,25 +581,26 @@ final class AppModel {
             synth: synth,
             player: DeviceAudioPlayer(device: headphonesDevice),
             memory: memory,
-            mode: .continuous,
-            speechOutputEnabled: speakRussian)
+            mode: mode(.incoming),
+            speechOutputEnabled: speaks(.incoming))
         let outgoing = TranslationLane(
             direction: .outgoing,
-            source: launch.outgoingFile.map { fileSource($0, direction: .outgoing) } ?? MicSource(device: micDevice),
+            source: outgoingSource,
             makeTranscriber: { AppleTranscriber(language: .ru) },
             translator: translator,
             synth: synth,
             player: callOutput,
             memory: memory,
-            mode: outgoingMode,
-            speechOutputEnabled: true)
+            mode: mode(.outgoing),
+            speechOutputEnabled: speaks(.outgoing))
         for lane in [incoming, outgoing] {
             lane.glossary = glossary
             let direction = lane.direction
             lane.onEvent = { [weak self] event in self?.handle(event, from: direction) }
+            let code = AppRules.directionCode(direction)
+            if AppRules.laneVoicePause(direction: code) { lane.isPaused = voicePaused }
+            if AppRules.laneEchoGuarded(direction: code) { lane.echoGuard = echoGuard }
         }
-        outgoing.isPaused = voicePaused
-        outgoing.echoGuard = echoGuard
 
         var problems: [String] = []
         var translatorProblems: [String] = []
@@ -583,28 +631,29 @@ final class AppModel {
         pollAudioStats()
         updatePushToTalk()
 
-        let hasCallOutput = blackHoleDevice != nil || launch.outgoingSink != nil
-        switch AppRules.startBannerAfterStart(lanesFailed: lanesFailed, translatorsFailed: translatorsFailed,
-                                              packsMissing: !missingPacks.isEmpty, hasBlackHole: hasCallOutput,
-                                              speakerOutput: echoOutput) {
+        let hasCallOutput = AppRules.hasCallOutput(hasBlackHole: blackHoleDevice != nil, hasSink: launch.outgoingSink != nil)
+        let startBanner = AppRules.startBannerAfterStart(lanesFailed: lanesFailed, translatorsFailed: translatorsFailed,
+                                                         packsMissing: !missingPacks.isEmpty, hasBlackHole: hasCallOutput,
+                                                         speakerOutput: echoOutput)
+        // Kind and wizard step come from AppRules; the texts are here.
+        let kind = Banner.Kind(code: AppRules.bannerKind(banner: startBanner))
+        let step = WizardStep(code: AppRules.bannerStep(banner: startBanner))
+        switch startBanner {
         case AppRules.BAN_NO_PACKS:
             banner = packsBanner(missingPacks)
         case AppRules.BAN_NO_TRANSLATOR:
-            banner = Banner(kind: .error,
+            banner = Banner(kind: kind,
                             text: "Речь распознаётся, но перевод недоступен.\n" + translatorProblems.joined(separator: "\n"),
-                            action: .openWizard(.packs), actionTitle: "Открыть мастер")
-        case AppRules.BAN_FAILED_PACKS:
-            banner = Banner(kind: .error, text: problems.joined(separator: "\n"),
-                            action: .openWizard(.packs), actionTitle: "Открыть мастер")
-        case AppRules.BAN_FAILED_OTHER:
-            banner = Banner(kind: .error, text: problems.joined(separator: "\n"),
-                            action: .openWizard(.permissions), actionTitle: "Открыть мастер")
+                            action: step.map { .openWizard($0) }, actionTitle: "Открыть мастер")
+        case AppRules.BAN_FAILED_PACKS, AppRules.BAN_FAILED_OTHER:
+            banner = Banner(kind: kind, text: problems.joined(separator: "\n"),
+                            action: step.map { .openWizard($0) }, actionTitle: "Открыть мастер")
         case AppRules.BAN_NO_BLACKHOLE:
-            banner = Banner(kind: .warning,
+            banner = Banner(kind: kind,
                             text: "BlackHole не найден: перевод на португальский виден здесь, но в звонок не идёт.",
-                            action: .openWizard(.blackHole), actionTitle: "Как установить")
+                            action: step.map { .openWizard($0) }, actionTitle: "Как установить")
         case AppRules.BAN_SPEAKERS:
-            banner = Banner(kind: .warning,
+            banner = Banner(kind: kind,
                             text: "Звук идёт в динамики Мака. Микрофон услышит собеседников — наденьте наушники.")
         default:
             break
@@ -641,8 +690,9 @@ final class AppModel {
     /// Apple on the device; Claude only when chosen and its key exists (then Apple is the fallback).
     /// Speech never goes to the cloud unless the owner picked Claude.
     private func makeTranslator() -> Translator {
+        let probe = AppRules.probesClaude(preferred: translatorKind.ruleCode)
         let choice = AppRules.translatorChoice(preferred: translatorKind.ruleCode,
-                                               claudeAvailable: translatorKind == .claude && claudeTranslator() != nil)
+                                               claudeAvailable: probe && claudeTranslator() != nil)
         let claude = choice == AppRules.TR_CLAUDE ? claudeTranslator() : nil
         return RoutingTranslator(apple: AppleTranslator(), claude: claude, preferClaude: claude != nil)
     }
@@ -662,10 +712,11 @@ final class AppModel {
             }
         }
         let which = pairs.isEmpty ? "" : " " + pairs.joined(separator: ", ")
-        return Banner(kind: .error,
+        let step = WizardStep(code: AppRules.bannerStep(banner: AppRules.BAN_NO_PACKS))
+        return Banner(kind: Banner.Kind(code: AppRules.bannerKind(banner: AppRules.BAN_NO_PACKS)),
                       text: "Перевод не работает: не скачаны языковые пакеты Apple\(which). Речь распознаётся, "
                           + "оригинал виден. Скачайте пакеты в мастере — перевод включится сам.",
-                      action: .openWizard(.packs), actionTitle: "Скачать пакеты")
+                      action: step.map { .openWizard($0) }, actionTitle: "Скачать пакеты")
     }
 
     private func describe(_ error: Error) -> String {
@@ -701,20 +752,19 @@ final class AppModel {
             }
             if let latency = line.latency { lastLatency = latency }
         case .translationFailed(let error):
-            if isMissingPacks(error) {
-                // The start banner says it already; show it again only if it was closed.
-                if banner?.action != .openWizard(.packs) { banner = packsBanner([error]) }
-            } else {
-                let text = "Перевод: \(describe(error))"
-                if banner?.text != text { banner = Banner(kind: .warning, text: text) }
+            // The start banner may say it already; show it again only if it was closed.
+            let text = "Перевод: \(describe(error))"
+            let packsStep = WizardStep(code: AppRules.bannerStep(banner: AppRules.BAN_NO_PACKS))
+            switch AppRules.translationErrorBanner(missingPacks: isMissingPacks(error),
+                                                   packsBannerShown: banner?.action == packsStep.map { Banner.Action.openWizard($0) },
+                                                   sameTextShown: banner?.text == text) {
+            case AppRules.TEB_PACKS: banner = packsBanner([error])
+            case AppRules.TEB_WARNING: banner = Banner(kind: .warning, text: text)
+            default: break
             }
         case .speaking(let on):
-            if direction == .incoming {
-                incomingSpeaking = on
-                echoGuard.setSpeaking(on, at: Date())
-            } else {
-                outgoingSpeaking = on
-            }
+            if direction == .incoming { incomingSpeaking = on } else { outgoingSpeaking = on }
+            if AppRules.laneEchoSource(direction: AppRules.directionCode(direction)) { echoGuard.setSpeaking(on, at: Date()) }
         case .problem(let text):
             banner = Banner(kind: .warning, text: text)
         }
@@ -756,7 +806,7 @@ final class AppModel {
         }
         do {
             let url = try TranscriptExporter.write(lines: lines, startedAt: callStartedAt ?? lines[0].at,
-                                                   endedAt: isRunning ? nil : Date(),
+                                                   endedAt: AppRules.transcriptHasEnd(runState: runState.code) ? Date() : nil,
                                                    sourceName: activeSourceName,
                                                    to: launch.transcriptDir ?? TranscriptExporter.defaultFolder)
             lastTranscriptURL = url
@@ -801,7 +851,9 @@ final class AppModel {
 
     /// Speaks a pt-BR phrase into the call output (BlackHole) or into the headphones.
     func playTestPhrase(intoCall: Bool) async throws {
-        if intoCall && blackHoleDevice == nil { throw CocoaError(.featureUnsupported) }
+        guard AppRules.testPhrasePossible(intoCall: intoCall, hasBlackHole: blackHoleDevice != nil) else {
+            throw CocoaError(.featureUnsupported)
+        }
         let synth = SystemSpeechSynth(voiceIdentifiers: voiceMap)
         let buffers = try await synth.synthesize(Self.testPhrase, lang: .ptBR)
         let player = DeviceAudioPlayer(device: intoCall ? blackHoleDevice : headphonesDevice)

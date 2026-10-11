@@ -31,9 +31,13 @@ enum SourceChoice: Hashable {
     case system
     case app(bundleID: String)
 
+    /// A stored key "app:<bundleID>" (AppRules.sourceKeyAppPrefix); anything else is all Mac audio.
+    /// Bundle IDs are ASCII (reverse DNS).
     init(key: String) {
-        if key.hasPrefix("app:") {
-            self = .app(bundleID: String(key.dropFirst(4)))
+        let utf8 = Array(key.utf8)
+        let prefix = AppRules.sourceKeyAppPrefix(utf8: utf8)
+        if prefix >= 0 {
+            self = .app(bundleID: String(decoding: utf8[prefix...], as: UTF8.self))
         } else {
             self = .system
         }
@@ -41,8 +45,8 @@ enum SourceChoice: Hashable {
 
     var key: String {
         switch self {
-        case .system: "system"
-        case .app(let id): "app:\(id)"
+        case .system: AppRules.SOURCE_SYSTEM_KEY
+        case .app(let id): AppRules.SOURCE_APP_PREFIX + id
         }
     }
 
@@ -56,6 +60,9 @@ enum SourceChoice: Hashable {
 
 extension CaptureMode {
     var title: String { self == .continuous ? "Авто" : "Push-to-talk" }
+
+    /// From an AppRules.MODE_* code (push-to-talk for MODE_PUSH_TO_TALK, else «Авто»).
+    init(ruleCode: Int32) { self = ruleCode == AppRules.MODE_PUSH_TO_TALK ? .pushToTalk : .continuous }
 }
 
 /// The push-to-talk key. Right-hand modifiers are told apart by device-dependent flags.
@@ -96,4 +103,10 @@ enum PTTKey: String, CaseIterable, Identifiable {
 
 extension TranslatorKind {
     var ruleCode: Int32 { self == .claude ? AppRules.TR_CLAUDE : AppRules.TR_APPLE }
+
+    init(ruleCode: Int32) { self = ruleCode == AppRules.TR_CLAUDE ? .claude : .apple }
+}
+
+extension PTTKey {
+    init(ruleCode: Int32) { self = PTTKey.allCases.first { $0.ruleCode == ruleCode } ?? .rightOption }
 }

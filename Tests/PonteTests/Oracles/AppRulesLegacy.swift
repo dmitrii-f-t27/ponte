@@ -20,6 +20,9 @@
 // Device kinds and echo risk come from AudioRules (PonteAudio); the voice meter and
 // phrase timing from the transcriber (SpeechRules): they are not repeated here.
 
+import AVFoundation
+import Speech
+
 enum AppRulesLegacy {
     // MARK: - Packed steps
 
@@ -630,4 +633,228 @@ enum AppRulesLegacy {
         while digits.count < width { digits.append(0x30) }
         out.append(contentsOf: digits.reversed())
     }
+}
+
+// MARK: - Decisions extracted unchanged from the app before they moved to t27 (2026-10-11)
+// Each body is the old expression at its call site, rewritten over codes where the call site used an enum.
+
+extension AppRulesLegacy {
+    // TranscriptExporter
+    static let FIRST_ATTEMPT: Int32 = 1
+    /// escaped(): `if bytes + size > MD_ESCAPE_MAX_INPUT { break }`.
+    static func fitsEscapeInput(bytes: Int, charBytes: Int) -> Bool { !(bytes + charBytes > Int(MD_ESCAPE_MAX_INPUT)) }
+    /// markdown(): `lines.sorted(by: { $0.at < $1.at })`, a stable sort.
+    static func sortedIndices(_ at: [Double]) -> [Int] {
+        at.enumerated().map { (index: $0.offset, at: $0.element) }.sorted { $0.at < $1.at }.map(\.index)
+    }
+
+    // TranslationLane, AppModel (Direction: 0 incoming, 1 outgoing)
+    static let DIR_INCOMING: Int32 = 0
+    static let DIR_OUTGOING: Int32 = 1
+    /// AppModel.init: `?? .continuous`, `?? .rightOption`.
+    static let DEFAULT_MODE: Int32 = MODE_CONTINUOUS
+    static let DEFAULT_PTT_KEY: Int32 = PTT_RIGHT_OPTION
+    /// stop(): `waitForConsumer(timeout: 3)`, `Task.sleep(for: .seconds(8))`.
+    static let STOP_SEGMENT_WAIT_MS: Int64 = 3_000
+    static let STOP_TRANSLATE_WAIT_MS: Int64 = 8_000
+    static func millis(_ seconds: Double) -> Int64 { Int64((seconds * 1000).rounded()) }
+    /// EchoGuard.setSpeaking: `if speaking || on`.
+    static func echoMarksTime(wasSpeaking: Bool, nowSpeaking: Bool) -> Bool { wasSpeaking || nowSpeaking }
+    /// isRunning, start().
+    static func gateRunning(state: Int32) -> Bool { state == GATE_OPEN || state == GATE_CLOSED }
+    static func gateCanStart(state: Int32) -> Bool { state == GATE_STOPPED }
+    /// phraseEnd(): `timing.map { max(0, ms) } ?? -1`, `lastPartialAt.map { max(-1, ms) } ?? -1`.
+    static func phraseEndChoiceKnown(msSinceTimedEnd: Int64?, msSincePartial: Int64?) -> Int32 {
+        phraseEndChoice(msSinceTimedEnd: msSinceTimedEnd.map { max(0, $0) } ?? -1,
+                        msSincePartial: msSincePartial.map { max(-1, $0) } ?? -1)
+    }
+    /// flags(generation:extra:) and the extras at its call sites.
+    static func phraseFlags(emptyText: Bool, speakRequested: Bool, generationCurrent: Bool, speechEnabled: Bool,
+                            paused: Bool, hasSynth: Bool, hasPlayer: Bool, hasAudio: Bool) -> Int32 {
+        var f: Int32 = emptyText ? PF_EMPTY_TEXT : 0
+        if speakRequested { f |= PF_SPEAK_REQUESTED }
+        if hasAudio { f |= PF_HAS_AUDIO }
+        if generationCurrent { f |= PF_GENERATION_CURRENT }
+        if speechEnabled { f |= PF_SPEECH_ENABLED }
+        if paused { f |= PF_PAUSED }
+        if hasSynth { f |= PF_HAS_SYNTH }
+        if hasPlayer { f |= PF_HAS_PLAYER }
+        return f
+    }
+    static func needsSpeechWorkers(hasSynth: Bool, hasPlayer: Bool) -> Bool { hasSynth || hasPlayer }
+    /// endOfSpeech: `if counted { speechBacklog = max(0, speechBacklog - 1) }`.
+    static func backlogAfterSpeech(_ backlog: Int32, counted: Bool) -> Int32 { counted ? max(0, backlog - 1) : backlog }
+    /// synthesize: `request.counted ? speechBacklog - 1 : speechBacklog`.
+    static func speechWaiting(backlog: Int32, counted: Bool) -> Int32 { counted ? backlog - 1 : backlog }
+    /// translate: `if !(error is CancellationError)`.
+    static func reportsTranslationError(cancelled: Bool) -> Bool { !cancelled }
+    /// play: `stepAction(finish) == PACT_FINISH, request.generation == speechGeneration`.
+    static func playEndReports(action: Int32, generationCurrent: Bool) -> Bool { action == PACT_FINISH && generationCurrent }
+    /// AudioIntake.handle: `guard let segment`, `if let echo, echo.blocksMic(at: now) { return }`.
+    static func intakeForwards(hasSegment: Bool, echoBlocks: Bool) -> Bool { hasSegment && !echoBlocks }
+    /// Segment.append: 0 drop, 1 forward, 2 buffer; markClosed: 0 nothing, 1 finish now, 2 mark only.
+    static func segmentAppend(started: Bool, closed: Bool) -> Int32 { closed ? 0 : (started ? 1 : 2) }
+    static func segmentClose(started: Bool, closed: Bool) -> Int32 { closed ? 0 : (started ? 1 : 2) }
+    /// AppModel: `if let url = launch.incomingFile` (0 live, 1 file); `launch.outgoingFile == nil`.
+    static func sourceKind(hasTestFile: Bool) -> Int32 { hasTestFile ? 1 : 0 }
+    /// AppModel.start: `if micIsLive, micStartDecision(...) == micRequestFirst`.
+    static func requestsMicPermission(micIsLive: Bool, micDecision: Int) -> Bool {
+        micIsLive && micDecision == AudioRulesLegacy.micRequestFirst
+    }
+    /// `launch.outgoingSink.map { WAVFileSink } ?? blackHoleDevice.map { DeviceAudioPlayer }`: 0 sink, 1 device, 2 none.
+    static func callOutput(hasSink: Bool, hasBlackHole: Bool) -> Int32 { hasSink ? 0 : (hasBlackHole ? 1 : 2) }
+    /// The two TranslationLane(...) calls in AppModel.start.
+    static func laneMode(direction: Int32, outgoingMode: Int32) -> Int32 { direction == DIR_INCOMING ? MODE_CONTINUOUS : outgoingMode }
+    static func laneSpeaks(direction: Int32, speakRussian: Bool) -> Bool { direction == DIR_INCOMING ? speakRussian : true }
+    /// `outgoing.isPaused = voicePaused`, `outgoing.echoGuard = echoGuard`, `.speaking` of the incoming lane.
+    static func laneVoicePause(direction: Int32) -> Bool { direction == DIR_OUTGOING }
+    static func laneEchoGuarded(direction: Int32) -> Bool { direction == DIR_OUTGOING }
+    static func laneEchoSource(direction: Int32) -> Bool { direction == DIR_INCOMING }
+    /// GlossaryTerm: `direction == .incoming ? term.pt : term.ru`.
+    static func glossarySourceIsPT(direction: Int32) -> Bool { direction == DIR_INCOMING }
+    /// PushToTalkMonitor.apply.
+    static func pttLocal(scope: Int32) -> Bool { scope != PTT_SCOPE_NONE }
+    static func pttGlobal(scope: Int32) -> Bool { scope == PTT_SCOPE_GLOBAL }
+    /// WAVFileSink.play: `min(left, 0.05)`.
+    static func sinkPaceStep(left: Double) -> Double { min(left, 0.05) }
+
+    // AppModel, views, LaunchOptions, Preferences, PonteMain
+    /// `?? .apple`, `d.bool(...)` of a missing key.
+    static let DEFAULT_TRANSLATOR: Int32 = TR_APPLE
+    static let DEFAULT_SPEAK_RUSSIAN = false
+    static let DEFAULT_OVERLAY_VISIBLE = false
+    /// startPolling: `Task.sleep(for: .milliseconds(500))`, `tick % 6 == 5`.
+    static let POLL_INTERVAL_MS: Int64 = 500
+    static func pollRefreshesCatalogs(tick: Int64) -> Bool { tick % 6 == 5 }
+    /// CommandBox: `Task.sleep(for: .seconds(2))`.
+    static let COPIED_FEEDBACK_MS: Int64 = 2_000
+    /// modelsCheck: `lanesFailed: lanesFailed + translatorsFailed`.
+    static func modelsLightAll(runState: Int32, everStarted: Bool, lanesStarted: Int32, lanesFailed: Int32,
+                               translatorsFailed: Int32) -> Int32 {
+        modelsLight(runState: runState, everStarted: everStarted, lanesStarted: lanesStarted, lanesFailed: lanesFailed + translatorsFailed)
+    }
+    /// pollAudioStats `sourceCode == LIGHT_OK ? level : 0`; StatusChip `check == .ok`.
+    static func showsLevel(light: Int32) -> Bool { light == LIGHT_OK }
+    /// pollAudioStats: 0 nothing, 1 only remember, 2 show the warning.
+    static func silenceBanner(sourceLight: Int32, alreadyWarned: Bool, errorShown: Bool) -> Int32 {
+        guard sourceLight == LIGHT_WARN && !alreadyWarned else { return 0 }
+        return errorShown ? 1 : 2
+    }
+    /// sourceHelp: 0 idle, 1 waiting, 2 failed, 3 file, 4 silence, 5 audio flows.
+    static func sourceHelp(runState: Int32, tapStatus: Int32, sourceLight: Int32) -> Int32 {
+        guard runState == RUN_RUNNING else { return 0 }
+        switch tapStatus {
+        case TAP_WAITING: return 1
+        case TAP_FAILED: return 2
+        case TAP_NONE: return 3
+        default: break
+        }
+        if sourceLight == LIGHT_WARN { return 4 }
+        return 5
+    }
+    /// sourceTitle: 0 system, 1 running app's name, 2 known call app label, 3 the bundle ID.
+    static func sourceTitle(isSystem: Bool, hasRunningName: Bool, hasLabel: Bool) -> Int32 {
+        isSystem ? 0 : (hasRunningName ? 1 : (hasLabel ? 2 : 3))
+    }
+    /// start(): `blackHoleDevice != nil || launch.outgoingSink != nil`.
+    static func hasCallOutput(hasBlackHole: Bool, hasSink: Bool) -> Bool { hasBlackHole || hasSink }
+    /// The start banner switch and packsBanner: kind 0 none, 1 error, 2 warning; the wizard step it opens.
+    static func bannerKind(banner: Int32) -> Int32 {
+        switch banner {
+        case BAN_NO_PACKS, BAN_NO_TRANSLATOR, BAN_FAILED_PACKS, BAN_FAILED_OTHER: return 1
+        case BAN_NO_BLACKHOLE, BAN_SPEAKERS: return 2
+        default: return 0
+        }
+    }
+    static func bannerStep(banner: Int32) -> Int32 {
+        switch banner {
+        case BAN_NO_PACKS, BAN_NO_TRANSLATOR, BAN_FAILED_PACKS: return WZ_PACKS
+        case BAN_FAILED_OTHER: return WZ_PERMISSIONS
+        case BAN_NO_BLACKHOLE: return WZ_BLACKHOLE
+        default: return WZ_NONE
+        }
+    }
+    /// handle(.translationFailed): 0 nothing, 1 the packs banner, 2 a warning.
+    static func translationErrorBanner(missingPacks: Bool, packsBannerShown: Bool, sameTextShown: Bool) -> Int32 {
+        if missingPacks { return packsBannerShown ? 0 : 1 }
+        return sameTextShown ? 0 : 2
+    }
+    /// refreshCatalogs: `if !callOutputUID.isEmpty, let chosen` (0 saved, 1 automatic).
+    static func deviceChoice(hasSetting: Bool, found: Bool) -> Int32 { hasSetting && found ? 0 : 1 }
+    /// makeTranslator: `translatorKind == .claude && claudeTranslator() != nil`.
+    static func probesClaude(preferred: Int32) -> Bool { preferred == TR_CLAUDE }
+    /// saveTranscript: `endedAt: isRunning ? nil : Date()`.
+    static func transcriptHasEnd(runState: Int32) -> Bool { !(runState == RUN_RUNNING) }
+    /// playTestPhrase: `if intoCall && blackHoleDevice == nil { throw }`.
+    static func testPhrasePossible(intoCall: Bool, hasBlackHole: Bool) -> Bool { !(intoCall && !hasBlackHole) }
+    /// OutgoingColumn status: 0 none, 1 paused, 2 speaking, 3 no BlackHole.
+    static func outgoingStatus(paused: Bool, speaking: Bool, running: Bool, hasBlackHole: Bool) -> Int32 {
+        if paused { return 1 }
+        if speaking { return 2 }
+        if running && !hasBlackHole { return 3 }
+        return 0
+    }
+    /// SettingsView «Вывод в звонок»: `blackHoleDevice != nil && callOutputUID.isEmpty` (0 found, 1 search).
+    static func callOutputLabel(hasBlackHole: Bool, hasSetting: Bool) -> Int32 { hasBlackHole && !hasSetting ? 0 : 1 }
+    /// SettingsView translator: `if !claude { …; if translatorKind == .claude { … } }` (0 none, 1 no key, 2 + Apple used).
+    static func translatorNote(preferred: Int32, claudeAvailable: Bool) -> Int32 {
+        guard !claudeAvailable else { return 0 }
+        return preferred == TR_CLAUDE ? 2 : 1
+    }
+    /// Permissions: AVAuthorizationStatus and SFSpeechRecognizerAuthorizationStatus → 0 unknown, 1 granted,
+    /// 2 denied, 3 not asked.
+    static func micPermissionState(raw: Int) -> Int32 {
+        guard let status = AVAuthorizationStatus(rawValue: raw) else { return 0 }
+        switch status {
+        case .authorized: return 1
+        case .denied, .restricted: return 2
+        case .notDetermined: return 3
+        @unknown default: return 0
+        }
+    }
+    static func speechPermissionState(raw: Int) -> Int32 {
+        guard let status = SFSpeechRecognizerAuthorizationStatus(rawValue: raw) else { return 0 }
+        switch status {
+        case .authorized: return 1
+        case .denied, .restricted: return 2
+        case .notDetermined: return 3
+        @unknown default: return 0
+        }
+    }
+    /// The wizard's permission rows: `if s == .denied { settings } else if s != .granted { request }`
+    /// (0 none, 1 request, 2 settings); check(_:): granted ok, denied bad, else unknown.
+    static func permissionAction(state: Int32) -> Int32 {
+        if state == 2 { return 2 }
+        if state != 1 { return 1 }
+        return 0
+    }
+    static func permissionLight(state: Int32) -> Int32 { state == 1 ? LIGHT_OK : (state == 2 ? LIGHT_BAD : LIGHT_UNKNOWN) }
+    /// `state.capture == .bad || state.capture == .warn`.
+    static func captureNeedsSettings(light: Int32) -> Bool { light == LIGHT_BAD || light == LIGHT_WARN }
+    /// `model.accessibilityGranted ? .ok : .unknown`.
+    static func accessibilityLight(granted: Bool) -> Int32 { granted ? LIGHT_OK : LIGHT_UNKNOWN }
+    /// refreshPacks over LanguageAvailability.Status codes (0 installed, 1 supported, 2 unsupported, 3 unknown).
+    static func packLight(status: Int) -> Int32 {
+        switch status {
+        case 0: return LIGHT_OK
+        case 2: return LIGHT_BAD
+        default: return LIGHT_UNKNOWN
+        }
+    }
+    /// `where packs[direction] != .busy`; `.disabled(packs == .busy || packs == .ok)`.
+    static func packRefreshable(light: Int32) -> Bool { light != LIGHT_BUSY }
+    static func packDownloadEnabled(light: Int32) -> Bool { !(light == LIGHT_BUSY || light == LIGHT_OK) }
+    /// LineRow: 0 translated, 1 failed, 2 pending.
+    static func lineState(hasTranslation: Bool, hasError: Bool) -> Int32 { hasTranslation ? 0 : (hasError ? 1 : 2) }
+    /// LaunchOptions.
+    static func isTestMode(hasIncomingFile: Bool, hasOutgoingFile: Bool, hasSink: Bool, hasTranscriptDir: Bool) -> Bool {
+        hasIncomingFile || hasOutgoingFile || hasSink || hasTranscriptDir
+    }
+    static func isYes(_ lowercased: String) -> Bool { ["yes", "true", "1"].contains(lowercased) }
+    /// SourceChoice(key:): the bundle ID of an "app:" key, nil for all Mac audio; and the keys it writes.
+    static func sourceBundleID(key: String) -> String? { key.hasPrefix("app:") ? String(key.dropFirst(4)) : nil }
+    static let SOURCE_SYSTEM_KEY = "system"
+    static let SOURCE_APP_PREFIX = "app:"
+    /// PonteAppDelegate.applicationShouldTerminate: `model.isRunning`.
+    static func quitWaits(runState: Int32) -> Bool { runState == RUN_RUNNING }
 }

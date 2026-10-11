@@ -75,7 +75,7 @@ final class EchoGuard: @unchecked Sendable {
 
     func setSpeaking(_ on: Bool, at now: Date) {
         lock.withLock {
-            if speaking || on { lastSpeechAt = now }
+            if AppRules.echoMarksTime(wasSpeaking: speaking, nowSpeaking: on) { lastSpeechAt = now }
             speaking = on
         }
     }
@@ -98,7 +98,7 @@ struct LaneAudioStats: Sendable {
     var level: Float = 0
 }
 
-func millis(_ seconds: TimeInterval) -> Int64 { Int64((seconds * 1000).rounded()) }
+func millis(_ seconds: TimeInterval) -> Int64 { AppRules.millis(seconds) }
 
 @MainActor
 final class TranslationLane {
@@ -132,7 +132,7 @@ final class TranslationLane {
     private(set) var gatePhase = AppRules.GATE_STOPPED
     private(set) var isKeyHeld = false
     private(set) var lastTranslatedLine: ConversationLine?
-    var isRunning: Bool { gatePhase == AppRules.GATE_OPEN || gatePhase == AppRules.GATE_CLOSED }
+    var isRunning: Bool { AppRules.gateRunning(state: gatePhase) }
     /// Why the translator could not be prepared at `start()` (the lane then only transcribes
     /// until a retry succeeds); nil when it is ready.
     private(set) var translatorError: Error?
@@ -198,7 +198,7 @@ final class TranslationLane {
     /// (for example a missing language pack) does not stop the lane: `translatorError` is set,
     /// originals are shown, and preparation is retried before later phrases.
     func start() async throws {
-        guard gatePhase == AppRules.GATE_STOPPED else { return }
+        guard AppRules.gateCanStart(state: gatePhase) else { return }
         await gateEvent(AppRules.GEV_START)
         do {
             let first = makeTranscriber()
@@ -236,11 +236,11 @@ final class TranslationLane {
         isKeyHeld = false
         source.stop()
         await gateEvent(AppRules.GEV_STOP)
-        for open in openSegments { await open.waitForConsumer(timeout: 3) }
+        for open in openSegments { await open.waitForConsumer(timeoutMs: AppRules.STOP_SEGMENT_WAIT_MS) }
         openSegments.removeAll()
         translateInput?.finish()
         if let worker = translateWorker {
-            let watchdog = Task { try? await Task.sleep(for: .seconds(8)); worker.cancel() }
+            let watchdog = Task { try? await Task.sleep(for: .milliseconds(AppRules.STOP_TRANSLATE_WAIT_MS)); worker.cancel() }
             await worker.value
             watchdog.cancel()
         }
@@ -356,7 +356,7 @@ final class TranslationLane {
             onEvent(.partial(""))
             let phrase = text.trimmingCharacters(in: .whitespacesAndNewlines)
             let step = AppRules.phraseStep(stage: AppRules.PH_LISTENING, event: AppRules.PEV_FINAL,
-                                           flags: phrase.isEmpty ? AppRules.PF_EMPTY_TEXT : 0)
+                                           flags: AppRules.phraseFlags(emptyText: phrase.isEmpty))
             guard AppRules.stepAction(step) == AppRules.PACT_TRANSLATE else { return }
             let timing = transcriber.timing(for: id)
             let end = phraseEnd(timing: timing, lastPartialAt: partialAt)
@@ -373,9 +373,9 @@ final class TranslationLane {
 
     private func phraseEnd(timing: PhraseTiming?, lastPartialAt: Date?) -> Date {
         let now = clock()
-        let choice = AppRules.phraseEndChoice(
-            msSinceTimedEnd: timing.map { max(0, millis(now.timeIntervalSince($0.audioEndArrivedAt))) } ?? -1,
-            msSincePartial: lastPartialAt.map { max(-1, millis(now.timeIntervalSince($0))) } ?? -1)
+        let choice = AppRules.phraseEndChoiceKnown(
+            msSinceTimedEnd: timing.map { millis(now.timeIntervalSince($0.audioEndArrivedAt)) },
+            msSincePartial: lastPartialAt.map { millis(now.timeIntervalSince($0)) })
         switch choice {
         case AppRules.END_TRANSCRIBER: return timing?.audioEndArrivedAt ?? now
         case AppRules.END_LAST_PARTIAL: return lastPartialAt ?? now
@@ -408,14 +408,11 @@ final class TranslationLane {
         let counted: Bool
     }
 
-    private func flags(generation: Int, extra: Int32 = 0) -> Int32 {
-        var f = extra
-        if generation == speechGeneration { f |= AppRules.PF_GENERATION_CURRENT }
-        if speechOutputEnabled { f |= AppRules.PF_SPEECH_ENABLED }
-        if isPaused { f |= AppRules.PF_PAUSED }
-        if synth != nil { f |= AppRules.PF_HAS_SYNTH }
-        if player != nil { f |= AppRules.PF_HAS_PLAYER }
-        return f
+    private func flags(generation: Int, emptyText: Bool = false, speakRequested: Bool = false,
+                       hasAudio: Bool = false) -> Int32 {
+        AppRules.phraseFlags(emptyText: emptyText, speakRequested: speakRequested,
+                             generationCurrent: generation == speechGeneration, speechEnabled: speechOutputEnabled,
+                             paused: isPaused, hasSynth: synth != nil, hasPlayer: player != nil, hasAudio: hasAudio)
     }
 
     private func startWorkers() {
@@ -431,7 +428,7 @@ final class TranslationLane {
     }
 
     private func ensureSpeechWorkers() {
-        guard synth != nil || player != nil, synthWorker == nil else { return }
+        guard AppRules.needsSpeechWorkers(hasSynth: synth != nil, hasPlayer: player != nil), synthWorker == nil else { return }
         let (synthStream, synthInput) = AsyncStream<SpeakRequest>.makeStream()
         let (playStream, playInput) = AsyncStream<PlayRequest>.makeStream()
         self.synthInput = synthInput
@@ -467,7 +464,7 @@ final class TranslationLane {
     }
 
     private func endOfSpeech(_ counted: Bool) {
-        if counted { speechBacklog = max(0, speechBacklog - 1) }
+        speechBacklog = AppRules.backlogAfterSpeech(speechBacklog, counted: counted)
     }
 
     private func translate(_ pending: PendingPhrase) async {
@@ -490,10 +487,9 @@ final class TranslationLane {
             let recognition = pending.recognitionMs.map { String($0) } ?? "?"
             log.info("latency \(self.direction.rawValue, privacy: .public) \(latency, privacy: .public) ms (recognition \(recognition, privacy: .public) ms)")
             lastTranslatedLine = line
-            var extra: Int32 = text.isEmpty ? AppRules.PF_EMPTY_TEXT : 0
-            if pending.speak { extra |= AppRules.PF_SPEAK_REQUESTED }
             let step = AppRules.phraseStep(stage: AppRules.PH_TRANSLATING, event: AppRules.PEV_TRANSLATED,
-                                           flags: flags(generation: pending.generation, extra: extra))
+                                           flags: flags(generation: pending.generation, emptyText: text.isEmpty,
+                                                        speakRequested: pending.speak))
             onEvent(.translated(line))
             if AppRules.stepAction(step) == AppRules.PACT_SYNTHESIZE {
                 speechBacklog += 1
@@ -502,9 +498,10 @@ final class TranslationLane {
         } catch {
             // PEV_TRANSLATE_FAILED always shows the original only.
             _ = AppRules.phraseStep(stage: AppRules.PH_TRANSLATING, event: AppRules.PEV_TRANSLATE_FAILED, flags: 0)
-            line.translationError = error is CancellationError ? "перевод прерван" : error.localizedDescription
+            let reports = AppRules.reportsTranslationError(cancelled: error is CancellationError)
+            line.translationError = reports ? error.localizedDescription : "перевод прерван"
             onEvent(.translated(line))
-            if !(error is CancellationError) {
+            if reports {
                 log.error("translation failed \(self.direction.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 onEvent(.translationFailed(error))
             }
@@ -519,13 +516,12 @@ final class TranslationLane {
             return
         }
         do {
-            let waiting = request.counted ? speechBacklog - 1 : speechBacklog
+            let waiting = AppRules.speechWaiting(backlog: speechBacklog, counted: request.counted)
             let rate = AppRules.speechRatePercent(waiting: waiting)
             let buffers = try await synth.synthesize(request.text, lang: direction.target, ratePercent: rate)
             if !buffers.isEmpty { lastSpoken = (request.text, buffers) }
             let done = AppRules.phraseStep(stage: AppRules.PH_SYNTH_QUEUED, event: AppRules.PEV_SYNTHESIZED,
-                                           flags: flags(generation: request.generation,
-                                                        extra: buffers.isEmpty ? 0 : AppRules.PF_HAS_AUDIO))
+                                           flags: flags(generation: request.generation, hasAudio: !buffers.isEmpty))
             if AppRules.stepAction(done) == AppRules.PACT_ENQUEUE_PLAY {
                 playInput?.yield(PlayRequest(buffers: buffers, generation: request.generation, counted: request.counted))
             } else {
@@ -540,8 +536,7 @@ final class TranslationLane {
 
     private func play(_ request: PlayRequest) async {
         let start = AppRules.phraseStep(stage: AppRules.PH_PLAY_QUEUED, event: AppRules.PEV_PLAY_DEQUEUED,
-                                        flags: flags(generation: request.generation,
-                                                     extra: request.buffers.isEmpty ? 0 : AppRules.PF_HAS_AUDIO))
+                                        flags: flags(generation: request.generation, hasAudio: !request.buffers.isEmpty))
         guard AppRules.stepAction(start) == AppRules.PACT_PLAY, let player else {
             endOfSpeech(request.counted)
             return
@@ -551,7 +546,7 @@ final class TranslationLane {
         await player.play(request.buffers)
         let finish = AppRules.phraseStep(stage: AppRules.PH_PLAYING, event: AppRules.PEV_PLAYED, flags: 0)
         endOfSpeech(request.counted)
-        if AppRules.stepAction(finish) == AppRules.PACT_FINISH, request.generation == speechGeneration {
+        if AppRules.playEndReports(action: AppRules.stepAction(finish), generationCurrent: request.generation == speechGeneration) {
             onEvent(.speaking(false))
         }
     }
@@ -576,7 +571,7 @@ final class AudioIntake: @unchecked Sendable {
 
     func handle(_ buffer: AVAudioPCMBuffer) {
         let (rms, peak) = buffer.laneLevels
-        let signal = AudioRules.levelCode(peak: peak, rms: rms) != AudioRules.levelDigitalSilence
+        let signal = AudioRules.hasSignal(peak: peak, rms: rms)
         let now = clock()
         let (segment, echo): (Segment?, EchoGuard?) = lock.withLock {
             current.buffers += 1
@@ -585,8 +580,8 @@ final class AudioIntake: @unchecked Sendable {
             if signal { current.lastSignalAt = now }
             return (self.segment, self.echoGuard)
         }
-        guard let segment else { return }
-        if let echo, echo.blocksMic(at: now) { return }
+        let blocks = echo?.blocksMic(at: now) ?? false
+        guard AppRules.intakeForwards(hasSegment: segment != nil, echoBlocks: blocks), let segment else { return }
         segment.append(buffer)
     }
 }
@@ -606,11 +601,13 @@ final class Segment: @unchecked Sendable {
     func append(_ buffer: AVAudioPCMBuffer) {
         lock.lock()
         defer { lock.unlock() }
-        guard !closed else { return }
-        if started {
+        switch AppRules.segmentAppend(started: started, closed: closed) {
+        case AppRules.SEG_FORWARD:
             transcriber.append(buffer)
-        } else if let copy = buffer.copy() as? AVAudioPCMBuffer {
-            pending.append(copy)
+        case AppRules.SEG_BUFFER:
+            if let copy = buffer.copy() as? AVAudioPCMBuffer { pending.append(copy) }
+        default:
+            break
         }
     }
 
@@ -628,15 +625,15 @@ final class Segment: @unchecked Sendable {
     /// Returns true if the transcriber had started and must be finished now.
     func markClosed() -> Bool {
         lock.withLock {
-            guard !closed else { return false }
-            closed = true
-            return started
+            let action = AppRules.segmentClose(started: started, closed: closed)
+            if action != AppRules.SEGC_NONE { closed = true }
+            return action == AppRules.SEGC_FINISH
         }
     }
 
-    func waitForConsumer(timeout: TimeInterval) async {
+    func waitForConsumer(timeoutMs: Int64) async {
         guard let consumer else { return }
-        let watchdog = Task { try? await Task.sleep(for: .seconds(timeout)); consumer.cancel() }
+        let watchdog = Task { try? await Task.sleep(for: .milliseconds(timeoutMs)); consumer.cancel() }
         await consumer.value
         watchdog.cancel()
     }

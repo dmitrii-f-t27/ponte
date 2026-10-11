@@ -23,8 +23,7 @@ struct GlossaryTerm: Codable, Hashable, Identifiable, Sendable {
     static func apply(_ terms: [GlossaryTerm], to translation: String, direction: Direction) -> String {
         var result = translation
         for term in terms where term.isComplete {
-            let from = (direction == .incoming ? term.pt : term.ru).trimmingCharacters(in: .whitespaces)
-            let to = (direction == .incoming ? term.ru : term.pt).trimmingCharacters(in: .whitespaces)
+            let (from, to) = term.forms(direction)
             guard from.caseInsensitiveCompare(to) != .orderedSame else { continue }
             let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: from) + "(?![\\p{L}\\p{N}])"
             guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
@@ -40,11 +39,18 @@ struct GlossaryTerm: Codable, Hashable, Identifiable, Sendable {
     static func translatorGlossary(_ terms: [GlossaryTerm], direction: Direction) -> [String: String] {
         var map: [String: String] = [:]
         for term in terms where term.isComplete {
-            let from = (direction == .incoming ? term.pt : term.ru).trimmingCharacters(in: .whitespaces)
-            let to = (direction == .incoming ? term.ru : term.pt).trimmingCharacters(in: .whitespaces)
+            let (from, to) = term.forms(direction)
             map[from] = to
         }
         return map
+    }
+
+    /// The source- and target-language forms for a direction (AppRules.glossarySourceIsPT), trimmed.
+    func forms(_ direction: Direction) -> (from: String, to: String) {
+        let sourceIsPT = AppRules.glossarySourceIsPT(direction: AppRules.directionCode(direction))
+        let from = sourceIsPT ? pt : ru
+        let to = sourceIsPT ? ru : pt
+        return (from.trimmingCharacters(in: .whitespaces), to.trimmingCharacters(in: .whitespaces))
     }
 
     static func decode(_ json: String) -> [GlossaryTerm] {

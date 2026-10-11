@@ -313,14 +313,18 @@ private struct OutgoingFooter: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 Group {
-                    if model.voicePaused {
+                    switch AppRules.outgoingStatus(paused: model.voicePaused, speaking: model.outgoingSpeaking,
+                                                   running: model.isRunning, hasBlackHole: model.blackHoleDevice != nil) {
+                    case AppRules.OUTSTATUS_PAUSED:
                         Label("На паузе: микрофон не слушается", systemImage: "pause.circle.fill")
                             .foregroundStyle(.orange)
-                    } else if model.outgoingSpeaking {
+                    case AppRules.OUTSTATUS_SPEAKING:
                         SpeakingBadge(text: "Говорит в звонок", tint: .green)
-                    } else if model.isRunning && model.blackHoleDevice == nil {
+                    case AppRules.OUTSTATUS_NO_BLACKHOLE:
                         Label("Нет BlackHole: голос не идёт в звонок", systemImage: "speaker.slash")
                             .foregroundStyle(.secondary)
+                    default:
+                        EmptyView()
                     }
                 }
                 .lineLimit(1)

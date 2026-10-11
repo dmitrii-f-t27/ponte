@@ -1,3 +1,4 @@
+import PonteCore
 import PonteSpecs
 
 // Every pure decision of Ponte's app layer, in one place.
@@ -413,4 +414,242 @@ enum AppRules {
     }
 
     static func isMarkdownSpecial(_ byte: UInt8) -> Bool { tr_is_markdown_special(byte) }
+
+    /// The first file name has no "-N"; each existing file moves to the next attempt.
+    static let FIRST_ATTEMPT: Int32 = TR_FIRST_ATTEMPT
+
+    /// TranscriptExporter.escaped: a character of `charBytes` bytes still fits after `bytes` bytes.
+    static func fitsEscapeInput(bytes: Int, charBytes: Int) -> Bool { tr_fits_escape_input(Int64(bytes), Int64(charBytes)) }
+
+    /// Transcript order: by time; lines of the same time keep their order.
+    static func lineBefore(atA: Double, indexA: Int, atB: Double, indexB: Int) -> Bool {
+        tr_line_before(atA, Int64(indexA), atB, Int64(indexB))
+    }
+
+    // MARK: - Lane rules moved here from TranslationLane, AppModel, PushToTalkMonitor, Glossary, WAVFileSink
+
+    static let DIR_INCOMING: Int32 = LN_DIR_INCOMING
+    static let DIR_OUTGOING: Int32 = LN_DIR_OUTGOING
+    static func directionCode(_ direction: Direction) -> Int32 {
+        switch direction {
+        case .incoming: DIR_INCOMING
+        case .outgoing: DIR_OUTGOING
+        }
+    }
+
+    /// Defaults of the settings: «Авто» and the right Option key.
+    static let DEFAULT_MODE: Int32 = LN_DEFAULT_MODE
+    static let DEFAULT_PTT_KEY: Int32 = LN_DEFAULT_PTT_KEY
+
+    /// stop(): wait for an open transcriber session, then for pending translations.
+    static let STOP_SEGMENT_WAIT_MS = Int64(LN_STOP_SEGMENT_WAIT_MS)
+    static let STOP_TRANSLATE_WAIT_MS = Int64(LN_STOP_TRANSLATE_WAIT_MS)
+
+    /// Seconds to whole milliseconds, rounded half away from zero (finite input).
+    static func millis(_ seconds: Double) -> Int64 { ln_millis(seconds) }
+
+    /// EchoGuard: the speech time is recorded when the voice starts, plays on, or stops.
+    static func echoMarksTime(wasSpeaking: Bool, nowSpeaking: Bool) -> Bool { ln_echo_marks_time(wasSpeaking, nowSpeaking) }
+
+    static func gateRunning(state: Int32) -> Bool { ln_gate_running(state) }
+    static func gateCanStart(state: Int32) -> Bool { ln_gate_can_start(state) }
+
+    /// phraseEndChoice from optional times (nil: not known; a time in the future counts as now or unknown).
+    static func phraseEndChoiceKnown(msSinceTimedEnd: Int64?, msSincePartial: Int64?) -> Int32 {
+        ln_phrase_end_choice_known(msSinceTimedEnd != nil, msSinceTimedEnd ?? 0, msSincePartial != nil, msSincePartial ?? 0)
+    }
+
+    /// The phraseStep flags (PF_*) from the facts.
+    static func phraseFlags(emptyText: Bool = false, speakRequested: Bool = false, generationCurrent: Bool = false,
+                            speechEnabled: Bool = false, paused: Bool = false, hasSynth: Bool = false,
+                            hasPlayer: Bool = false, hasAudio: Bool = false) -> Int32 {
+        ln_phrase_flags(emptyText, speakRequested, generationCurrent, speechEnabled, paused, hasSynth, hasPlayer, hasAudio)
+    }
+
+    static func needsSpeechWorkers(hasSynth: Bool, hasPlayer: Bool) -> Bool { ln_needs_speech_workers(hasSynth, hasPlayer) }
+    static func backlogAfterSpeech(_ backlog: Int32, counted: Bool) -> Int32 { ln_backlog_after_speech(backlog, counted) }
+    static func speechWaiting(backlog: Int32, counted: Bool) -> Int32 { ln_speech_waiting(backlog, counted) }
+    static func reportsTranslationError(cancelled: Bool) -> Bool { ln_reports_translation_error(cancelled) }
+    static func playEndReports(action: Int32, generationCurrent: Bool) -> Bool { ln_play_end_reports(action, generationCurrent) }
+    static func intakeForwards(hasSegment: Bool, echoBlocks: Bool) -> Bool { ln_intake_forwards(hasSegment, echoBlocks) }
+
+    /// Segment: what an audio buffer does, and what closing does.
+    static let SEG_DROP: Int32 = LN_SEG_DROP
+    static let SEG_FORWARD: Int32 = LN_SEG_FORWARD
+    static let SEG_BUFFER: Int32 = LN_SEG_BUFFER
+    static let SEGC_NONE: Int32 = LN_SEGC_NONE
+    static let SEGC_FINISH: Int32 = LN_SEGC_FINISH
+    static let SEGC_MARK: Int32 = LN_SEGC_MARK
+    static func segmentAppend(started: Bool, closed: Bool) -> Int32 { ln_segment_append(started, closed) }
+    static func segmentClose(started: Bool, closed: Bool) -> Int32 { ln_segment_close(started, closed) }
+
+    /// Where a lane's audio comes from, and where the outgoing voice goes.
+    static let SOURCE_LIVE: Int32 = LN_SOURCE_LIVE
+    static let SOURCE_FILE: Int32 = LN_SOURCE_FILE
+    static func sourceKind(hasTestFile: Bool) -> Int32 { ln_source_kind(hasTestFile) }
+    static func requestsMicPermission(micIsLive: Bool, micDecision: Int) -> Bool {
+        ln_requests_mic_permission(micIsLive, Int64(micDecision))
+    }
+    static let OUT_SINK: Int32 = LN_OUT_SINK
+    static let OUT_DEVICE: Int32 = LN_OUT_DEVICE
+    static let OUT_NONE: Int32 = LN_OUT_NONE
+    static func callOutput(hasSink: Bool, hasBlackHole: Bool) -> Int32 { ln_call_output(hasSink, hasBlackHole) }
+
+    /// Per-lane settings by direction.
+    static func laneMode(direction: Int32, outgoingMode: Int32) -> Int32 { ln_lane_mode(direction, outgoingMode) }
+    static func laneSpeaks(direction: Int32, speakRussian: Bool) -> Bool { ln_lane_speaks(direction, speakRussian) }
+    static func laneVoicePause(direction: Int32) -> Bool { ln_lane_voice_pause(direction) }
+    static func laneEchoGuarded(direction: Int32) -> Bool { ln_lane_echo_guarded(direction) }
+    static func laneEchoSource(direction: Int32) -> Bool { ln_lane_echo_source(direction) }
+    static func glossarySourceIsPT(direction: Int32) -> Bool { ln_glossary_source_is_pt(direction) }
+
+    /// PushToTalkMonitor: which monitors a scope installs.
+    static func pttLocal(scope: Int32) -> Bool { ln_ptt_local(scope) }
+    static func pttGlobal(scope: Int32) -> Bool { ln_ptt_global(scope) }
+
+    /// WAVFileSink pacing step, seconds.
+    static func sinkPaceStep(left: Double) -> Double { ln_sink_pace_step(left) }
+
+    // MARK: - UI rules moved here from AppModel, the views, LaunchOptions, Preferences, PonteMain
+
+    static let DEFAULT_TRANSLATOR: Int32 = UI_DEFAULT_TRANSLATOR
+    static let DEFAULT_SPEAK_RUSSIAN = UI_DEFAULT_SPEAK_RUSSIAN != 0
+    static let DEFAULT_OVERLAY_VISIBLE = UI_DEFAULT_OVERLAY_VISIBLE != 0
+
+    /// The status row polls this often; the catalogs are re-read on some polls.
+    static let POLL_INTERVAL_MS = Int64(UI_POLL_INTERVAL_MS)
+    static func pollRefreshesCatalogs(tick: Int64) -> Bool { ui_poll_refreshes_catalogs(tick) }
+
+    /// "Скопировано" stays this long.
+    static let COPIED_FEEDBACK_MS = Int64(UI_COPIED_FEEDBACK_MS)
+
+    static func modelsLightAll(runState: Int32, everStarted: Bool, lanesStarted: Int32, lanesFailed: Int32,
+                               translatorsFailed: Int32) -> Int32 {
+        ui_models_light_all(runState, everStarted, lanesStarted, lanesFailed, translatorsFailed)
+    }
+
+    static func showsLevel(light: Int32) -> Bool { ui_shows_level(light) }
+
+    static let SB_NONE: Int32 = UI_SB_NONE
+    static let SB_MARK: Int32 = UI_SB_MARK
+    static let SB_SHOW: Int32 = UI_SB_SHOW
+    static func silenceBanner(sourceLight: Int32, alreadyWarned: Bool, errorShown: Bool) -> Int32 {
+        ui_silence_banner(sourceLight, alreadyWarned, errorShown)
+    }
+
+    static let HELP_IDLE: Int32 = UI_HELP_IDLE
+    static let HELP_WAITING: Int32 = UI_HELP_WAITING
+    static let HELP_FAILED: Int32 = UI_HELP_FAILED
+    static let HELP_FILE: Int32 = UI_HELP_FILE
+    static let HELP_SILENCE: Int32 = UI_HELP_SILENCE
+    static let HELP_FLOWING: Int32 = UI_HELP_FLOWING
+    static func sourceHelp(runState: Int32, tapStatus: Int32, sourceLight: Int32) -> Int32 {
+        ui_source_help(runState, tapStatus, sourceLight)
+    }
+
+    static let TITLE_SYSTEM: Int32 = UI_TITLE_SYSTEM
+    static let TITLE_RUNNING: Int32 = UI_TITLE_RUNNING
+    static let TITLE_LABEL: Int32 = UI_TITLE_LABEL
+    static let TITLE_ID: Int32 = UI_TITLE_ID
+    static func sourceTitle(isSystem: Bool, hasRunningName: Bool, hasLabel: Bool) -> Int32 {
+        ui_source_title(isSystem, hasRunningName, hasLabel)
+    }
+
+    static func hasCallOutput(hasBlackHole: Bool, hasSink: Bool) -> Bool { ui_has_call_output(hasBlackHole, hasSink) }
+
+    static let BK_NONE: Int32 = UI_BK_NONE
+    static let BK_ERROR: Int32 = UI_BK_ERROR
+    static let BK_WARNING: Int32 = UI_BK_WARNING
+    static let BK_INFO: Int32 = UI_BK_INFO
+    static func bannerKind(banner: Int32) -> Int32 { ui_banner_kind(banner) }
+    static func bannerStep(banner: Int32) -> Int32 { ui_banner_step(banner) }
+
+    static let TEB_NONE: Int32 = UI_TEB_NONE
+    static let TEB_PACKS: Int32 = UI_TEB_PACKS
+    static let TEB_WARNING: Int32 = UI_TEB_WARNING
+    static func translationErrorBanner(missingPacks: Bool, packsBannerShown: Bool, sameTextShown: Bool) -> Int32 {
+        ui_translation_error_banner(missingPacks, packsBannerShown, sameTextShown)
+    }
+
+    static let DEV_SAVED: Int32 = UI_DEV_SAVED
+    static let DEV_AUTO: Int32 = UI_DEV_AUTO
+    static func deviceChoice(hasSetting: Bool, found: Bool) -> Int32 { ui_device_choice(hasSetting, found) }
+
+    static func probesClaude(preferred: Int32) -> Bool { ui_probes_claude(preferred) }
+    static func transcriptHasEnd(runState: Int32) -> Bool { ui_transcript_has_end(runState) }
+    static func testPhrasePossible(intoCall: Bool, hasBlackHole: Bool) -> Bool { ui_test_phrase_possible(intoCall, hasBlackHole) }
+
+    static let OUTSTATUS_NONE: Int32 = UI_OUT_NONE
+    static let OUTSTATUS_PAUSED: Int32 = UI_OUT_PAUSED
+    static let OUTSTATUS_SPEAKING: Int32 = UI_OUT_SPEAKING
+    static let OUTSTATUS_NO_BLACKHOLE: Int32 = UI_OUT_NO_BLACKHOLE
+    static func outgoingStatus(paused: Bool, speaking: Bool, running: Bool, hasBlackHole: Bool) -> Int32 {
+        ui_outgoing_status(paused, speaking, running, hasBlackHole)
+    }
+
+    static let COL_FOUND: Int32 = UI_COL_FOUND
+    static let COL_SEARCH: Int32 = UI_COL_SEARCH
+    static func callOutputLabel(hasBlackHole: Bool, hasSetting: Bool) -> Int32 { ui_call_output_label(hasBlackHole, hasSetting) }
+
+    static let TN_NONE: Int32 = UI_TN_NONE
+    static let TN_NO_KEY: Int32 = UI_TN_NO_KEY
+    static let TN_NO_KEY_FALLBACK: Int32 = UI_TN_NO_KEY_FALLBACK
+    static func translatorNote(preferred: Int32, claudeAvailable: Bool) -> Int32 { ui_translator_note(preferred, claudeAvailable) }
+
+    /// Permissions: AVAuthorizationStatus / SFSpeechRecognizerAuthorizationStatus raw value → state → row.
+    static let PERM_UNKNOWN: Int32 = UI_PERM_UNKNOWN
+    static let PERM_GRANTED: Int32 = UI_PERM_GRANTED
+    static let PERM_DENIED: Int32 = UI_PERM_DENIED
+    static let PERM_NOT_ASKED: Int32 = UI_PERM_NOT_ASKED
+    static func permissionState(raw: Int) -> Int32 { ui_permission_state(Int64(raw)) }
+    static let PA_NONE: Int32 = UI_PA_NONE
+    static let PA_REQUEST: Int32 = UI_PA_REQUEST
+    static let PA_OPEN_SETTINGS: Int32 = UI_PA_OPEN_SETTINGS
+    static func permissionAction(state: Int32) -> Int32 { ui_permission_action(state) }
+    static func permissionLight(state: Int32) -> Int32 { ui_permission_light(state) }
+    static func captureNeedsSettings(light: Int32) -> Bool { ui_capture_needs_settings(light) }
+    static func accessibilityLight(granted: Bool) -> Int32 { ui_accessibility_light(granted) }
+
+    /// Language packs (the SpeechRules.avail* codes).
+    static func packLight(status: Int) -> Int32 { ui_pack_light(Int32(clamping: status)) }
+    static func packRefreshable(light: Int32) -> Bool { ui_pack_refreshable(light) }
+    static func packDownloadEnabled(light: Int32) -> Bool { ui_pack_download_enabled(light) }
+
+    static let LINE_TRANSLATED: Int32 = UI_LINE_TRANSLATED
+    static let LINE_FAILED: Int32 = UI_LINE_FAILED
+    static let LINE_PENDING: Int32 = UI_LINE_PENDING
+    static func lineState(hasTranslation: Bool, hasError: Bool) -> Int32 { ui_line_state(hasTranslation, hasError) }
+
+    static func isTestMode(hasIncomingFile: Bool, hasOutgoingFile: Bool, hasSink: Bool, hasTranscriptDir: Bool) -> Bool {
+        ui_is_test_mode(hasIncomingFile, hasOutgoingFile, hasSink, hasTranscriptDir)
+    }
+
+    /// A launch flag means yes ("yes", "true", "1"); Swift lowercases it first.
+    static func isYes(utf8: [UInt8]) -> Bool {
+        var text = [UInt8](repeating: 0, count: Int(UI_WORD_MAX))
+        let n = min(utf8.count, text.count)
+        text.replaceSubrange(0..<n, with: utf8[0..<n])
+        return ui_is_yes(&text, Int64(utf8.count))
+    }
+
+    /// A stored source key: the byte length of its "app:" prefix, or -1 (all Mac audio).
+    static func sourceKeyAppPrefix(utf8: [UInt8]) -> Int {
+        var text = [UInt8](repeating: 0, count: Int(UI_KEY_MAX))
+        let n = min(utf8.count, text.count)
+        text.replaceSubrange(0..<n, with: utf8[0..<n])
+        return Int(ui_source_key_app_prefix(&text, Int64(utf8.count)))
+    }
+
+    /// The stored source keys: all Mac audio, and the prefix of an app.
+    static let SOURCE_SYSTEM_KEY = rowText(Int64(UI_ROW_SOURCE_SYSTEM))
+    static let SOURCE_APP_PREFIX = rowText(Int64(UI_ROW_SOURCE_APP_PREFIX))
+
+    private static func rowText(_ row: Int64) -> String {
+        var out = [UInt8](repeating: 0, count: Int(UI_WORD_MAX))
+        let n = Int(ui_row_bytes(row, &out))
+        return String(decoding: out[0..<n], as: UTF8.self)
+    }
+
+    /// Quitting during a call stops it first (and saves the transcript).
+    static func quitWaits(runState: Int32) -> Bool { ui_quit_waits(runState) }
 }

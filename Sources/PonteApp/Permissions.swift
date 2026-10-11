@@ -6,17 +6,31 @@ enum PermissionState: Equatable {
     case unknown, granted, denied, notAsked
 
     var isGranted: Bool { self == .granted }
+
+    /// From an AppRules.PERM_* code.
+    init(code: Int32) {
+        switch code {
+        case AppRules.PERM_GRANTED: self = .granted
+        case AppRules.PERM_DENIED: self = .denied
+        case AppRules.PERM_NOT_ASKED: self = .notAsked
+        default: self = .unknown
+        }
+    }
+
+    var code: Int32 {
+        switch self {
+        case .unknown: AppRules.PERM_UNKNOWN
+        case .granted: AppRules.PERM_GRANTED
+        case .denied: AppRules.PERM_DENIED
+        case .notAsked: AppRules.PERM_NOT_ASKED
+        }
+    }
 }
 
 @MainActor
 enum Permissions {
     static var microphone: PermissionState {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized: .granted
-        case .denied, .restricted: .denied
-        case .notDetermined: .notAsked
-        @unknown default: .unknown
-        }
+        PermissionState(code: AppRules.permissionState(raw: AVCaptureDevice.authorizationStatus(for: .audio).rawValue))
     }
 
     static func requestMicrophone() async -> PermissionState {
@@ -25,12 +39,7 @@ enum Permissions {
     }
 
     static var speech: PermissionState {
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .authorized: .granted
-        case .denied, .restricted: .denied
-        case .notDetermined: .notAsked
-        @unknown default: .unknown
-        }
+        PermissionState(code: AppRules.permissionState(raw: SFSpeechRecognizer.authorizationStatus().rawValue))
     }
 
     static func requestSpeech() async -> PermissionState {

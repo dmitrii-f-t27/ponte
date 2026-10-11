@@ -45,7 +45,7 @@ final class WAVFileSink: AudioPlayer, @unchecked Sendable {
                 }
                 guard let converter else { throw PonteAudioError.unsupportedFormat("\(buffer.format) → \(target)") }
                 let nextDiffers = i + 1 < input.count && !input[i + 1].format.isEqual(buffer.format)
-                let final = i == input.count - 1 || nextDiffers
+                let final = AudioRules.flushesConverter(index: i, count: input.count, nextFormatDiffers: nextDiffers)
                 out += PCM.samples(try converter.convert(buffer, final: final))
             }
         } catch {
@@ -66,7 +66,7 @@ final class WAVFileSink: AudioPlayer, @unchecked Sendable {
         // Pace like a device; stopAll() ends the wait.
         var left = Double(out.count) / sampleRate
         while left > 0, lock.withLock({ generation == myGeneration }) {
-            let step = min(left, 0.05)
+            let step = AppRules.sinkPaceStep(left: left)
             try? await Task.sleep(for: .milliseconds(Int(step * 1000)))
             left -= step
         }

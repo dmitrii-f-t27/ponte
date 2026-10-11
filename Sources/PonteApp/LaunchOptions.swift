@@ -22,7 +22,10 @@ struct LaunchOptions {
     var appearance: String?
 
     /// Files instead of devices: no permissions or call needed.
-    var isTestMode: Bool { incomingFile != nil || outgoingFile != nil || outgoingSink != nil || transcriptDir != nil }
+    var isTestMode: Bool {
+        AppRules.isTestMode(hasIncomingFile: incomingFile != nil, hasOutgoingFile: outgoingFile != nil,
+                            hasSink: outgoingSink != nil, hasTranscriptDir: transcriptDir != nil)
+    }
 
     init() {}
 
@@ -40,7 +43,7 @@ struct LaunchOptions {
         outgoingSink = path("PonteOutgoingSink")
         transcriptDir = path("PonteTranscriptDir")
         if let flag = string("PonteAutostart") {
-            autostart = ["yes", "true", "1"].contains(flag.lowercased())
+            autostart = AppRules.isYes(utf8: Array(flag.lowercased().utf8))
         }
         if let step = string("PonteWizardStep"), let n = Int32(step) { wizardStep = n }
         appearance = string("PonteAppearance")

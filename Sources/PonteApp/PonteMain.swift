@@ -57,7 +57,7 @@ final class PonteAppDelegate: NSObject, NSApplicationDelegate {
     /// Stops both lanes first so the transcript of a running call is saved.
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model, model.isRunning else { return .terminateNow }
+        guard let model, AppRules.quitWaits(runState: model.runState.code) else { return .terminateNow }
         Task { @MainActor in
             await model.prepareToQuit()
             sender.reply(toApplicationShouldTerminate: true)

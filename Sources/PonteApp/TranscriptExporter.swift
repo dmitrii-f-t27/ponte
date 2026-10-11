@@ -9,7 +9,7 @@ enum TranscriptExporter {
             .appendingPathComponent("Ponte", isDirectory: true)
     }
 
-    static func fileName(for date: Date, attempt: Int32 = 1, timeZone: TimeZone = .current) -> String {
+    static func fileName(for date: Date, attempt: Int32 = AppRules.FIRST_ATTEMPT, timeZone: TimeZone = .current) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         let c = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
@@ -26,7 +26,7 @@ enum TranscriptExporter {
         var bytes = 0
         for character in text {
             let size = String(character).utf8.count
-            if bytes + size > Int(AppRules.MD_ESCAPE_MAX_INPUT) { break }
+            guard AppRules.fitsEscapeInput(bytes: bytes, charBytes: size) else { break }
             cut.append(character)
             bytes += size
         }
@@ -45,7 +45,11 @@ enum TranscriptExporter {
             out += "- Время: \(minute.string(from: startedAt))–\(minute.string(from: endedAt))\n"
         }
         out += "- Фраз: \(lines.count) (они: \(theirs), я: \(lines.count - theirs))\n\n---\n"
-        for line in lines.sorted(by: { $0.at < $1.at }) {
+        let ordered = lines.enumerated().sorted {
+            AppRules.lineBefore(atA: $0.element.at.timeIntervalSinceReferenceDate, indexA: $0.offset,
+                                atB: $1.element.at.timeIntervalSinceReferenceDate, indexB: $1.offset)
+        }.map(\.element)
+        for line in ordered {
             let who = line.direction == .incoming ? "Они" : "Я"
             let route = "\(line.direction.source.rawValue) → \(line.direction.target.rawValue)"
             var header = "\n**\(second.string(from: line.at)) · \(who)** (\(route))"
@@ -68,7 +72,7 @@ enum TranscriptExporter {
     static func write(lines: [ConversationLine], startedAt: Date, endedAt: Date? = nil,
                       sourceName: String? = nil, to folder: URL = defaultFolder) throws -> URL {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        var attempt: Int32 = 1
+        var attempt = AppRules.FIRST_ATTEMPT
         var url = folder.appendingPathComponent(fileName(for: startedAt, attempt: attempt))
         while FileManager.default.fileExists(atPath: url.path) {
             attempt += 1

@@ -1,4 +1,5 @@
 import AppKit
+import PonteAudio
 import PonteCore
 import SwiftUI
 
@@ -39,7 +40,7 @@ struct StatusChip: View {
             } else {
                 indicator
             }
-            if let level, check == .ok {
+            if let level, AppRules.showsLevel(light: check.light) {
                 LevelMeter(level: level)
             }
         }
@@ -71,7 +72,7 @@ struct LevelMeter: View {
     let level: Float
 
     var body: some View {
-        let normalized = CGFloat(min(1, max(0, (20 * log10(max(level, 1e-5)) + 60) / 60)))
+        let normalized = CGFloat(AudioRules.meterFraction(level: level))
         ZStack(alignment: .leading) {
             Capsule().fill(Color.primary.opacity(0.1))
             Capsule().fill(Color.green.opacity(0.8)).frame(width: 28 * normalized)
@@ -132,17 +133,18 @@ struct LineRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            if let translation = line.translation, !translation.isEmpty {
-                Text(translation)
+            switch AppRules.lineState(hasTranslation: !(line.translation ?? "").isEmpty, hasError: line.translationError != nil) {
+            case AppRules.LINE_TRANSLATED:
+                Text(line.translation ?? "")
                     .font(.system(size: isNewest ? fontSize + 2 : fontSize, weight: isNewest ? .semibold : .regular))
                     .foregroundStyle(Color.primary.opacity(isNewest ? 1 : 0.72))
                     .fixedSize(horizontal: false, vertical: true)
-            } else if let error = line.translationError {
+            case AppRules.LINE_FAILED:
                 Label("Перевод не получен", systemImage: "exclamationmark.triangle")
                     .font(.system(size: max(13, fontSize - 6)))
                     .foregroundStyle(.orange)
-                    .help(error)
-            } else {
+                    .help(line.translationError ?? "")
+            default:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("переводится…")
@@ -236,7 +238,7 @@ struct CommandBox: View {
                 NSPasteboard.general.setString(command, forType: .string)
                 copied = true
                 Task {
-                    try? await Task.sleep(for: .seconds(2))
+                    try? await Task.sleep(for: .milliseconds(AppRules.COPIED_FEEDBACK_MS))
                     copied = false
                 }
             } label: {

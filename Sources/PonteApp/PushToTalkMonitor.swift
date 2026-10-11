@@ -23,12 +23,12 @@ final class PushToTalkMonitor {
     /// Installs the monitors for an AppRules.PTT_SCOPE_* code.
     func apply(scope: Int32) {
         stop()
-        guard scope != AppRules.PTT_SCOPE_NONE else { return }
+        guard AppRules.pttLocal(scope: scope) else { return }
         local = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event.modifierFlags) }
             return event
         }
-        if scope == AppRules.PTT_SCOPE_GLOBAL {
+        if AppRules.pttGlobal(scope: scope) {
             global = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
                 MainActor.assumeIsolated { self?.handle(event.modifierFlags) }
             }

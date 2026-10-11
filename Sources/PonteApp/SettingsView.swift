@@ -1,3 +1,4 @@
+import PonteAudio
 import PonteCore
 import PonteSpeech
 import SwiftUI
@@ -47,9 +48,10 @@ private struct DevicesSettings: View {
                              automatic: "Системный по умолчанию", devices: model.inputDevices)
                 DevicePicker(title: "Мои наушники", uid: $model.headphonesUID,
                              automatic: "Системный выход (\(model.defaultOutput?.name ?? "—"))",
-                             devices: model.outputDevices.filter { !$0.isVirtualMic })
+                             devices: model.outputDevices.filter { !AudioRules.isBlackHole(name: $0.name) })
                 DevicePicker(title: "Вывод в звонок", uid: $model.callOutputUID,
-                             automatic: model.blackHoleDevice != nil && model.callOutputUID.isEmpty
+                             automatic: AppRules.callOutputLabel(hasBlackHole: model.blackHoleDevice != nil,
+                                                                 hasSetting: !model.callOutputUID.isEmpty) == AppRules.COL_FOUND
                                  ? "BlackHole (найден: \(model.blackHoleDevice?.name ?? ""))"
                                  : "BlackHole (найти автоматически)",
                              devices: model.outputDevices)
@@ -129,6 +131,7 @@ private struct TranslationSettings: View {
     var body: some View {
         @Bindable var model = model
         let claude = model.claudeAvailable
+        let note = AppRules.translatorNote(preferred: model.translatorKind.ruleCode, claudeAvailable: claude)
         Form {
             Section {
                 Picker("Переводчик", selection: $model.translatorKind) {
@@ -137,7 +140,7 @@ private struct TranslationSettings: View {
                         .disabled(!claude)
                 }
                 .pickerStyle(.radioGroup)
-                if !claude {
+                if note != AppRules.TN_NONE {
                     HStack {
                         Text("Claude включится, когда в связке ключей появится элемент «ponte-anthropic-key».")
                             .font(.callout)
@@ -145,7 +148,7 @@ private struct TranslationSettings: View {
                         Spacer()
                         Button("Проверить снова") { model.recheckClaude() }
                     }
-                    if model.translatorKind == .claude {
+                    if note == AppRules.TN_NO_KEY_FALLBACK {
                         Text("Пока ключа нет, используется Apple.")
                             .font(.callout)
                             .foregroundStyle(.orange)
