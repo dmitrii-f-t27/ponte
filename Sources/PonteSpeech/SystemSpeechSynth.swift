@@ -98,13 +98,22 @@ public final class SystemSpeechSynth: SpeechSynth, @unchecked Sendable {
 
     /// One Float32 mono buffer at the voice's native sample rate (22 050 Hz for the compact voices).
     public func synthesize(_ text: String, lang: Lang) async throws -> [AVAudioPCMBuffer] {
+        try await synthesize(text, lang: lang, ratePercent: 100)
+    }
+
+    /// Same at `ratePercent` of the normal speed (`SpeechRules.utteranceRateMilli`), on top of `rate`.
+    public func synthesize(_ text: String, lang: Lang, ratePercent: Int32) async throws -> [AVAudioPCMBuffer] {
         let phrase = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !phrase.isEmpty else { return [] }
         guard let voice = voice(for: lang) else { throw PonteSpeechError.voiceUnavailable(lang) }
 
         let utterance = AVSpeechUtterance(string: phrase)
         utterance.voice = voice
-        if let rate { utterance.rate = rate }
+        if rate != nil || ratePercent != 100 {
+            let base = rate.map { Int(($0 * 1000).rounded()) } ?? SpeechRules.defaultUtteranceRateMilli
+            let milli = SpeechRules.utteranceRateMilli(ratePercent: Int(ratePercent), baseRateMilli: base)
+            utterance.rate = Float(milli) / 1000
+        }
 
         let timeoutMs = SpeechRules.synthesisTimeoutMs(textBytes: phrase.utf8.count)
         let raw = try await render(utterance, timeout: Double(timeoutMs) / 1000)

@@ -440,3 +440,40 @@ private final class FakeTranslator: Translator, @unchecked Sendable {
         #expect(a.voiceDuration(in: 2.85...3.5) == 0)
     }
 }
+
+// MARK: - Integration additions (speaking rate, per-direction glossary)
+
+@Test func speakingRateMapsPercentToUtteranceRate() {
+    #expect(SpeechRules.utteranceRateMilli(ratePercent: 100, baseRateMilli: 500) == 500)
+    #expect([110, 120, 130].map { SpeechRules.utteranceRateMilli(ratePercent: $0, baseRateMilli: 500) } == [517, 534, 551])
+    #expect(SpeechRules.utteranceRateMilli(ratePercent: 90, baseRateMilli: 500) == 483)   // truncates toward zero
+    #expect(SpeechRules.utteranceRateMilli(ratePercent: 130, baseRateMilli: 990) == 1_000)
+    #expect(SpeechRules.utteranceRateMilli(ratePercent: 0, baseRateMilli: 100) == 0)
+}
+
+@Test func claudeGlossaryIsKeptPerDirection() {
+    let claude = ClaudeTranslator(apiKey: "test")
+    claude.glossary = ["shared": "общий"]
+    claude.setGlossary(["Trinity": "Тринити"], from: .ptBR, to: .ru)
+    claude.setGlossary(["Тринити": "Trinity"], from: .ru, to: .ptBR)
+    #expect(claude.glossary(from: .ptBR, to: .ru) == ["Trinity": "Тринити"])
+    #expect(claude.glossary(from: .ru, to: .ptBR) == ["Тринити": "Trinity"])
+    let other = ClaudeTranslator(apiKey: "test")
+    other.glossary = ["shared": "общий"]
+    #expect(other.glossary(from: .ptBR, to: .ru) == ["shared": "общий"])
+    let prompt = ClaudeRequestBuilder(glossary: claude.glossary(from: .ptBR, to: .ru)).systemPrompt(from: .ptBR, to: .ru)
+    #expect(prompt.contains("Trinity → Тринити") && !prompt.contains("Тринити → Trinity"))
+}
+
+/// SystemSpeechSynth at 130 % renders the same phrase noticeably shorter (real voices on this Mac).
+@Test func systemSynthSpeaksFasterAtHigherRate() async throws {
+    let synth = SystemSpeechSynth()
+    guard synth.voice(for: .ptBR) != nil else { return }
+    let text = "Podemos enviar a proposta até sexta-feira."
+    let normal = try await synth.synthesize(text, lang: .ptBR)
+    let fast = try await synth.synthesize(text, lang: .ptBR, ratePercent: 130)
+    let n = normal.reduce(0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
+    let f = fast.reduce(0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
+    #expect(n > 0 && f > 0)
+    #expect(f < n * 0.85)
+}

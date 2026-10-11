@@ -423,4 +423,22 @@ public enum SpeechRules {
 
     /// After `didFinish`, wait this long for a late buffer before completing.
     public static let synthesisEndGraceMs = 200
+
+    // MARK: - Speaking rate
+
+    /// `AVSpeechUtteranceDefaultSpeechRate` (0.5) in thousandths.
+    public static let defaultUtteranceRateMilli = 500
+    /// Rate change, in thousandths of AVSpeechUtterance.rate, per 10 % of speaking speed.
+    /// Measured on this Mac 2026-10-11 (Luciana pt-BR and Milena ru, same phrase at rates
+    /// 0.50…0.55): +0.01 of rate ≈ +5.8 % of speed, and the engine works in steps of 0.005.
+    public static let utteranceRateMilliPer10Percent = 17
+
+    /// AVSpeechUtterance.rate × 1000 for speaking at `ratePercent` of normal speed, starting from
+    /// `baseRateMilli` (the voice's normal rate, `defaultUtteranceRateMilli` unless the user set one):
+    /// base + (ratePercent − 100) × 17 / 10, integer division truncating toward zero,
+    /// clamped to 0…1000. 100 → base; 110 → base + 17; 120 → base + 34; 130 → base + 51.
+    public static func utteranceRateMilli(ratePercent: Int, baseRateMilli: Int) -> Int {
+        let rate = baseRateMilli + (ratePercent - 100) * utteranceRateMilliPer10Percent / 10
+        return min(1000, max(0, rate))
+    }
 }

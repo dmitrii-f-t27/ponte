@@ -8,7 +8,8 @@ import Security
 public final class ClaudeTranslator: Translator, @unchecked Sendable {
     public let name: String
     public let model: String
-    /// Names and terms: source wording → required translation.
+    /// Names and terms: source wording → required translation. Used for every direction
+    /// that has no glossary of its own (`setGlossary(_:from:to:)`).
     public var glossary: [String: String] {
         get { lock.withLock { _glossary } }
         set { lock.withLock { _glossary = newValue } }
@@ -18,6 +19,21 @@ public final class ClaudeTranslator: Translator, @unchecked Sendable {
     private let session: URLSession
     private let lock = NSLock()
     private var _glossary: [String: String] = [:]
+    private var directional: [String: [String: String]] = [:]
+
+    /// Glossary for one direction only (source wording in `from` → required wording in `to`).
+    /// The app keeps one glossary of pairs and passes each direction its own side, so a prompt
+    /// never lists terms of the opposite direction.
+    public func setGlossary(_ terms: [String: String], from: Lang, to: Lang) {
+        lock.withLock { directional[Self.key(from, to)] = terms }
+    }
+
+    /// The glossary a request from → to uses.
+    public func glossary(from: Lang, to: Lang) -> [String: String] {
+        lock.withLock { directional[Self.key(from, to)] ?? _glossary }
+    }
+
+    private static func key(_ from: Lang, _ to: Lang) -> String { "\(from.rawValue)>\(to.rawValue)" }
 
     /// Nil when the keychain item is absent or empty.
     public convenience init?(keychainItem: String = "ponte-anthropic-key", model: String = ClaudeRequestBuilder.defaultModel) {
@@ -40,7 +56,7 @@ public final class ClaudeTranslator: Translator, @unchecked Sendable {
     public func translate(_ text: String, from: Lang, to: Lang, context: [String]) async throws -> String {
         let phrase = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !phrase.isEmpty else { return "" }
-        let request = try ClaudeRequestBuilder(model: model, glossary: glossary)
+        let request = try ClaudeRequestBuilder(model: model, glossary: glossary(from: from, to: to))
             .urlRequest(apiKey: apiKey, text: phrase, from: from, to: to, context: context)
         let data: Data
         let response: URLResponse
