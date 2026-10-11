@@ -349,6 +349,14 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
             if let lastCut, Self.ms(fed - lastCut) <= SpeechRules.minCutSpacingMs { return }
             if Self.debug { Self.log("source stalled: finalize at \(f(fed))") }
             requestFinalize(through: fed)
+            // The analyzer finalizes only once it has audio past the cut: give it silence,
+            // as a live source would.
+            if let format = analyzerFormat, let continuation = inputContinuation,
+               let silence = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(
+                   max(1, Int(format.sampleRate) * SpeechRules.stallFlushSilenceMs / 1000))) {
+                silence.frameLength = silence.frameCapacity   // zero-filled
+                feed(silence, format: format, continuation: continuation)
+            }
         }
     }
 

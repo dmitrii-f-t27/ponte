@@ -3,7 +3,7 @@
 // SpeechProbe — command-line checks for PonteSpeech.
 //   SpeechProbe assets [--download]
 //   SpeechProbe voices --lang pt-BR|ru-RU
-//   SpeechProbe transcribe --lang pt-BR|ru-RU [--realtime] [--no-cuts] file
+//   SpeechProbe transcribe --lang pt-BR|ru-RU [--realtime] [--no-cuts] [--tail S] [--hold S] file
 //   SpeechProbe translate --from pt-BR --to ru-RU [--engine auto|apple|claude] "text"
 //   SpeechProbe synth --lang pt-BR [--voice id] --out file.wav "text"
 //   SpeechProbe pipeline --direction incoming|outgoing [--engine auto|apple|claude] [--tail 2] [--out file.wav] file
@@ -25,7 +25,7 @@ struct Args {
     var positional: [String] = []
 
     static let valueOptions: Set<String> = ["--lang", "--from", "--to", "--engine", "--out", "--voice",
-                                            "--direction", "--tail", "--rate"]
+                                            "--direction", "--tail", "--rate", "--hold"]
 
     init(_ argv: [String]) {
         var it = argv.dropFirst().makeIterator()
@@ -62,7 +62,7 @@ let usage = """
 usage:
   SpeechProbe assets [--download]
   SpeechProbe voices --lang pt-BR|ru-RU
-  SpeechProbe transcribe --lang pt-BR|ru-RU [--realtime] [--no-fast] [--no-cuts] file
+  SpeechProbe transcribe --lang pt-BR|ru-RU [--realtime] [--no-fast] [--no-cuts] [--tail S] [--hold S] file
   SpeechProbe translate --from pt-BR --to ru-RU [--engine auto|apple|claude] "text"
   SpeechProbe synth --lang pt-BR [--voice id] [--rate 0.5] --out file.wav "text"
   SpeechProbe pipeline --direction incoming|outgoing [--engine auto|apple|claude] [--tail 2] [--out file.wav]
@@ -181,7 +181,10 @@ func cmdVoices(_ lang: Lang) {
     }
 }
 
-func cmdTranscribe(_ lang: Lang, file: URL, realtime: Bool, fast: Bool) async {
+/// `tail`: seconds of silence fed after the file (nil = 1.5 s realtime, 0.5 s otherwise).
+/// `hold`: seconds to keep the stream open after the last audio before `finish()`, like a live
+/// source that went quiet (checks the transcriber's stall finalization).
+func cmdTranscribe(_ lang: Lang, file: URL, realtime: Bool, fast: Bool, tail: Double? = nil, hold: Double = 0) async {
     let t = makeTranscriber(lang, fast: fast)
     do { try await t.prepare() } catch { fail("prepare: \(describe(error))") }
     let events: AsyncStream<TranscriptEvent>
@@ -199,8 +202,14 @@ func cmdTranscribe(_ lang: Lang, file: URL, realtime: Bool, fast: Bool) async {
         }
     }
     do {
-        _ = try await Task.detached { try feed(file: file, into: t, realtime: realtime, tail: realtime ? 1.5 : 0.5, clockStart: clock) }.value
+        let silence = tail ?? (realtime ? 1.5 : 0.5)
+        _ = try await Task.detached { try feed(file: file, into: t, realtime: realtime, tail: silence, clockStart: clock) }.value
     } catch { fail("read \(file.path): \(describe(error))") }
+    if hold > 0 {
+        print("[\(f2(secs(ContinuousClock.now - clock)))s] audio ended; holding the stream open \(f2(hold)) s")
+        try? await Task.sleep(for: .milliseconds(Int(hold * 1000)))
+        print("[\(f2(secs(ContinuousClock.now - clock)))s] finish()")
+    }
     await t.finish()
     await printer.value
     if let e = t.lastError { print("transcriber error: \(describe(e))") }
@@ -378,7 +387,9 @@ case "voices":
 case "transcribe":
     guard let lang = args.lang("--lang"), let path = args.positional.first else { fail(usage) }
     await cmdTranscribe(lang, file: URL(fileURLWithPath: path), realtime: args.flags.contains("--realtime"),
-                        fast: !args.flags.contains("--no-fast"))
+                        fast: !args.flags.contains("--no-fast"),
+                        tail: args.options["--tail"].flatMap(Double.init),
+                        hold: args.options["--hold"].flatMap(Double.init) ?? 0)
 case "translate":
     guard let from = args.lang("--from"), let to = args.lang("--to"), let text = args.positional.first else { fail(usage) }
     await cmdTranslate(from: from, to: to, text: text, engine: args.options["--engine"])

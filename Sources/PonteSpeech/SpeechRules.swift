@@ -67,6 +67,9 @@ public enum SpeechRules {
     public static let stallTimeoutMs = 1_000
     /// How often the transcriber's watchdog checks for a stalled source.
     public static let watchdogPeriodMs = 250
+    /// Silence fed to the analyzer after a stall cut. SpeechAnalyzer finalizes only once it has
+    /// audio past the cut (measured 2026-10-11: with nothing after it, the final waited for `finish()`).
+    public static let stallFlushSilenceMs = 500
 
     /// `finalizeAction` results.
     public static let actionWait = 0
