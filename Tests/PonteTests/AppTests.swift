@@ -820,3 +820,40 @@ private typealias R = AppRules
     #expect(abs(hz - 440) < 3)
     #expect(abs(AudioRules.rms(first) - Float(0.5 / 2.0.squareRoot())) < 0.01)
 }
+
+/// A test file is followed by silence, like a live source, until stop().
+@Test func testFileSourceContinuesWithSilence() async throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ponte-file-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let url = folder.appendingPathComponent("tone.wav")
+    let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 16_000.0,
+                                   AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false]
+    do {
+        let file = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+        try file.write(from: PCM.buffer([Float](repeating: 0.5, count: 3_200), sampleRate: 16_000))   // 0.2 s
+        file.close()
+    }
+    final class Box: @unchecked Sendable {
+        let lock = NSLock()
+        var frames = 0, loud = 0, ended = false
+    }
+    let box = Box()
+    let source = TestFileSource(url: url)
+    source.onFileEnd = { box.lock.withLock { box.ended = true } }
+    try source.start { buffer, _ in
+        let peak = AudioRules.peak(PCM.samples(buffer))
+        box.lock.withLock {
+            box.frames += Int(buffer.frameLength)
+            if peak > 0 { box.loud += Int(buffer.frameLength) }
+        }
+    }
+    try await Task.sleep(for: .milliseconds(700))
+    source.stop()
+    let (frames, loud, ended) = box.lock.withLock { (box.frames, box.loud, box.ended) }
+    #expect(ended)
+    #expect(loud == 3_200)
+    #expect(frames >= 3_200 + 4 * 1_600)          // about 0.5 s of silence after the file
+    try await Task.sleep(for: .milliseconds(250))
+    #expect(box.lock.withLock { box.frames } <= frames + 1_600)   // stopped
+}

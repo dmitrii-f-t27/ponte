@@ -246,11 +246,18 @@ final class AppModel {
     }
 
     /// Test mode: `kill -TERM` quits like ⌘Q (stop, save the transcript), so scripts can end a run.
+    /// Stops first, then terminates: calling terminate from inside this main-queue handler while a
+    /// call runs would wait for the stop task on the very queue the handler is holding.
     private func installTerminationSignalHandler() {
         guard terminationSignal == nil else { return }
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        source.setEventHandler { NSApp.terminate(nil) }
+        source.setEventHandler { [weak self] in
+            Task { @MainActor in
+                await self?.prepareToQuit()
+                NSApp.terminate(nil)
+            }
+        }
         source.resume()
         terminationSignal = source
     }
@@ -462,11 +469,11 @@ final class AppModel {
         return tap
     }
 
-    /// Test mode: a file played in real time instead of a device.
+    /// Test mode: a file played in real time instead of a device, then silence (TestFileSource).
     private func fileSource(_ url: URL, direction: Direction) -> AudioSource {
-        let file = FileSource(url: url, realtime: true)
+        let file = TestFileSource(url: url)
         let log = self.log
-        file.onFinish = {
+        file.onFileEnd = {
             log.info("test file ended (\(direction.rawValue, privacy: .public)): \(url.lastPathComponent, privacy: .public)")
         }
         return file
