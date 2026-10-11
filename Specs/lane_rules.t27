@@ -1,0 +1,464 @@
+// SPDX-License-Identifier: MIT
+; Specs/lane_rules.t27 -- Ponte: one translation lane, from the microphone gate to the played phrase
+; Mirrors the lane parts of PonteApp/AppRules.swift one to one: packed steps, the capture gate, the
+; phrase pipeline, what cancels queued speech, replay, the speech rate, the echo guard, phrase timing,
+; the context window and push-to-talk (same codes, constants and order of checks; each function names
+; the Swift function it mirrors). Codes are Int32, milliseconds Int64, modifier flags UInt64.
+; Not ported, by decision: AppRules.isBuiltInSpeaker (the app uses dv_device_kind / dv_echo_risk) and
+; AppRules.isVoice(rms) (the app uses sg_is_voice). ASCII only.
+; Generated C: Sources/PonteSpecs/lane_rules.h (Specs/generate.sh).
+
+module PonteLaneRules;
+
+; --- Packed steps: (state << 8) | (action & 0xFF) ------------------------------------------------------
+pub const LN_STEP_SHIFT : u32 = 8;
+pub const LN_STEP_ACTION_MASK : u32 = 255;
+
+; --- Capture modes (MODE_*) ---------------------------------------------------------------------------
+pub const LN_MODE_CONTINUOUS : i32 = 0;
+pub const LN_MODE_PUSH_TO_TALK : i32 = 1;
+
+; --- Capture gate: is a transcriber session open? (GATE_*, GEV_*, GACT_*) ---------------------------------
+pub const LN_GATE_STOPPED : i32 = 0;
+; Preparing models and the translator.
+pub const LN_GATE_STARTING : i32 = 1;
+; Running, audio ignored.
+pub const LN_GATE_CLOSED : i32 = 2;
+; Running, audio goes to a transcriber session.
+pub const LN_GATE_OPEN : i32 = 3;
+pub const LN_GEV_START : i32 = 1;
+pub const LN_GEV_STARTED : i32 = 2;
+pub const LN_GEV_START_FAILED : i32 = 3;
+pub const LN_GEV_STOP : i32 = 4;
+; The push-to-talk key, the pause or the mode changed (the new value comes with the event).
+pub const LN_GEV_KEY : i32 = 5;
+pub const LN_GEV_PAUSE : i32 = 6;
+pub const LN_GEV_MODE : i32 = 7;
+pub const LN_GACT_NONE : i32 = 0;
+pub const LN_GACT_OPEN_SEGMENT : i32 = 1;
+; Flush the session: its last phrase becomes final.
+pub const LN_GACT_CLOSE_SEGMENT : i32 = 2;
+
+; --- Phrase pipeline: one final phrase from transcript to speech (PH_*, PEV_*, PACT_*, PF_*) ---------------
+pub const LN_PH_LISTENING : i32 = 0;
+pub const LN_PH_TRANSLATING : i32 = 1;
+pub const LN_PH_SYNTH_QUEUED : i32 = 2;
+pub const LN_PH_PLAY_QUEUED : i32 = 3;
+pub const LN_PH_PLAYING : i32 = 4;
+; Final: text on screen, not spoken.
+pub const LN_PH_SHOWN : i32 = 5;
+; Final: text on screen and played.
+pub const LN_PH_SPOKEN : i32 = 6;
+; Final: nothing (empty text or speech cancelled).
+pub const LN_PH_DROPPED : i32 = 7;
+pub const LN_PEV_PARTIAL : i32 = 1;
+pub const LN_PEV_FINAL : i32 = 2;
+pub const LN_PEV_TRANSLATED : i32 = 3;
+pub const LN_PEV_TRANSLATE_FAILED : i32 = 4;
+pub const LN_PEV_SYNTH_DEQUEUED : i32 = 5;
+pub const LN_PEV_SYNTHESIZED : i32 = 6;
+pub const LN_PEV_SYNTH_FAILED : i32 = 7;
+pub const LN_PEV_PLAY_DEQUEUED : i32 = 8;
+pub const LN_PEV_PLAYED : i32 = 9;
+pub const LN_PACT_NONE : i32 = 0;
+pub const LN_PACT_SHOW_PARTIAL : i32 = 1;
+; Show the original, start translating.
+pub const LN_PACT_TRANSLATE : i32 = 2;
+; Show the result, do not speak.
+pub const LN_PACT_SHOW_ONLY : i32 = 3;
+; Show the translation, queue it for speech.
+pub const LN_PACT_SYNTHESIZE : i32 = 4;
+pub const LN_PACT_RUN_SYNTH : i32 = 5;
+pub const LN_PACT_ENQUEUE_PLAY : i32 = 6;
+pub const LN_PACT_PLAY : i32 = 7;
+pub const LN_PACT_DROP : i32 = 8;
+pub const LN_PACT_FINISH : i32 = 9;
+; FINAL: the phrase is empty; TRANSLATED: the translation is empty.
+pub const LN_PF_EMPTY_TEXT : i32 = 1;
+; Decided when the phrase became final.
+pub const LN_PF_SPEAK_REQUESTED : i32 = 2;
+; No pause, stop or voice-off since the phrase was queued.
+pub const LN_PF_GENERATION_CURRENT : i32 = 4;
+; Automatic speech is on for this lane now.
+pub const LN_PF_SPEECH_ENABLED : i32 = 8;
+pub const LN_PF_PAUSED : i32 = 16;
+pub const LN_PF_HAS_SYNTH : i32 = 32;
+pub const LN_PF_HAS_PLAYER : i32 = 64;
+; Synthesis produced at least one buffer.
+pub const LN_PF_HAS_AUDIO : i32 = 128;
+
+; --- Pause, voice toggle, stop (SCE_*): does queued speech die? ---------------------------------------------
+pub const LN_SCE_PAUSE : i32 = 1;
+pub const LN_SCE_VOICE : i32 = 2;
+pub const LN_SCE_STOP : i32 = 3;
+
+; --- Replay (RPL_*) ----------------------------------------------------------------------------------------
+pub const LN_RPL_NONE : i32 = 0;
+; Play the cached audio of the last phrase.
+pub const LN_RPL_AUDIO : i32 = 1;
+; Synthesize the last translation first.
+pub const LN_RPL_SYNTH : i32 = 2;
+
+; --- Speech rate: 100 % + 10 % per waiting phrase, up to 3 ---------------------------------------------------
+pub const LN_RATE_BASE_PERCENT : i32 = 100;
+pub const LN_RATE_STEP_PERCENT : i32 = 10;
+pub const LN_RATE_MAX_STEPS : i32 = 3;
+
+; --- Echo guard ---------------------------------------------------------------------------------------------
+; ECHO_TAIL_MS: the mic stays ignored this long after the voice stops.
+pub const LN_ECHO_TAIL_MS : i64 = 700;
+
+; --- Phrase timing (END_GAP_MS, END_*) ------------------------------------------------------------------------
+pub const LN_END_GAP_MS : i64 = 250;
+pub const LN_END_NOW : i32 = 0;
+pub const LN_END_LAST_VOICE : i32 = 1;
+pub const LN_END_LAST_PARTIAL : i32 = 2;
+
+; --- Context (CONTEXT_PHRASES) ----------------------------------------------------------------------------------
+pub const LN_CONTEXT_PHRASES : i32 = 4;
+
+; --- Push-to-talk keys (PTT_*) and NSEvent modifier bits ----------------------------------------------------------
+pub const LN_PTT_RIGHT_OPTION : i32 = 0;
+pub const LN_PTT_RIGHT_COMMAND : i32 = 1;
+pub const LN_PTT_RIGHT_SHIFT : i32 = 2;
+pub const LN_PTT_RIGHT_CONTROL : i32 = 3;
+pub const LN_PTT_FN : i32 = 4;
+; Right-hand keys: the device-dependent bits of IOLLEvent.h (NX_DEVICER*KEYMASK); Fn: NSEventModifierFlagFunction.
+pub const LN_FLAG_RIGHT_OPTION : u64 = 0x40;
+pub const LN_FLAG_RIGHT_COMMAND : u64 = 0x10;
+pub const LN_FLAG_RIGHT_SHIFT : u64 = 0x04;
+pub const LN_FLAG_RIGHT_CONTROL : u64 = 0x2000;
+pub const LN_FLAG_FUNCTION : u64 = 0x800000;
+; Push-to-talk scope (PTT_SCOPE_*): only while a Ponte window is active, or everywhere (Accessibility).
+pub const LN_PTT_SCOPE_NONE : i32 = 0;
+pub const LN_PTT_SCOPE_WINDOW : i32 = 1;
+pub const LN_PTT_SCOPE_GLOBAL : i32 = 2;
+
+; --- Packed steps --------------------------------------------------------------------------------------------------
+; pack: (state << 8) | (action & 0xFF), on the 32-bit pattern (as Swift's Int32 shift).
+pub fn ln_pack(state: i32, action: i32) -> i32 {
+    var s: u32 = cast_u32(state);
+    var a: u32 = cast_u32(action);
+    var packed: u32 = (s << LN_STEP_SHIFT) | (a & LN_STEP_ACTION_MASK);
+    return cast_i32(packed);
+}
+
+; stepState: step >> 8 (arithmetic).
+pub fn ln_step_state(step: i32) -> i32 {
+    return step >> LN_STEP_SHIFT;
+}
+
+; stepAction: step & 0xFF.
+pub fn ln_step_action(step: i32) -> i32 {
+    return step & 255;
+}
+
+; --- Capture gate ---------------------------------------------------------------------------------------------------
+; gateWantsOpen: audio is transcribed only while not paused, and in continuous mode or with the key held.
+pub fn ln_gate_wants_open(mode: i32, key_held: bool, paused: bool) -> bool {
+    return paused == false and (mode == LN_MODE_CONTINUOUS or key_held);
+}
+
+; gateStep: mode, key_held and paused are the values after the event. Returns a packed step.
+pub fn ln_gate_step(state: i32, event: i32, mode: i32, key_held: bool, paused: bool) -> i32 {
+    var want: bool = ln_gate_wants_open(mode, key_held, paused);
+    if (state == LN_GATE_STOPPED and event == LN_GEV_START) { return ln_pack(LN_GATE_STARTING, LN_GACT_NONE); }
+    if (state == LN_GATE_STARTING and event == LN_GEV_STARTED) {
+        if (want) { return ln_pack(LN_GATE_OPEN, LN_GACT_OPEN_SEGMENT); }
+        return ln_pack(LN_GATE_CLOSED, LN_GACT_NONE);
+    }
+    if (state == LN_GATE_STARTING and (event == LN_GEV_START_FAILED or event == LN_GEV_STOP)) {
+        return ln_pack(LN_GATE_STOPPED, LN_GACT_NONE);
+    }
+    if (state == LN_GATE_CLOSED and event == LN_GEV_STOP) { return ln_pack(LN_GATE_STOPPED, LN_GACT_NONE); }
+    if (state == LN_GATE_OPEN and event == LN_GEV_STOP) { return ln_pack(LN_GATE_STOPPED, LN_GACT_CLOSE_SEGMENT); }
+    var change: bool = event == LN_GEV_KEY or event == LN_GEV_PAUSE or event == LN_GEV_MODE;
+    if (state == LN_GATE_CLOSED and change) {
+        if (want) { return ln_pack(LN_GATE_OPEN, LN_GACT_OPEN_SEGMENT); }
+        return ln_pack(LN_GATE_CLOSED, LN_GACT_NONE);
+    }
+    if (state == LN_GATE_OPEN and change) {
+        if (want) { return ln_pack(LN_GATE_OPEN, LN_GACT_NONE); }
+        return ln_pack(LN_GATE_CLOSED, LN_GACT_CLOSE_SEGMENT);
+    }
+    return ln_pack(state, LN_GACT_NONE);
+}
+
+; --- Phrase pipeline ------------------------------------------------------------------------------------------------
+pub fn ln_has(flags: i32, flag: i32) -> bool {
+    return (flags & flag) != 0;
+}
+
+; phraseStep: one final phrase from transcript to speech. Returns a packed step.
+pub fn ln_phrase_step(stage: i32, event: i32, flags: i32) -> i32 {
+    if (stage == LN_PH_LISTENING and event == LN_PEV_PARTIAL) { return ln_pack(LN_PH_LISTENING, LN_PACT_SHOW_PARTIAL); }
+    if (stage == LN_PH_LISTENING and event == LN_PEV_FINAL) {
+        if (ln_has(flags, LN_PF_EMPTY_TEXT)) { return ln_pack(LN_PH_DROPPED, LN_PACT_DROP); }
+        return ln_pack(LN_PH_TRANSLATING, LN_PACT_TRANSLATE);
+    }
+    if (stage == LN_PH_TRANSLATING and event == LN_PEV_TRANSLATED) {
+        var speak: bool = ln_has(flags, LN_PF_EMPTY_TEXT) == false and ln_has(flags, LN_PF_SPEAK_REQUESTED) and ln_has(flags, LN_PF_GENERATION_CURRENT) and ln_has(flags, LN_PF_SPEECH_ENABLED) and ln_has(flags, LN_PF_PAUSED) == false and ln_has(flags, LN_PF_HAS_SYNTH) and ln_has(flags, LN_PF_HAS_PLAYER);
+        if (speak) { return ln_pack(LN_PH_SYNTH_QUEUED, LN_PACT_SYNTHESIZE); }
+        return ln_pack(LN_PH_SHOWN, LN_PACT_SHOW_ONLY);
+    }
+    if (stage == LN_PH_TRANSLATING and event == LN_PEV_TRANSLATE_FAILED) { return ln_pack(LN_PH_SHOWN, LN_PACT_SHOW_ONLY); }
+    if (stage == LN_PH_SYNTH_QUEUED and event == LN_PEV_SYNTH_DEQUEUED) {
+        if (ln_has(flags, LN_PF_GENERATION_CURRENT) and ln_has(flags, LN_PF_HAS_SYNTH)) {
+            return ln_pack(LN_PH_SYNTH_QUEUED, LN_PACT_RUN_SYNTH);
+        }
+        return ln_pack(LN_PH_DROPPED, LN_PACT_DROP);
+    }
+    if (stage == LN_PH_SYNTH_QUEUED and event == LN_PEV_SYNTHESIZED) {
+        if (ln_has(flags, LN_PF_GENERATION_CURRENT) and ln_has(flags, LN_PF_HAS_AUDIO)) {
+            return ln_pack(LN_PH_PLAY_QUEUED, LN_PACT_ENQUEUE_PLAY);
+        }
+        return ln_pack(LN_PH_DROPPED, LN_PACT_DROP);
+    }
+    if (stage == LN_PH_SYNTH_QUEUED and event == LN_PEV_SYNTH_FAILED) { return ln_pack(LN_PH_DROPPED, LN_PACT_DROP); }
+    if (stage == LN_PH_PLAY_QUEUED and event == LN_PEV_PLAY_DEQUEUED) {
+        if (ln_has(flags, LN_PF_GENERATION_CURRENT) and ln_has(flags, LN_PF_HAS_PLAYER) and ln_has(flags, LN_PF_HAS_AUDIO)) {
+            return ln_pack(LN_PH_PLAYING, LN_PACT_PLAY);
+        }
+        return ln_pack(LN_PH_DROPPED, LN_PACT_DROP);
+    }
+    if (stage == LN_PH_PLAYING and event == LN_PEV_PLAYED) { return ln_pack(LN_PH_SPOKEN, LN_PACT_FINISH); }
+    return ln_pack(stage, LN_PACT_NONE);
+}
+
+; speakRequested: recorded when a phrase becomes final (LN_PF_SPEAK_REQUESTED).
+pub fn ln_speak_requested(speech_enabled: bool, paused: bool) -> bool {
+    return speech_enabled and paused == false;
+}
+
+; cancelsSpeech: pausing, switching the voice off, or stopping kills queued speech.
+pub fn ln_cancels_speech(event: i32, value: bool) -> bool {
+    if (event == LN_SCE_PAUSE) { return value; }
+    if (event == LN_SCE_VOICE) { return value == false; }
+    if (event == LN_SCE_STOP) { return true; }
+    return false;
+}
+
+; replayAction: honoured even when paused or with automatic speech off (the user asked explicitly).
+pub fn ln_replay_action(has_cached_audio: bool, has_last_translation: bool, has_player: bool) -> i32 {
+    if (has_player == false) { return LN_RPL_NONE; }
+    if (has_cached_audio) { return LN_RPL_AUDIO; }
+    if (has_last_translation) { return LN_RPL_SYNTH; }
+    return LN_RPL_NONE;
+}
+
+; speechRatePercent: waiting = phrases of this lane queued ahead; 0 -> 100, 1 -> 110, 2 -> 120, 3+ -> 130.
+pub fn ln_speech_rate_percent(waiting: i32) -> i32 {
+    if (waiting <= 0) { return LN_RATE_BASE_PERCENT; }
+    var steps: i32 = waiting;
+    if (LN_RATE_MAX_STEPS < steps) { steps = LN_RATE_MAX_STEPS; }
+    return LN_RATE_BASE_PERCENT + LN_RATE_STEP_PERCENT * steps;
+}
+
+; echoGuardBlocksMic: the mic is ignored while the Russian voice plays through the Mac's speakers and for
+; ECHO_TAIL_MS after it. ms_since_speech < 0 means "never spoke".
+pub fn ln_echo_guard_blocks_mic(speaker_output: bool, incoming_speaking: bool, ms_since_speech: i64) -> bool {
+    if (speaker_output == false) { return false; }
+    if (incoming_speaking) { return true; }
+    return ms_since_speech >= 0 and ms_since_speech < LN_ECHO_TAIL_MS;
+}
+
+; phraseEndSource: which moment counts as the end of the phrase when its final arrives: the last loud
+; buffer after END_GAP_MS of silence; else the last volatile update; else now. Negative means unknown.
+pub fn ln_phrase_end_source(ms_since_voice: i64, ms_since_partial: i64) -> i32 {
+    if (ms_since_voice >= LN_END_GAP_MS) { return LN_END_LAST_VOICE; }
+    if (ms_since_partial >= 0) { return LN_END_LAST_PARTIAL; }
+    return LN_END_NOW;
+}
+
+; latencyMs: max(0, ready - end).
+pub fn ln_latency_ms(end_ms: i64, ready_ms: i64) -> i64 {
+    var d: i64 = ready_ms - end_ms;
+    if (d >= 0) { return d; }
+    return 0;
+}
+
+; contextOverflow: how many of the oldest remembered phrases to forget after adding one.
+pub fn ln_context_overflow(count: i32) -> i32 {
+    var extra: i32 = count - LN_CONTEXT_PHRASES;
+    if (extra >= 0) { return extra; }
+    return 0;
+}
+
+; pttKeyDown: flags = NSEvent.modifierFlags.rawValue.
+pub fn ln_ptt_key_down(key: i32, flags: u64) -> bool {
+    if (key == LN_PTT_RIGHT_OPTION) { return (flags & LN_FLAG_RIGHT_OPTION) != 0; }
+    if (key == LN_PTT_RIGHT_COMMAND) { return (flags & LN_FLAG_RIGHT_COMMAND) != 0; }
+    if (key == LN_PTT_RIGHT_SHIFT) { return (flags & LN_FLAG_RIGHT_SHIFT) != 0; }
+    if (key == LN_PTT_RIGHT_CONTROL) { return (flags & LN_FLAG_RIGHT_CONTROL) != 0; }
+    if (key == LN_PTT_FN) { return (flags & LN_FLAG_FUNCTION) != 0; }
+    return false;
+}
+
+; pttScope: none unless running in push-to-talk; global with Accessibility, else the Ponte window only.
+pub fn ln_ptt_scope(running: bool, mode: i32, accessibility_granted: bool) -> i32 {
+    if (running == false or mode != LN_MODE_PUSH_TO_TALK) { return LN_PTT_SCOPE_NONE; }
+    if (accessibility_granted) { return LN_PTT_SCOPE_GLOBAL; }
+    return LN_PTT_SCOPE_WINDOW;
+}
+
+test ln_gate_rules {
+    assert ln_pack(3, 2) == 770;
+    assert ln_step_state(770) == 3;
+    assert ln_step_action(770) == 2;
+    assert ln_pack(1, 511) == 511;
+    assert ln_step_state(ln_pack(-1, 7)) == -1;
+    assert ln_step_action(ln_pack(-1, 7)) == 7;
+    // rulesGateMachine
+    assert ln_gate_step(LN_GATE_STOPPED, LN_GEV_START, 0, false, false) == ln_pack(LN_GATE_STARTING, LN_GACT_NONE);
+    assert ln_gate_step(LN_GATE_STARTING, LN_GEV_STARTED, 0, false, false) == ln_pack(LN_GATE_OPEN, LN_GACT_OPEN_SEGMENT);
+    assert ln_gate_step(LN_GATE_STARTING, LN_GEV_STARTED, 1, false, false) == ln_pack(LN_GATE_CLOSED, LN_GACT_NONE);
+    assert ln_gate_step(LN_GATE_STARTING, LN_GEV_STARTED, 0, false, true) == ln_pack(LN_GATE_CLOSED, LN_GACT_NONE);
+    assert ln_gate_step(LN_GATE_STARTING, LN_GEV_START_FAILED, 0, false, false) == ln_pack(LN_GATE_STOPPED, LN_GACT_NONE);
+    assert ln_gate_step(LN_GATE_STARTING, LN_GEV_STOP, 0, false, false) == ln_pack(LN_GATE_STOPPED, LN_GACT_NONE);
+    assert ln_gate_step(LN_GATE_CLOSED, LN_GEV_KEY, 1, true, false) == ln_pack(LN_GATE_OPEN, LN_GACT_OPEN_SEGMENT);
+    assert ln_gate_step(LN_GATE_OPEN, LN_GEV_KEY, 1, false, false) == ln_pack(LN_GATE_CLOSED, LN_GACT_CLOSE_SEGMENT);
+    assert ln_gate_step(LN_GATE_OPEN, LN_GEV_KEY, 0, false, false) == ln_pack(LN_GATE_OPEN, LN_GACT_NONE);
+    assert ln_gate_step(LN_GATE_OPEN, LN_GEV_PAUSE, 0, false, true) == ln_pack(LN_GATE_CLOSED, LN_GACT_CLOSE_SEGMENT);
+    assert ln_gate_step(LN_GATE_CLOSED, LN_GEV_PAUSE, 0, false, false) == ln_pack(LN_GATE_OPEN, LN_GACT_OPEN_SEGMENT);
+    assert ln_gate_step(LN_GATE_CLOSED, LN_GEV_PAUSE, 1, true, true) == ln_pack(LN_GATE_CLOSED, LN_GACT_NONE);
+    assert ln_gate_step(LN_GATE_OPEN, LN_GEV_MODE, 1, false, false) == ln_pack(LN_GATE_CLOSED, LN_GACT_CLOSE_SEGMENT);
+    assert ln_gate_step(LN_GATE_CLOSED, LN_GEV_MODE, 0, false, false) == ln_pack(LN_GATE_OPEN, LN_GACT_OPEN_SEGMENT);
+    assert ln_gate_step(LN_GATE_OPEN, LN_GEV_STOP, 0, false, false) == ln_pack(LN_GATE_STOPPED, LN_GACT_CLOSE_SEGMENT);
+    assert ln_gate_step(LN_GATE_CLOSED, LN_GEV_STOP, 0, false, false) == ln_pack(LN_GATE_STOPPED, LN_GACT_NONE);
+    assert ln_gate_step(LN_GATE_STOPPED, LN_GEV_KEY, 0, true, false) == ln_pack(LN_GATE_STOPPED, LN_GACT_NONE);
+    assert ln_gate_step(LN_GATE_OPEN, LN_GEV_START, 0, false, false) == ln_pack(LN_GATE_OPEN, LN_GACT_NONE);
+    // Every input: an opened segment always lands OPEN, a closed one CLOSED or STOPPED; STOP never
+    // leaves the gate running; the gate is open after a step exactly when it wants to be (once running).
+    var s: i32 = 0;
+    var bad: u32 = 0;
+    while (s < 4) {
+        var e: i32 = 0;
+        while (e < 9) {
+            var bits: i32 = 0;
+            while (bits < 8) {
+                var mode: i32 = bits & 1;
+                var key: bool = (bits & 2) == 2;
+                var paused: bool = (bits & 4) == 4;
+                var step: i32 = ln_gate_step(s, e, mode, key, paused);
+                var next: i32 = ln_step_state(step);
+                var act: i32 = ln_step_action(step);
+                if (act == LN_GACT_OPEN_SEGMENT and next != LN_GATE_OPEN) { bad = bad + 1; }
+                if (act == LN_GACT_CLOSE_SEGMENT and next == LN_GATE_OPEN) { bad = bad + 1; }
+                if (e == LN_GEV_STOP and next != LN_GATE_STOPPED) { bad = bad + 1; }
+                if ((s == LN_GATE_OPEN or s == LN_GATE_CLOSED) and (e == LN_GEV_KEY or e == LN_GEV_PAUSE or e == LN_GEV_MODE)) {
+                    if ((next == LN_GATE_OPEN) != ln_gate_wants_open(mode, key, paused)) { bad = bad + 1; }
+                }
+                bits = bits + 1;
+            }
+            e = e + 1;
+        }
+        s = s + 1;
+    }
+    assert bad == 0;
+}
+
+test ln_phrase_rules {
+    var all: i32 = LN_PF_SPEAK_REQUESTED | LN_PF_GENERATION_CURRENT | LN_PF_SPEECH_ENABLED | LN_PF_HAS_SYNTH | LN_PF_HAS_PLAYER;
+    // rulesPhrasePipeline
+    assert ln_phrase_step(LN_PH_LISTENING, LN_PEV_PARTIAL, 0) == ln_pack(LN_PH_LISTENING, LN_PACT_SHOW_PARTIAL);
+    assert ln_phrase_step(LN_PH_LISTENING, LN_PEV_FINAL, 0) == ln_pack(LN_PH_TRANSLATING, LN_PACT_TRANSLATE);
+    assert ln_phrase_step(LN_PH_LISTENING, LN_PEV_FINAL, LN_PF_EMPTY_TEXT) == ln_pack(LN_PH_DROPPED, LN_PACT_DROP);
+    assert ln_phrase_step(LN_PH_TRANSLATING, LN_PEV_TRANSLATED, all) == ln_pack(LN_PH_SYNTH_QUEUED, LN_PACT_SYNTHESIZE);
+    assert ln_phrase_step(LN_PH_TRANSLATING, LN_PEV_TRANSLATED, all - LN_PF_SPEAK_REQUESTED) == ln_pack(LN_PH_SHOWN, LN_PACT_SHOW_ONLY);
+    assert ln_phrase_step(LN_PH_TRANSLATING, LN_PEV_TRANSLATED, all - LN_PF_GENERATION_CURRENT) == ln_pack(LN_PH_SHOWN, LN_PACT_SHOW_ONLY);
+    assert ln_phrase_step(LN_PH_TRANSLATING, LN_PEV_TRANSLATED, all - LN_PF_SPEECH_ENABLED) == ln_pack(LN_PH_SHOWN, LN_PACT_SHOW_ONLY);
+    assert ln_phrase_step(LN_PH_TRANSLATING, LN_PEV_TRANSLATED, all - LN_PF_HAS_SYNTH) == ln_pack(LN_PH_SHOWN, LN_PACT_SHOW_ONLY);
+    assert ln_phrase_step(LN_PH_TRANSLATING, LN_PEV_TRANSLATED, all - LN_PF_HAS_PLAYER) == ln_pack(LN_PH_SHOWN, LN_PACT_SHOW_ONLY);
+    assert ln_phrase_step(LN_PH_TRANSLATING, LN_PEV_TRANSLATED, all | LN_PF_PAUSED) == ln_pack(LN_PH_SHOWN, LN_PACT_SHOW_ONLY);
+    assert ln_phrase_step(LN_PH_TRANSLATING, LN_PEV_TRANSLATED, all | LN_PF_EMPTY_TEXT) == ln_pack(LN_PH_SHOWN, LN_PACT_SHOW_ONLY);
+    assert ln_phrase_step(LN_PH_TRANSLATING, LN_PEV_TRANSLATE_FAILED, all) == ln_pack(LN_PH_SHOWN, LN_PACT_SHOW_ONLY);
+    assert ln_phrase_step(LN_PH_SYNTH_QUEUED, LN_PEV_SYNTH_DEQUEUED, LN_PF_GENERATION_CURRENT | LN_PF_HAS_SYNTH) == ln_pack(LN_PH_SYNTH_QUEUED, LN_PACT_RUN_SYNTH);
+    assert ln_phrase_step(LN_PH_SYNTH_QUEUED, LN_PEV_SYNTH_DEQUEUED, LN_PF_HAS_SYNTH) == ln_pack(LN_PH_DROPPED, LN_PACT_DROP);
+    assert ln_phrase_step(LN_PH_SYNTH_QUEUED, LN_PEV_SYNTHESIZED, LN_PF_GENERATION_CURRENT | LN_PF_HAS_AUDIO) == ln_pack(LN_PH_PLAY_QUEUED, LN_PACT_ENQUEUE_PLAY);
+    assert ln_phrase_step(LN_PH_SYNTH_QUEUED, LN_PEV_SYNTHESIZED, LN_PF_GENERATION_CURRENT) == ln_pack(LN_PH_DROPPED, LN_PACT_DROP);
+    assert ln_phrase_step(LN_PH_SYNTH_QUEUED, LN_PEV_SYNTHESIZED, LN_PF_HAS_AUDIO) == ln_pack(LN_PH_DROPPED, LN_PACT_DROP);
+    assert ln_phrase_step(LN_PH_SYNTH_QUEUED, LN_PEV_SYNTH_FAILED, all) == ln_pack(LN_PH_DROPPED, LN_PACT_DROP);
+    var playable: i32 = LN_PF_GENERATION_CURRENT | LN_PF_HAS_PLAYER | LN_PF_HAS_AUDIO;
+    assert ln_phrase_step(LN_PH_PLAY_QUEUED, LN_PEV_PLAY_DEQUEUED, playable) == ln_pack(LN_PH_PLAYING, LN_PACT_PLAY);
+    assert ln_phrase_step(LN_PH_PLAY_QUEUED, LN_PEV_PLAY_DEQUEUED, playable - LN_PF_GENERATION_CURRENT) == ln_pack(LN_PH_DROPPED, LN_PACT_DROP);
+    assert ln_phrase_step(LN_PH_PLAYING, LN_PEV_PLAYED, 0) == ln_pack(LN_PH_SPOKEN, LN_PACT_FINISH);
+    assert ln_phrase_step(LN_PH_SHOWN, LN_PEV_PLAYED, 0) == ln_pack(LN_PH_SHOWN, LN_PACT_NONE);
+    assert ln_speak_requested(true, false) == true;
+    assert ln_speak_requested(true, true) == false;
+    assert ln_speak_requested(false, false) == false;
+    // Every stage, event and flag set: the final stages never move; nothing plays without a player
+    // and audio; nothing is synthesized while paused.
+    var stage: i32 = 0;
+    var bad: u32 = 0;
+    while (stage < 8) {
+        var e: i32 = 0;
+        while (e < 11) {
+            var f: i32 = 0;
+            while (f < 256) {
+                var step: i32 = ln_phrase_step(stage, e, f);
+                var next: i32 = ln_step_state(step);
+                var act: i32 = ln_step_action(step);
+                if (stage >= LN_PH_SHOWN and (next != stage or act != LN_PACT_NONE)) { bad = bad + 1; }
+                if (act == LN_PACT_PLAY and (ln_has(f, LN_PF_HAS_PLAYER) == false or ln_has(f, LN_PF_HAS_AUDIO) == false)) { bad = bad + 1; }
+                if (act == LN_PACT_SYNTHESIZE and ln_has(f, LN_PF_PAUSED)) { bad = bad + 1; }
+                if (act > LN_PACT_FINISH or next > LN_PH_DROPPED) { bad = bad + 1; }
+                f = f + 1;
+            }
+            e = e + 1;
+        }
+        stage = stage + 1;
+    }
+    assert bad == 0;
+}
+
+test ln_speech_control_rules {
+    // rulesSpeechControl
+    assert ln_cancels_speech(LN_SCE_PAUSE, true) == true;
+    assert ln_cancels_speech(LN_SCE_PAUSE, false) == false;
+    assert ln_cancels_speech(LN_SCE_VOICE, false) == true;
+    assert ln_cancels_speech(LN_SCE_VOICE, true) == false;
+    assert ln_cancels_speech(LN_SCE_STOP, false) == true;
+    assert ln_cancels_speech(99, true) == false;
+    assert ln_replay_action(true, true, true) == LN_RPL_AUDIO;
+    assert ln_replay_action(false, true, true) == LN_RPL_SYNTH;
+    assert ln_replay_action(false, false, true) == LN_RPL_NONE;
+    assert ln_replay_action(true, true, false) == LN_RPL_NONE;
+    assert ln_speech_rate_percent(-1) == 100;
+    assert ln_speech_rate_percent(0) == 100;
+    assert ln_speech_rate_percent(1) == 110;
+    assert ln_speech_rate_percent(2) == 120;
+    assert ln_speech_rate_percent(3) == 130;
+    assert ln_speech_rate_percent(4) == 130;
+    assert ln_speech_rate_percent(10) == 130;
+    // rulesEchoAndTiming
+    assert ln_echo_guard_blocks_mic(false, true, 0) == false;
+    assert ln_echo_guard_blocks_mic(true, true, -1) == true;
+    assert ln_echo_guard_blocks_mic(true, false, 699) == true;
+    assert ln_echo_guard_blocks_mic(true, false, 700) == false;
+    assert ln_echo_guard_blocks_mic(true, false, -1) == false;
+    assert ln_phrase_end_source(250, 10) == LN_END_LAST_VOICE;
+    assert ln_phrase_end_source(249, 10) == LN_END_LAST_PARTIAL;
+    assert ln_phrase_end_source(-1, 0) == LN_END_LAST_PARTIAL;
+    assert ln_phrase_end_source(100, -1) == LN_END_NOW;
+    assert ln_latency_ms(1000, 2250) == 1250;
+    assert ln_latency_ms(2000, 1000) == 0;
+    assert ln_context_overflow(0) == 0;
+    assert ln_context_overflow(3) == 0;
+    assert ln_context_overflow(4) == 0;
+    assert ln_context_overflow(5) == 1;
+    assert ln_context_overflow(9) == 5;
+    // rulesSourceTranslatorPushToTalk (push-to-talk part)
+    assert ln_ptt_key_down(LN_PTT_RIGHT_OPTION, 0x80040) == true;
+    assert ln_ptt_key_down(LN_PTT_RIGHT_OPTION, 0x80020) == false;
+    assert ln_ptt_key_down(LN_PTT_RIGHT_COMMAND, 0x100010) == true;
+    assert ln_ptt_key_down(LN_PTT_RIGHT_COMMAND, 0x100008) == false;
+    assert ln_ptt_key_down(LN_PTT_RIGHT_SHIFT, 0x20004) == true;
+    assert ln_ptt_key_down(LN_PTT_RIGHT_CONTROL, 0x42000) == true;
+    assert ln_ptt_key_down(LN_PTT_FN, 0x800000) == true;
+    assert ln_ptt_key_down(LN_PTT_FN, 0x40) == false;
+    assert ln_ptt_key_down(9, 0xFFFFFFFF) == false;
+    assert ln_ptt_scope(false, LN_MODE_PUSH_TO_TALK, true) == LN_PTT_SCOPE_NONE;
+    assert ln_ptt_scope(true, LN_MODE_CONTINUOUS, true) == LN_PTT_SCOPE_NONE;
+    assert ln_ptt_scope(true, LN_MODE_PUSH_TO_TALK, false) == LN_PTT_SCOPE_WINDOW;
+    assert ln_ptt_scope(true, LN_MODE_PUSH_TO_TALK, true) == LN_PTT_SCOPE_GLOBAL;
+}

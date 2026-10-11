@@ -1,0 +1,595 @@
+// SPDX-License-Identifier: MIT
+; Specs/segment_rules.t27 -- Ponte: what is voice, when a phrase is finalized, what a phrase says
+; Mirrors the voice-activity, phrase-finalization, text-classification and cut-index parts of
+; PonteSpeech/SpeechRules.swift one to one (same constants, codes, order of checks and integer
+; arithmetic; each function names the Swift function it mirrors). Times are integer milliseconds,
+; a level is RMS x 100000, a noise floor is in milli-levels (level x 1000), text is UTF-8 bytes in a
+; buffer of SG_TEXT_MAX bytes with its length (a longer length is read as SG_TEXT_MAX), and whitespace
+; is 0x20, 0x09, 0x0A and 0x0D. ASCII only.
+; Generated C: Sources/PonteSpecs/segment_rules.h (Specs/generate.sh).
+
+module PonteSegmentRules;
+
+pub const SG_TEXT_MAX : i64 = 8192;
+
+; --- Voice activity (level meter) --------------------------------------------------------------------
+; meterWindowMs: the transcriber meters audio in windows of this length.
+pub const SG_METER_WINDOW_MS : i64 = 20;
+; voiceThresholdLevel: RMS 0.01 (about -40 dBFS) in level units.
+pub const SG_VOICE_THRESHOLD_LEVEL : i64 = 1000;
+; Effective threshold = max(voiceThresholdLevel, floor x 5 / 2), the floor in milli-levels.
+pub const SG_NOISE_FLOOR_FACTOR_NUMERATOR : i64 = 5;
+pub const SG_NOISE_FLOOR_FACTOR_DENOMINATOR : i64 = 2;
+pub const SG_MILLI : i64 = 1000;
+; noiseFloorRiseMs: the noise floor rises toward louder windows with this time constant.
+pub const SG_NOISE_FLOOR_RISE_MS : i64 = 60000;
+; minRecordedPauseMs: silences shorter than this do not split voice segments.
+pub const SG_MIN_RECORDED_PAUSE_MS : i64 = 60;
+
+; --- Phrase finalization ------------------------------------------------------------------------------
+; endOfPhrasePauseMs: silence that ends a phrase.
+pub const SG_END_OF_PHRASE_PAUSE_MS : i64 = 600;
+; trailingMarginMs: audio kept after the voice stops, so the last word is not clipped.
+pub const SG_TRAILING_MARGIN_MS : i64 = 150;
+; maxPhraseMs: speech longer than this is cut at the next suitable pause.
+pub const SG_MAX_PHRASE_MS : i64 = 6000;
+; minPauseMs: a pause this long inside a long monologue is a cut point.
+pub const SG_MIN_PAUSE_MS : i64 = 150;
+; shortPauseMs: a gap this long counts after sentence-ending punctuation, or after hardLimitMs.
+pub const SG_SHORT_PAUSE_MS : i64 = 80;
+; hardLimitMs: after this much speech any short pause is a cut point.
+pub const SG_HARD_LIMIT_MS : i64 = 9000;
+; absoluteLimitMs: after this much speech the phrase is cut at once, even inside a word.
+pub const SG_ABSOLUTE_LIMIT_MS : i64 = 12000;
+; minCutSpacingMs: two cuts must be at least this far apart.
+pub const SG_MIN_CUT_SPACING_MS : i64 = 100;
+; stallTimeoutMs: no audio for this long in the middle of a phrase finalizes what was heard.
+pub const SG_STALL_TIMEOUT_MS : i64 = 1000;
+; watchdogPeriodMs: how often the transcriber's watchdog checks for a stalled source.
+pub const SG_WATCHDOG_PERIOD_MS : i64 = 250;
+
+; finalizeAction results.
+pub const SG_ACTION_WAIT : i64 = 0;
+pub const SG_ACTION_END_OF_PHRASE : i64 = 1;
+pub const SG_ACTION_MONOLOGUE_PAUSE : i64 = 2;
+pub const SG_ACTION_MONOLOGUE_FORCED : i64 = 3;
+
+; finalizeAction flags: something to finalize; the stream is closing; Ponte's own cuts are off.
+pub const SG_FLAG_HAS_CONTENT : i64 = 1;
+pub const SG_FLAG_FINISHING : i64 = 2;
+pub const SG_FLAG_CUTS_DISABLED : i64 = 4;
+
+; punctuationCode results.
+pub const SG_PUNCTUATION_NONE : i64 = 0;
+pub const SG_PUNCTUATION_CLAUSE : i64 = 1;
+pub const SG_PUNCTUATION_SENTENCE : i64 = 2;
+
+; --- Phrases -------------------------------------------------------------------------------------------
+; minPhraseBytes: shorter text is never a phrase.
+pub const SG_MIN_PHRASE_BYTES : i64 = 2;
+; hallucinationMaxWords, hallucinationMinVoiceMs: up to this many words over less than this much
+; metered voice are dropped.
+pub const SG_HALLUCINATION_MAX_WORDS : i64 = 3;
+pub const SG_HALLUCINATION_MIN_VOICE_MS : i64 = 100;
+; phraseAction results.
+pub const SG_PHRASE_KEEP : i64 = 0;
+pub const SG_PHRASE_DROP_HALLUCINATION : i64 = 1;
+pub const SG_PHRASE_DROP_NO_CONTENT : i64 = 2;
+
+; --- Cutting long text -----------------------------------------------------------------------------------
+; speechChunkMaxBytes, speechChunkMinBytes: pieces of long finals for synthesis.
+pub const SG_SPEECH_CHUNK_MAX_BYTES : i64 = 200;
+pub const SG_SPEECH_CHUNK_MIN_BYTES : i64 = 24;
+
+; --- Bytes ------------------------------------------------------------------------------------------------
+pub const SG_SPACE : u8 = 32;
+pub const SG_TAB : u8 = 9;
+pub const SG_LF : u8 = 10;
+pub const SG_CR : u8 = 13;
+pub const SG_QUOTE : u8 = 34;
+pub const SG_APOSTROPHE : u8 = 39;
+pub const SG_PAREN_CLOSE : u8 = 41;
+pub const SG_DOT : u8 = 46;
+pub const SG_EXCLAMATION : u8 = 33;
+pub const SG_QUESTION : u8 = 63;
+pub const SG_COMMA : u8 = 44;
+pub const SG_SEMICOLON : u8 = 59;
+pub const SG_COLON : u8 = 58;
+; UTF-8: C2 BB is a closing guillemet; E2 80 9D a closing curly quote, E2 80 A6 an ellipsis,
+; E2 80 94 an em dash, E2 80 93 an en dash; E2 80 and E2 81 open General Punctuation.
+pub const SG_LEAD_C2 : u8 = 194;
+pub const SG_LEAD_C3 : u8 = 195;
+pub const SG_LEAD_E2 : u8 = 226;
+pub const SG_SECOND_80 : u8 = 128;
+pub const SG_SECOND_81 : u8 = 129;
+pub const SG_GUILLEMET_CLOSE : u8 = 187;
+pub const SG_CURLY_CLOSE : u8 = 157;
+pub const SG_ELLIPSIS : u8 = 166;
+pub const SG_EM_DASH : u8 = 148;
+pub const SG_EN_DASH : u8 = 147;
+pub const SG_CONTINUATION_MASK : u8 = 192;
+pub const SG_CONTINUATION : u8 = 128;
+
+; A text length as read here: below 0 is 0, above SG_TEXT_MAX is SG_TEXT_MAX.
+pub fn sg_text_len(len: i64) -> i64 {
+    if (len < 0) { return 0; }
+    if (len > SG_TEXT_MAX) { return SG_TEXT_MAX; }
+    return len;
+}
+
+; isSpace
+pub fn sg_is_space(b: u8) -> bool {
+    return b == SG_SPACE or b == SG_TAB or b == SG_LF or b == SG_CR;
+}
+
+; --- Voice activity ------------------------------------------------------------------------------------------
+; effectiveThreshold: max(voiceThresholdLevel, floorMilli * 5 / (2 * 1000)).
+pub fn sg_effective_threshold(floor_milli: i64) -> i64 {
+    var scaled: i64 = floor_milli * SG_NOISE_FLOOR_FACTOR_NUMERATOR / (SG_NOISE_FLOOR_FACTOR_DENOMINATOR * SG_MILLI);
+    if (scaled >= SG_VOICE_THRESHOLD_LEVEL) { return scaled; }
+    return SG_VOICE_THRESHOLD_LEVEL;
+}
+
+; isVoice: a meter window of this level is voice.
+pub fn sg_is_voice(level: i64, floor_milli: i64) -> bool {
+    return level >= sg_effective_threshold(floor_milli);
+}
+
+; nextNoiseFloor: drops at once to a quieter window, rises slowly toward a louder one
+; (by (target - floor) * d / noiseFloorRiseMs, d the window length clamped to 0...noiseFloorRiseMs).
+pub fn sg_next_noise_floor(floor_milli: i64, has_floor: bool, level: i64, duration_ms: i64) -> i64 {
+    var target: i64 = level * SG_MILLI;
+    if (has_floor == false or target < floor_milli) { return target; }
+    var d: i64 = duration_ms;
+    if (d < 0) { d = 0; }
+    if (d > SG_NOISE_FLOOR_RISE_MS) { d = SG_NOISE_FLOOR_RISE_MS; }
+    return floor_milli + (target - floor_milli) * d / SG_NOISE_FLOOR_RISE_MS;
+}
+
+; --- Phrase finalization ---------------------------------------------------------------------------------------
+; cutBackoffMs: how far before now the cut lies, max(0, pauseMs - trailingMarginMs) for the pause cuts.
+pub fn sg_cut_backoff_ms(action: i64, pause_ms: i64) -> i64 {
+    if (action == SG_ACTION_END_OF_PHRASE or action == SG_ACTION_MONOLOGUE_PAUSE) {
+        var back: i64 = pause_ms - SG_TRAILING_MARGIN_MS;
+        if (back >= 0) { return back; }
+        return 0;
+    }
+    return 0;
+}
+
+; finalizeAction: should the transcriber ask SpeechAnalyzer to finalize now?
+;   pause_ms         the current silence, 0 while someone speaks
+;   speech_ms        speech in this phrase, up to the start of the current silence or now
+;   punctuation      punctuationCode of the volatile text
+;   last_cut_ago_ms  time since the last requested cut (INT64_MAX if none)
+;   phrase_age_ms    time since the current phrase began
+;   flags            SG_FLAG_* bits
+; Nothing without content, while finishing or with cuts disabled. While speaking, only the absolute
+; limit cuts; a 600 ms pause ends the phrase; in a long monologue a 150 ms pause cuts, and so does an
+; 80 ms one after a sentence end or past the hard limit. A cut must lie inside the phrase and more than
+; minCutSpacingMs after the previous one.
+pub fn sg_finalize_action(pause_ms: i64, speech_ms: i64, punctuation: i64, last_cut_ago_ms: i64, phrase_age_ms: i64, flags: i64) -> i64 {
+    if ((flags & SG_FLAG_HAS_CONTENT) == 0 or (flags & SG_FLAG_FINISHING) != 0 or (flags & SG_FLAG_CUTS_DISABLED) != 0) {
+        return SG_ACTION_WAIT;
+    }
+    var action: i64 = SG_ACTION_WAIT;
+    if (pause_ms <= 0) {
+        if (speech_ms >= SG_ABSOLUTE_LIMIT_MS) { action = SG_ACTION_MONOLOGUE_FORCED; }
+    } else if (pause_ms >= SG_END_OF_PHRASE_PAUSE_MS) {
+        action = SG_ACTION_END_OF_PHRASE;
+    } else if (speech_ms >= SG_MAX_PHRASE_MS) {
+        if (pause_ms >= SG_MIN_PAUSE_MS) {
+            action = SG_ACTION_MONOLOGUE_PAUSE;
+        } else if (pause_ms >= SG_SHORT_PAUSE_MS and (punctuation == SG_PUNCTUATION_SENTENCE or speech_ms >= SG_HARD_LIMIT_MS)) {
+            action = SG_ACTION_MONOLOGUE_PAUSE;
+        }
+    }
+    if (action == SG_ACTION_WAIT) { return SG_ACTION_WAIT; }
+    var backoff: i64 = sg_cut_backoff_ms(action, pause_ms);
+    if (phrase_age_ms > backoff and last_cut_ago_ms - backoff > SG_MIN_CUT_SPACING_MS) { return action; }
+    return SG_ACTION_WAIT;
+}
+
+; --- Text classification -----------------------------------------------------------------------------------------
+; punctuationCode: the punctuation at the end of the text, ignoring trailing spaces, " ' ) and the
+; closing guillemet and curly quote. Sentence: . ! ? and the ellipsis. Clause: , ; : and the dashes.
+pub fn sg_punctuation_code(text: [8192]u8, len: i64) -> i64 {
+    var end: i64 = sg_text_len(len);
+    var trimming: bool = true;
+    while (trimming and end > 0) {
+        var t: u8 = text[end - 1];
+        if (sg_is_space(t) or t == SG_QUOTE or t == SG_APOSTROPHE or t == SG_PAREN_CLOSE) {
+            end = end - 1;
+        } else if (end >= 2 and text[end - 2] == SG_LEAD_C2 and t == SG_GUILLEMET_CLOSE) {
+            end = end - 2;
+        } else if (end >= 3 and text[end - 3] == SG_LEAD_E2 and text[end - 2] == SG_SECOND_80 and t == SG_CURLY_CLOSE) {
+            end = end - 3;
+        } else {
+            trimming = false;
+        }
+    }
+    if (end <= 0) { return SG_PUNCTUATION_NONE; }
+    var b: u8 = text[end - 1];
+    if (b == SG_DOT or b == SG_EXCLAMATION or b == SG_QUESTION) { return SG_PUNCTUATION_SENTENCE; }
+    if (b == SG_COMMA or b == SG_SEMICOLON or b == SG_COLON) { return SG_PUNCTUATION_CLAUSE; }
+    if (end >= 3 and text[end - 3] == SG_LEAD_E2 and text[end - 2] == SG_SECOND_80) {
+        if (b == SG_ELLIPSIS) { return SG_PUNCTUATION_SENTENCE; }
+        if (b == SG_EM_DASH or b == SG_EN_DASH) { return SG_PUNCTUATION_CLAUSE; }
+    }
+    return SG_PUNCTUATION_NONE;
+}
+
+; wordCount: words separated by ASCII whitespace.
+pub fn sg_word_count(text: [8192]u8, len: i64) -> i64 {
+    var n: i64 = sg_text_len(len);
+    var count: i64 = 0;
+    var in_word: bool = false;
+    var i: i64 = 0;
+    while (i < n) {
+        if (sg_is_space(text[i])) {
+            in_word = false;
+        } else if (in_word == false) {
+            in_word = true;
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return count;
+}
+
+; hasSpeechContent: at least minPhraseBytes and one letter or digit: an ASCII alphanumeric, or a
+; character from U+00C0 up (lead byte C3 or higher) outside General Punctuation (E2 80, E2 81).
+; C2 sequences (U+0080..U+00BF: symbols, guillemets, NBSP) are skipped.
+pub fn sg_has_speech_content(text: [8192]u8, len: i64) -> bool {
+    var n: i64 = sg_text_len(len);
+    if (n < SG_MIN_PHRASE_BYTES) { return false; }
+    var i: i64 = 0;
+    while (i < n) {
+        var b: u8 = text[i];
+        if (b < 128) {
+            if ((b >= 48 and b <= 57) or (b >= 65 and b <= 90) or (b >= 97 and b <= 122)) { return true; }
+            i = i + 1;
+        } else if (b == SG_LEAD_C2) {
+            i = i + 2;
+        } else if (b == SG_LEAD_E2 and i + 1 < n and (text[i + 1] == SG_SECOND_80 or text[i + 1] == SG_SECOND_81)) {
+            i = i + 3;
+        } else if (b >= SG_LEAD_C3) {
+            return true;
+        } else {
+            i = i + 1;
+        }
+    }
+    return false;
+}
+
+; phraseAction: drop text with no content; drop up to 3 words over less than 100 ms of voice.
+pub fn sg_phrase_action(text: [8192]u8, len: i64, voice_ms: i64) -> i64 {
+    if (sg_has_speech_content(text, len) == false) { return SG_PHRASE_DROP_NO_CONTENT; }
+    if (voice_ms < SG_HALLUCINATION_MIN_VOICE_MS and sg_word_count(text, len) <= SG_HALLUCINATION_MAX_WORDS) {
+        return SG_PHRASE_DROP_HALLUCINATION;
+    }
+    return SG_PHRASE_KEEP;
+}
+
+; --- Cutting long text -------------------------------------------------------------------------------------------
+; followedBySpace inside cutByteIndex: the end of the text, or whitespace.
+pub fn sg_followed_by_space(text: [8192]u8, n: i64, end: i64) -> bool {
+    if (end == n) { return true; }
+    return sg_is_space(text[end]);
+}
+
+; cutByteIndex: where to cut a long text, a byte index in minBytes...maxBytes (the head is text[0..<index]).
+; Text that fits returns its length. Otherwise the last sentence end (. ! ? ellipsis followed by a space or
+; the end), else the last clause end (, ; : dashes followed by a space), else the last space at or after
+; minBytes, else maxBytes moved back over continuation bytes (maxBytes itself if that reaches 0).
+pub fn sg_cut_byte_index(text: [8192]u8, len: i64, max_bytes: i64, min_bytes: i64) -> i64 {
+    var n: i64 = sg_text_len(len);
+    if (n <= max_bytes or max_bytes <= 0) { return n; }
+    var sentence: i64 = 0;
+    var clause: i64 = 0;
+    var space: i64 = 0;
+    var i: i64 = 0;
+    while (i < max_bytes) {
+        var b: u8 = text[i];
+        var end: i64 = 0;
+        var kind: i64 = 0;
+        if (b == SG_DOT or b == SG_EXCLAMATION or b == SG_QUESTION) {
+            end = i + 1;
+            kind = 2;
+        } else if (b == SG_COMMA or b == SG_SEMICOLON or b == SG_COLON) {
+            end = i + 1;
+            kind = 1;
+        } else if (b == SG_LEAD_E2 and i + 2 < n and text[i + 1] == SG_SECOND_80) {
+            var c: u8 = text[i + 2];
+            if (c == SG_ELLIPSIS) {
+                end = i + 3;
+                kind = 2;
+            } else if (c == SG_EM_DASH or c == SG_EN_DASH) {
+                end = i + 3;
+                kind = 1;
+            }
+        }
+        if (kind > 0 and end <= max_bytes and end >= min_bytes and sg_followed_by_space(text, n, end)) {
+            if (kind == 2) {
+                sentence = end;
+            } else {
+                clause = end;
+            }
+        }
+        if (sg_is_space(b) and i >= min_bytes) { space = i; }
+        i = i + 1;
+    }
+    if (sentence > 0) { return sentence; }
+    if (clause > 0) { return clause; }
+    if (space > 0) { return space; }
+    var j: i64 = max_bytes;
+    while (j > 0 and (text[j] & SG_CONTINUATION_MASK) == SG_CONTINUATION) { j = j - 1; }
+    if (j > 0) { return j; }
+    return max_bytes;
+}
+
+; --- Texts for the tests ---------------------------------------------------------------------------------------
+; >>> generated by Specs/tables/ponte_tables.py -- edit the lists there, not here
+; Texts for the tests
+; Bom dia.
+pub const SG_FX_BOM_DIA : i64 = 0;
+; Voc\u00ea me ouve?  
+pub const SG_FX_OUVE : i64 = 1;
+; \u0414\u043e\u0431\u0440\u044b\u0439 \u0434\u0435\u043d\u044c!
+pub const SG_FX_DOBRYI : i64 = 2;
+; ent\u00e3o\u2026
+pub const SG_FX_ENTAO : i64 = 3;
+; ele disse "fim."
+pub const SG_FX_QUOTE : i64 = 4;
+; \u00ab\u043a\u043e\u043d\u0435\u0446.\u00bb
+pub const SG_FX_GUILLEMET : i64 = 5;
+; dito.\u201d
+pub const SG_FX_CURLY : i64 = 6;
+; como eu dizia,
+pub const SG_FX_COMMA : i64 = 7;
+; \u0438\u0442\u0430\u043a \u2014
+pub const SG_FX_EM_DASH : i64 = 8;
+; a \u2013
+pub const SG_FX_EN_DASH : i64 = 9;
+; sem pontua\u00e7\u00e3o
+pub const SG_FX_NO_PUNCT : i64 = 10;
+; (empty)
+pub const SG_FX_EMPTY : i64 = 11;
+; um  dois\ttr\u00eas 
+pub const SG_FX_WORDS3 : i64 = 12;
+;   \u0434\u0430
+pub const SG_FX_DA : i64 = 13;
+; ok
+pub const SG_FX_OK : i64 = 14;
+; 12
+pub const SG_FX_TWELVE : i64 = 15;
+; \u042f
+pub const SG_FX_YA : i64 = 16;
+; \u00c9
+pub const SG_FX_E_ACUTE : i64 = 17;
+; a
+pub const SG_FX_A : i64 = 18;
+; .
+pub const SG_FX_DOT : i64 = 19;
+; \u2026
+pub const SG_FX_ELLIPSIS : i64 = 20;
+; \u00ab \u2014 \u00bb
+pub const SG_FX_QUOTES_DASH : i64 = 21;
+; B.
+pub const SG_FX_B_DOT : i64 = 22;
+; Sim.
+pub const SG_FX_SIM : i64 = 23;
+; um dois tr\u00eas quatro
+pub const SG_FX_FOUR_WORDS : i64 = 24;
+; um dois tr\u00eas
+pub const SG_FX_THREE_WORDS : i64 = 25;
+; Primeira frase. Segunda frase, com v\u00edrgula, e mais texto que passa do limite
+pub const SG_FX_SENTENCES : i64 = 26;
+; Primeira frase.
+pub const SG_FX_SENTENCES_HEAD : i64 = 27;
+; sem ponto final, mas com v\u00edrgulas, e continua sem parar por muito tempo
+pub const SG_FX_CLAUSES : i64 = 28;
+; sem ponto final, mas com v\u00edrgulas,
+pub const SG_FX_CLAUSES_HEAD : i64 = 29;
+; palavras sem nenhuma pontua\u00e7\u00e3o at\u00e9 o fim do texto longo
+pub const SG_FX_SPACES : i64 = 30;
+; \u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416\u0416
+pub const SG_FX_ZHE40 : i64 = 31;
+; Ok. Ent\u00e3o\u2026 vamos ver isso com calma amanh\u00e3 de manh\u00e3 cedo
+pub const SG_FX_ELLIPSIS_TEXT : i64 = 32;
+; Ok. Ent\u00e3o\u2026
+pub const SG_FX_ELLIPSIS_HEAD : i64 = 33;
+pub const SG_FX_COUNT : i64 = 34;
+pub const SG_FX_TEXT : [633]u8 = [66, 111, 109, 32, 100, 105, 97, 46, 86, 111, 99, 195, 170, 32, 109, 101, 32, 111, 117, 118, 101, 63, 32, 32, 208, 148, 208, 190, 208, 177, 209, 128, 209, 139, 208, 185, 32, 208, 180, 208, 181, 208, 189, 209, 140, 33, 101, 110, 116, 195, 163, 111, 226, 128, 166, 101, 108, 101, 32, 100, 105, 115, 115, 101, 32, 34, 102, 105, 109, 46, 34, 194, 171, 208, 186, 208, 190, 208, 189, 208, 181, 209, 134, 46, 194, 187, 100, 105, 116, 111, 46, 226, 128, 157, 99, 111, 109, 111, 32, 101, 117, 32, 100, 105, 122, 105, 97, 44, 208, 184, 209, 130, 208, 176, 208, 186, 32, 226, 128, 148, 97, 32, 226, 128, 147, 115, 101, 109, 32, 112, 111, 110, 116, 117, 97, 195, 167, 195, 163, 111, 117, 109, 32, 32, 100, 111, 105, 115, 9, 116, 114, 195, 170, 115, 32, 32, 32, 208, 180, 208, 176, 111, 107, 49, 50, 208, 175, 195, 137, 97, 46, 226, 128, 166, 194, 171, 32, 226, 128, 148, 32, 194, 187, 66, 46, 83, 105, 109, 46, 117, 109, 32, 100, 111, 105, 115, 32, 116, 114, 195, 170, 115, 32, 113, 117, 97, 116, 114, 111, 117, 109, 32, 100, 111, 105, 115, 32, 116, 114, 195, 170, 115, 80, 114, 105, 109, 101, 105, 114, 97, 32, 102, 114, 97, 115, 101, 46, 32, 83, 101, 103, 117, 110, 100, 97, 32, 102, 114, 97, 115, 101, 44, 32, 99, 111, 109, 32, 118, 195, 173, 114, 103, 117, 108, 97, 44, 32, 101, 32, 109, 97, 105, 115, 32, 116, 101, 120, 116, 111, 32, 113, 117, 101, 32, 112, 97, 115, 115, 97, 32, 100, 111, 32, 108, 105, 109, 105, 116, 101, 80, 114, 105, 109, 101, 105, 114, 97, 32, 102, 114, 97, 115, 101, 46, 115, 101, 109, 32, 112, 111, 110, 116, 111, 32, 102, 105, 110, 97, 108, 44, 32, 109, 97, 115, 32, 99, 111, 109, 32, 118, 195, 173, 114, 103, 117, 108, 97, 115, 44, 32, 101, 32, 99, 111, 110, 116, 105, 110, 117, 97, 32, 115, 101, 109, 32, 112, 97, 114, 97, 114, 32, 112, 111, 114, 32, 109, 117, 105, 116, 111, 32, 116, 101, 109, 112, 111, 115, 101, 109, 32, 112, 111, 110, 116, 111, 32, 102, 105, 110, 97, 108, 44, 32, 109, 97, 115, 32, 99, 111, 109, 32, 118, 195, 173, 114, 103, 117, 108, 97, 115, 44, 112, 97, 108, 97, 118, 114, 97, 115, 32, 115, 101, 109, 32, 110, 101, 110, 104, 117, 109, 97, 32, 112, 111, 110, 116, 117, 97, 195, 167, 195, 163, 111, 32, 97, 116, 195, 169, 32, 111, 32, 102, 105, 109, 32, 100, 111, 32, 116, 101, 120, 116, 111, 32, 108, 111, 110, 103, 111, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 208, 150, 79, 107, 46, 32, 69, 110, 116, 195, 163, 111, 226, 128, 166, 32, 118, 97, 109, 111, 115, 32, 118, 101, 114, 32, 105, 115, 115, 111, 32, 99, 111, 109, 32, 99, 97, 108, 109, 97, 32, 97, 109, 97, 110, 104, 195, 163, 32, 100, 101, 32, 109, 97, 110, 104, 195, 163, 32, 99, 101, 100, 111, 79, 107, 46, 32, 69, 110, 116, 195, 163, 111, 226, 128, 166];
+pub const SG_FX_OFFSETS : [34]u32 = [0, 8, 24, 46, 55, 71, 86, 94, 108, 120, 125, 140, 140, 155, 161, 163, 165, 167, 169, 170, 171, 174, 183, 185, 189, 209, 222, 299, 314, 386, 421, 479, 559, 620];
+pub const SG_FX_LENGTHS : [34]u32 = [8, 16, 22, 9, 16, 15, 8, 14, 12, 5, 15, 0, 15, 6, 2, 2, 2, 2, 1, 1, 3, 9, 2, 4, 20, 13, 77, 15, 72, 35, 58, 80, 61, 13];
+; <<< generated
+
+; Copies text fixture `index` to out at `at` and returns its length (0 for an unknown index).
+pub fn sg_fixture(index: i64, out: [8192]u8, at: i64) -> i64 {
+    if (index < 0 or index >= SG_FX_COUNT or at < 0) { return 0; }
+    var off: i64 = SG_FX_OFFSETS[index];
+    var len: i64 = SG_FX_LENGTHS[index];
+    var k: i64 = 0;
+    while (k < len and at + k < SG_TEXT_MAX) {
+        out[at + k] = SG_FX_TEXT[off + k];
+        k = k + 1;
+    }
+    return k;
+}
+
+test sg_voice_activity {
+    // thresholdsAndFloor
+    assert sg_is_voice(999, 0) == false;
+    assert sg_is_voice(1000, 0) == true;
+    assert sg_effective_threshold(1000000) == 2500;
+    assert sg_effective_threshold(0) == 1000;
+    assert sg_next_noise_floor(0, false, 700, 20) == 700000;
+    assert sg_next_noise_floor(500000, true, 100, 20) == 100000;
+    assert sg_next_noise_floor(0, true, 1000, 20) == 333;
+    assert sg_next_noise_floor(0, true, 1000, -5) == 0;
+    assert sg_next_noise_floor(0, true, 1000, 90000) == 1000000;
+    // The floor never passes the target and never drops below the old floor while rising.
+    var f: i64 = 0;
+    var bad: u32 = 0;
+    while (f <= 2000000) {
+        var level: i64 = 0;
+        while (level <= 3000) {
+            var next: i64 = sg_next_noise_floor(f, true, level, 20);
+            var target: i64 = level * 1000;
+            if (target >= f and (next < f or next > target)) { bad = bad + 1; }
+            if (target < f and next != target) { bad = bad + 1; }
+            level = level + 250;
+        }
+        f = f + 125000;
+    }
+    assert bad == 0;
+}
+
+test sg_finalize_rules {
+    // waitsWhileSpeakingAShortPhrase
+    assert sg_finalize_action(0, 3000, 0, 9223372036854775807, 60000, 1) == SG_ACTION_WAIT;
+    assert sg_finalize_action(0, 11999, 0, 9223372036854775807, 60000, 1) == SG_ACTION_WAIT;
+    // endOfPhraseAfterSixHundredMilliseconds
+    assert sg_finalize_action(599, 2000, 0, 9223372036854775807, 60000, 1) == SG_ACTION_WAIT;
+    assert sg_finalize_action(600, 2000, 0, 9223372036854775807, 60000, 1) == SG_ACTION_END_OF_PHRASE;
+    assert sg_finalize_action(600, 200, 0, 9223372036854775807, 60000, 1) == SG_ACTION_END_OF_PHRASE;
+    // flagsBlockCuts
+    assert sg_finalize_action(900, 2000, 0, 9223372036854775807, 60000, 0) == SG_ACTION_WAIT;
+    assert sg_finalize_action(900, 2000, 0, 9223372036854775807, 60000, 3) == SG_ACTION_WAIT;
+    assert sg_finalize_action(900, 2000, 0, 9223372036854775807, 60000, 5) == SG_ACTION_WAIT;
+    // longMonologueCutsInAPause
+    assert sg_finalize_action(300, 5999, 0, 9223372036854775807, 60000, 1) == SG_ACTION_WAIT;
+    assert sg_finalize_action(149, 6500, 0, 9223372036854775807, 60000, 1) == SG_ACTION_WAIT;
+    assert sg_finalize_action(150, 6500, 0, 9223372036854775807, 60000, 1) == SG_ACTION_MONOLOGUE_PAUSE;
+    // shortPauseNeedsSentenceEndOrHardLimit
+    assert sg_finalize_action(80, 6500, SG_PUNCTUATION_CLAUSE, 9223372036854775807, 60000, 1) == SG_ACTION_WAIT;
+    assert sg_finalize_action(80, 6500, SG_PUNCTUATION_SENTENCE, 9223372036854775807, 60000, 1) == SG_ACTION_MONOLOGUE_PAUSE;
+    assert sg_finalize_action(79, 6500, SG_PUNCTUATION_SENTENCE, 9223372036854775807, 60000, 1) == SG_ACTION_WAIT;
+    assert sg_finalize_action(80, 8999, 0, 9223372036854775807, 60000, 1) == SG_ACTION_WAIT;
+    assert sg_finalize_action(80, 9000, 0, 9223372036854775807, 60000, 1) == SG_ACTION_MONOLOGUE_PAUSE;
+    // absoluteLimitCutsInsideSpeech
+    assert sg_finalize_action(0, 12000, 0, 9223372036854775807, 60000, 1) == SG_ACTION_MONOLOGUE_FORCED;
+    // cutsAreSpacedAndStayInsideThePhrase
+    assert sg_finalize_action(600, 2000, 0, 550, 60000, 1) == SG_ACTION_WAIT;
+    assert sg_finalize_action(600, 2000, 0, 551, 60000, 1) == SG_ACTION_END_OF_PHRASE;
+    assert sg_finalize_action(600, 2000, 0, 9223372036854775807, 450, 1) == SG_ACTION_WAIT;
+    assert sg_finalize_action(600, 2000, 0, 9223372036854775807, 451, 1) == SG_ACTION_END_OF_PHRASE;
+    // backoffKeepsATrailingMargin
+    assert sg_cut_backoff_ms(SG_ACTION_END_OF_PHRASE, 600) == 450;
+    assert sg_cut_backoff_ms(SG_ACTION_MONOLOGUE_PAUSE, 100) == 0;
+    assert sg_cut_backoff_ms(SG_ACTION_MONOLOGUE_FORCED, 0) == 0;
+    assert sg_cut_backoff_ms(SG_ACTION_WAIT, 900) == 0;
+    // Every input: an action only with content and cuts allowed; a forced cut only while speaking.
+    var flags: i64 = 0;
+    var bad: u32 = 0;
+    while (flags < 8) {
+        var pause: i64 = 0;
+        while (pause <= 900) {
+            var speech: i64 = 0;
+            while (speech <= 13000) {
+                var p: i64 = 0;
+                while (p < 3) {
+                    var a: i64 = sg_finalize_action(pause, speech, p, 9223372036854775807, 60000, flags);
+                    if (a < SG_ACTION_WAIT or a > SG_ACTION_MONOLOGUE_FORCED) { bad = bad + 1; }
+                    if (a != SG_ACTION_WAIT and flags != SG_FLAG_HAS_CONTENT) { bad = bad + 1; }
+                    if (a == SG_ACTION_MONOLOGUE_FORCED and pause > 0) { bad = bad + 1; }
+                    if (a == SG_ACTION_END_OF_PHRASE and pause < SG_END_OF_PHRASE_PAUSE_MS) { bad = bad + 1; }
+                    p = p + 1;
+                }
+                speech = speech + 500;
+            }
+            pause = pause + 10;
+        }
+        flags = flags + 1;
+    }
+    assert bad == 0;
+}
+
+test sg_text_rules {
+    var t: [8192]u8 = [0; 8192];
+    // punctuation
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_BOM_DIA, t, 0)) == SG_PUNCTUATION_SENTENCE;
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_OUVE, t, 0)) == SG_PUNCTUATION_SENTENCE;
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_DOBRYI, t, 0)) == SG_PUNCTUATION_SENTENCE;
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_ENTAO, t, 0)) == SG_PUNCTUATION_SENTENCE;
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_QUOTE, t, 0)) == SG_PUNCTUATION_SENTENCE;
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_GUILLEMET, t, 0)) == SG_PUNCTUATION_SENTENCE;
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_CURLY, t, 0)) == SG_PUNCTUATION_SENTENCE;
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_COMMA, t, 0)) == SG_PUNCTUATION_CLAUSE;
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_EM_DASH, t, 0)) == SG_PUNCTUATION_CLAUSE;
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_EN_DASH, t, 0)) == SG_PUNCTUATION_CLAUSE;
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_NO_PUNCT, t, 0)) == SG_PUNCTUATION_NONE;
+    assert sg_punctuation_code(t, sg_fixture(SG_FX_EMPTY, t, 0)) == SG_PUNCTUATION_NONE;
+    // words
+    assert sg_word_count(t, sg_fixture(SG_FX_WORDS3, t, 0)) == 3;
+    assert sg_word_count(t, sg_fixture(SG_FX_EMPTY, t, 0)) == 0;
+    assert sg_word_count(t, sg_fixture(SG_FX_DA, t, 0)) == 1;
+    // speechContent
+    assert sg_has_speech_content(t, sg_fixture(SG_FX_OK, t, 0)) == true;
+    assert sg_has_speech_content(t, sg_fixture(SG_FX_TWELVE, t, 0)) == true;
+    assert sg_has_speech_content(t, sg_fixture(SG_FX_YA, t, 0)) == true;
+    assert sg_has_speech_content(t, sg_fixture(SG_FX_E_ACUTE, t, 0)) == true;
+    assert sg_has_speech_content(t, sg_fixture(SG_FX_A, t, 0)) == false;
+    assert sg_has_speech_content(t, sg_fixture(SG_FX_DOT, t, 0)) == false;
+    assert sg_has_speech_content(t, sg_fixture(SG_FX_ELLIPSIS, t, 0)) == false;
+    assert sg_has_speech_content(t, sg_fixture(SG_FX_QUOTES_DASH, t, 0)) == false;
+    // phraseVerdict
+    assert sg_phrase_action(t, sg_fixture(SG_FX_B_DOT, t, 0), 0) == SG_PHRASE_DROP_HALLUCINATION;
+    assert sg_phrase_action(t, sg_fixture(SG_FX_DOT, t, 0), 0) == SG_PHRASE_DROP_NO_CONTENT;
+    assert sg_phrase_action(t, sg_fixture(SG_FX_SIM, t, 0), 400) == SG_PHRASE_KEEP;
+    assert sg_phrase_action(t, sg_fixture(SG_FX_FOUR_WORDS, t, 0), 0) == SG_PHRASE_KEEP;
+    assert sg_phrase_action(t, sg_fixture(SG_FX_THREE_WORDS, t, 0), 99) == SG_PHRASE_DROP_HALLUCINATION;
+    assert sg_phrase_action(t, sg_fixture(SG_FX_THREE_WORDS, t, 0), 100) == SG_PHRASE_KEEP;
+    // Every single byte: never content alone (shorter than minPhraseBytes); never a word count above 1.
+    var b: u32 = 0;
+    var bad: u32 = 0;
+    while (b < 256) {
+        t[0] = cast_u8(b);
+        if (sg_has_speech_content(t, 1)) { bad = bad + 1; }
+        if (sg_word_count(t, 1) > 1) { bad = bad + 1; }
+        b = b + 1;
+    }
+    assert bad == 0;
+}
+
+test sg_cut_rules {
+    var t: [8192]u8 = [0; 8192];
+    var head: [8192]u8 = [0; 8192];
+    // shortTextIsNotCut
+    var n: i64 = sg_fixture(SG_FX_BOM_DIA, t, 0);
+    assert sg_cut_byte_index(t, n, 200, 24) == n;
+    // prefersTheLastSentenceEnd
+    n = sg_fixture(SG_FX_SENTENCES, t, 0);
+    assert sg_cut_byte_index(t, n, 40, 5) == sg_fixture(SG_FX_SENTENCES_HEAD, head, 0);
+    // thenTheLastClause
+    n = sg_fixture(SG_FX_CLAUSES, t, 0);
+    assert sg_cut_byte_index(t, n, 40, 5) == sg_fixture(SG_FX_CLAUSES_HEAD, head, 0);
+    // thenTheLastSpace
+    n = sg_fixture(SG_FX_SPACES, t, 0);
+    var cut: i64 = sg_cut_byte_index(t, n, 30, 5);
+    assert cut <= 30;
+    assert t[cut] == SG_SPACE;
+    // neverSplitsACharacter
+    n = sg_fixture(SG_FX_ZHE40, t, 0);
+    assert sg_cut_byte_index(t, n, 31, 5) == 30;
+    // respectsMinBytesAndEllipsis
+    n = sg_fixture(SG_FX_ELLIPSIS_TEXT, t, 0);
+    assert sg_cut_byte_index(t, n, 30, 8) == sg_fixture(SG_FX_ELLIPSIS_HEAD, head, 0);
+    assert sg_cut_byte_index(t, n, 0, 8) == n;
+    // Every max on every fixture: the cut lies in 1...max and on a character boundary.
+    var fx: i64 = 0;
+    var bad: u32 = 0;
+    while (fx < SG_FX_COUNT) {
+        n = sg_fixture(fx, t, 0);
+        var m: i64 = 1;
+        while (m < n) {
+            var c: i64 = sg_cut_byte_index(t, n, m, 5);
+            if (c < 1 or c > m) { bad = bad + 1; }
+            if (c < n and (t[c] & SG_CONTINUATION_MASK) == SG_CONTINUATION and c != m) { bad = bad + 1; }
+            m = m + 1;
+        }
+        fx = fx + 1;
+    }
+    assert bad == 0;
+}
