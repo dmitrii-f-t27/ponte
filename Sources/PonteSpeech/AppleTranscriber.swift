@@ -4,24 +4,6 @@ import Foundation
 import PonteCore
 import Speech
 
-/// Timing of one final phrase, for latency logs (end of phrase → translation).
-public struct PhraseTiming: Equatable, Sendable {
-    /// Audio time of the first word, seconds from the start of the stream.
-    public let audioStart: TimeInterval
-    /// Audio time where the voice of the last word ended.
-    public let audioEnd: TimeInterval
-    /// Wall clock time when the audio at `audioEnd` reached `append(_:)`.
-    public let audioEndArrivedAt: Date
-    /// Wall clock time when the final was emitted.
-    public let finalizedAt: Date
-    /// True when Ponte finalized the phrase itself (`SpeechRules.finalizeAction`: end-of-phrase pause
-    /// or a cut inside a long monologue) instead of waiting for the analyzer.
-    public let forced: Bool
-
-    /// End of phrase audio → final text.
-    public var recognitionLatency: TimeInterval { finalizedAt.timeIntervalSince(audioEndArrivedAt) }
-}
-
 /// A recognized word with its audio time range (seconds of stream audio).
 struct TimedToken: Equatable {
     var text: String
@@ -34,7 +16,8 @@ struct TimedToken: Equatable {
 ///
 /// Events: `.partial(id, text)` while the phrase is volatile, then `.final(id, text)` with the same id.
 /// A `.final` with empty text means "discard this phrase" (the recognizer heard words in silence):
-/// remove its partial and do not translate it.
+/// remove its partial and do not translate it (see `TranscriptEvent.final`).
+/// `timing(for:)` (`PhraseTiming`, PonteCore) is recorded before each non-empty `.final` is emitted.
 public final class AppleTranscriber: Transcriber, @unchecked Sendable {
     public let language: Lang
     /// pt-BR only: `SpeechTranscriber.ReportingOption.fastResults` (lower latency, slightly less accurate).

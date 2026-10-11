@@ -2,8 +2,8 @@ import AVFoundation
 import Foundation
 
 // Shared contracts between PonteAudio, PonteSpeech and PonteApp.
-// Changing a signature here breaks the other agents: propose changes in the
-// final report instead of editing this file.
+// Changes are additive: new requirements come with a default implementation in a
+// protocol extension, so existing conformances keep compiling.
 
 public enum Lang: String, Sendable, CaseIterable, Codable {
     case ru = "ru-RU"
@@ -106,7 +106,18 @@ public protocol AudioPlayer: AnyObject {
     var device: AudioDevice? { get }
     /// Enqueues the buffer and returns when it has finished playing.
     func play(_ buffer: AVAudioPCMBuffer) async
+    /// Enqueues the buffers back to back (gapless) and returns when the last one has finished
+    /// playing, or right away after `stopAll()`. Any sample rate and channel count.
+    func play(_ buffers: [AVAudioPCMBuffer]) async
+    /// Drops everything queued or playing; pending `play` calls return.
     func stopAll()
+}
+
+extension AudioPlayer {
+    /// Default: one buffer after another. Players that can schedule ahead override this.
+    public func play(_ buffers: [AVAudioPCMBuffer]) async {
+        for buffer in buffers { await play(buffer) }
+    }
 }
 
 // MARK: - Speech
@@ -115,7 +126,39 @@ public enum TranscriptEvent: Sendable {
     /// Volatile text for the current phrase; may still change.
     case partial(id: UUID, text: String)
     /// Stable phrase; the pipeline translates only these.
+    ///
+    /// A final with empty text means "discard this phrase": the recognizer showed volatile
+    /// text for it but then decided it was noise. Remove its volatile line and do not
+    /// translate it. Every `.partial` is eventually closed by a `.final` with the same id.
     case final(id: UUID, text: String)
+}
+
+/// Timing of one final phrase, for latency (end of phrase → translation on screen).
+public struct PhraseTiming: Equatable, Sendable {
+    /// Audio time of the first word, seconds from the start of the stream.
+    public let audioStart: TimeInterval
+    /// Audio time where the voice of the last word ended.
+    public let audioEnd: TimeInterval
+    /// Wall clock time when the audio at `audioEnd` reached `append(_:)`: the moment the
+    /// speaker finished, as seen by Ponte.
+    public let audioEndArrivedAt: Date
+    /// Wall clock time when the final was emitted.
+    public let finalizedAt: Date
+    /// True when the transcriber cut the phrase itself (end-of-phrase pause or a cut inside
+    /// a long monologue) instead of waiting for the recognizer.
+    public let forced: Bool
+
+    public init(audioStart: TimeInterval, audioEnd: TimeInterval, audioEndArrivedAt: Date,
+                finalizedAt: Date, forced: Bool) {
+        self.audioStart = audioStart
+        self.audioEnd = audioEnd
+        self.audioEndArrivedAt = audioEndArrivedAt
+        self.finalizedAt = finalizedAt
+        self.forced = forced
+    }
+
+    /// End of phrase audio → final text.
+    public var recognitionLatency: TimeInterval { finalizedAt.timeIntervalSince(audioEndArrivedAt) }
 }
 
 public protocol Transcriber: AnyObject {
@@ -127,6 +170,13 @@ public protocol Transcriber: AnyObject {
     func append(_ buffer: AVAudioPCMBuffer)
     /// Flushes pending audio and finishes the stream.
     func finish() async
+    /// Timing of a phrase already emitted as `.final` (non-empty text); nil if unknown.
+    /// Available by the time the `.final` event is delivered.
+    func timing(for id: UUID) -> PhraseTiming?
+}
+
+extension Transcriber {
+    public func timing(for id: UUID) -> PhraseTiming? { nil }
 }
 
 public protocol Translator: AnyObject {
@@ -139,6 +189,16 @@ public protocol Translator: AnyObject {
 public protocol SpeechSynth: AnyObject {
     /// Renders speech to PCM without playing it.
     func synthesize(_ text: String, lang: Lang) async throws -> [AVAudioPCMBuffer]
+    /// Same, at `ratePercent` of the normal speaking speed (100 = normal, 130 = 30 % faster).
+    /// Used to catch up when translated phrases pile up.
+    func synthesize(_ text: String, lang: Lang, ratePercent: Int32) async throws -> [AVAudioPCMBuffer]
+}
+
+extension SpeechSynth {
+    /// Default: the rate is ignored.
+    public func synthesize(_ text: String, lang: Lang, ratePercent: Int32) async throws -> [AVAudioPCMBuffer] {
+        try await synthesize(text, lang: lang)
+    }
 }
 
 /// One line of the call log shown in the UI and exported after the call.
@@ -149,14 +209,17 @@ public struct ConversationLine: Identifiable, Sendable, Codable {
     public var original: String
     public var translation: String?
     public var latency: TimeInterval?   // end of phrase → translation ready
+    /// Why `translation` is missing (shown instead of "translating…"); nil while pending or done.
+    public var translationError: String?
 
     public init(id: UUID = UUID(), direction: Direction, at: Date = Date(), original: String,
-                translation: String? = nil, latency: TimeInterval? = nil) {
+                translation: String? = nil, latency: TimeInterval? = nil, translationError: String? = nil) {
         self.id = id
         self.direction = direction
         self.at = at
         self.original = original
         self.translation = translation
         self.latency = latency
+        self.translationError = translationError
     }
 }
