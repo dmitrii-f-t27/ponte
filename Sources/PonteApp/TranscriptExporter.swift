@@ -1,8 +1,6 @@
 import Foundation
 import PonteCore
 
-// Also compiled into PonteTests (see Tests/PonteTests/AppLogic).
-
 /// Writes the call log as Markdown: ~/Documents/Ponte/YYYY-MM-DD-HHMM.md.
 /// File name and escaping come from AppRules; Russian labels and layout are here.
 enum TranscriptExporter {

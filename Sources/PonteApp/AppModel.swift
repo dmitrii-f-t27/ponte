@@ -2,19 +2,21 @@ import AppKit
 import AVFoundation
 import Foundation
 import Observation
+import os
 import PonteAudio
 import PonteCore
 import PonteSpeech
 
 /// A status light (AppRules.LIGHT_*), as the views draw it.
 enum Check: Equatable {
-    case unknown, ok, bad, busy
+    case unknown, ok, bad, busy, warn
 
     init(light: Int32) {
         switch light {
         case AppRules.LIGHT_OK: self = .ok
         case AppRules.LIGHT_BAD: self = .bad
         case AppRules.LIGHT_BUSY: self = .busy
+        case AppRules.LIGHT_WARN: self = .warn
         default: self = .unknown
         }
     }
@@ -56,6 +58,8 @@ struct Banner: Identifiable, Equatable {
         case openWizard(WizardStep)
         case reveal(URL)
         case accessibility
+        /// System Settings → Privacy & Security pane (anchor such as "Privacy_ScreenCapture").
+        case privacySettings(String)
     }
 
     let id = UUID()
@@ -69,6 +73,9 @@ struct Banner: Identifiable, Equatable {
 @MainActor @Observable
 final class AppModel {
     @ObservationIgnored private let defaults = UserDefaults.standard
+    /// Launch arguments (test mode, autostart, wizard step). Never persisted.
+    @ObservationIgnored let launch: LaunchOptions
+    @ObservationIgnored private let log = Logger(subsystem: "app.ponte.translator", category: "app")
     @ObservationIgnored let deviceCatalog = CoreAudioDeviceCatalog()
     @ObservationIgnored let appCatalog = RunningAudioAppCatalog()
     @ObservationIgnored private let memory = ConversationMemory()
@@ -81,6 +88,9 @@ final class AppModel {
     @ObservationIgnored private var claudeChecked = false
     @ObservationIgnored private var cachedClaude: ClaudeTranslator?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
+    @ObservationIgnored private var incomingTap: AppAudioTapSource?
+    @ObservationIgnored private var terminationSignal: DispatchSourceSignal?
+    @ObservationIgnored private var silenceWarned = false
 
     // MARK: Catalog snapshots
 
@@ -89,12 +99,20 @@ final class AppModel {
     var defaultOutput: AudioDevice?
     var blackHoleDevice: AudioDevice?
     var accessibilityGranted = PushToTalkMonitor.hasGlobalPermission
+    /// The owner listens on a loudspeaker (built-in or display speakers, AirPlay):
+    /// AudioRules.echoRisk of the listening device is echoSpeaker. Shows «наденьте наушники».
+    var speakerWarning = false
 
     // MARK: Settings (persisted)
 
     var sourceKey: String { didSet { defaults.set(sourceKey, forKey: PrefKey.source) } }
     var micUID: String { didSet { defaults.set(micUID, forKey: PrefKey.micUID) } }
-    var headphonesUID: String { didSet { defaults.set(headphonesUID, forKey: PrefKey.headphonesUID) } }
+    var headphonesUID: String {
+        didSet {
+            defaults.set(headphonesUID, forKey: PrefKey.headphonesUID)
+            refreshSpeakerWarning()
+        }
+    }
     var callOutputUID: String {
         didSet {
             defaults.set(callOutputUID, forKey: PrefKey.callOutputUID)
@@ -115,6 +133,7 @@ final class AppModel {
             defaults.set(GlossaryTerm.encode(glossary), forKey: PrefKey.glossary)
             incomingLane?.glossary = glossary
             outgoingLane?.glossary = glossary
+            updateClaudeGlossary()
         }
     }
     var outgoingMode: CaptureMode {
@@ -164,16 +183,22 @@ final class AppModel {
     var micCheck: Check = .unknown
     var sourceLevel: Float = 0
     var micLevel: Float = 0
+    /// AppRules.TAP_* of the incoming process tap (TAP_NONE for a test file).
+    var sourceTapStatus = AppRules.TAP_IDLE
+    var sourceTapDetail: String?
     private var everStarted = false
     private var lanesStarted: Int32 = 0
     private var lanesFailed: Int32 = 0
+    /// Running lanes whose translator is not ready (they show originals only).
+    private var translatorsFailed: Int32 = 0
 
     // MARK: Wizard
 
     var showWizard = false
     var wizardStep: WizardStep = .permissions
 
-    init() {
+    init(launch: LaunchOptions = .current) {
+        self.launch = launch
         let d = UserDefaults.standard
         sourceKey = d.string(forKey: PrefKey.source) ?? "system"
         micUID = d.string(forKey: PrefKey.micUID) ?? ""
@@ -189,11 +214,11 @@ final class AppModel {
         fontSize = Double(AppRules.translationFontSize(stored: Int32(d.integer(forKey: PrefKey.fontSize))))
         overlayVisible = d.bool(forKey: PrefKey.overlayVisible)
         setupCompleted = d.bool(forKey: PrefKey.setupCompleted)
-        // Launch-argument hook for demos and screenshots (argument domain, never persisted):
+        // Launch arguments for demos, screenshots and end-to-end checks (LaunchOptions):
         //   open dist/Ponte.app --args -PonteWizardStep 3 -PonteAutostart YES
-        let forced = d.object(forKey: "PonteWizardStep") != nil ? Int32(d.integer(forKey: "PonteWizardStep")) : AppRules.WZ_NONE
-        showWizard = AppRules.wizardShowOnLaunch(setupCompleted: setupCompleted, forcedStep: forced)
-        if let step = WizardStep(code: forced) { wizardStep = step }
+        showWizard = AppRules.wizardShowOnLaunchInMode(setupCompleted: setupCompleted, forcedStep: launch.wizardStep,
+                                                       testMode: launch.isTestMode)
+        if let step = WizardStep(code: launch.wizardStep) { wizardStep = step }
         ptt.key = pttKey
         refreshCatalogs()
     }
@@ -208,12 +233,26 @@ final class AppModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.appBecameActive() }
         }
-        if defaults.bool(forKey: "PonteAutostart") {
+        if launch.isTestMode {
+            log.info("test mode: incoming \(self.launch.incomingFile?.path ?? "tap", privacy: .public), outgoing \(self.launch.outgoingFile?.path ?? "mic", privacy: .public), sink \(self.launch.outgoingSink?.path ?? "-", privacy: .public)")
+            installTerminationSignalHandler()
+        }
+        if launch.autostart {
             Task { await start() }
         }
-        if let appearance = defaults.string(forKey: "PonteAppearance") {
+        if let appearance = launch.appearance {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         }
+    }
+
+    /// Test mode: `kill -TERM` quits like ⌘Q (stop, save the transcript), so scripts can end a run.
+    private func installTerminationSignalHandler() {
+        guard terminationSignal == nil else { return }
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { NSApp.terminate(nil) }
+        source.resume()
+        terminationSignal = source
     }
 
     private func appBecameActive() {
@@ -237,7 +276,10 @@ final class AppModel {
 
     /// Where the user hears things: chosen headphones or the system output.
     var listeningDevice: AudioDevice? { headphonesDevice ?? defaultOutput }
-    var speakerWarning: Bool { listeningDevice?.isBuiltInSpeaker == true }
+
+    private func refreshSpeakerWarning() {
+        speakerWarning = listeningDevice.map { deviceCatalog.echoRisk(of: $0) == AudioRules.echoSpeaker } ?? false
+    }
 
     var source: SourceChoice { SourceChoice(key: sourceKey) }
 
@@ -249,11 +291,33 @@ final class AppModel {
         }
     }
 
+    /// Tooltip of «Звук источника».
+    var sourceHelp: String {
+        guard isRunning else { return "Идёт ли звук из выбранной программы" }
+        switch sourceTapStatus {
+        case AppRules.TAP_WAITING:
+            return "Ждём звук: «\(activeSourceName ?? "")» ещё не выводит звук. Ponte подключится сам, когда начнётся звонок."
+        case AppRules.TAP_FAILED:
+            return "Не удалось подключиться к звуку: \(sourceTapDetail ?? "")"
+        case AppRules.TAP_NONE:
+            return "Тестовый режим: звук из файла \(launch.incomingFile?.lastPathComponent ?? "")"
+        default:
+            break
+        }
+        if sourceCheck == .warn { return Self.silenceText(activeSourceName) }
+        return "Звук из «\(activeSourceName ?? "")» идёт"
+    }
+
+    static func silenceText(_ name: String?) -> String {
+        "Из «\(name ?? "источника")» приходит только тишина. Если собеседники говорят, а текста нет, — разрешите Ponte "
+            + "запись системного звука: Системные настройки → Конфиденциальность и безопасность → Запись экрана и системного звука."
+    }
+
     var blackHoleCheck: Check { Check(light: AppRules.blackHoleLight(found: blackHoleDevice != nil)) }
 
     var modelsCheck: Check {
         Check(light: AppRules.modelsLight(runState: runState.code, everStarted: everStarted,
-                                          lanesStarted: lanesStarted, lanesFailed: lanesFailed))
+                                          lanesStarted: lanesStarted, lanesFailed: lanesFailed + translatorsFailed))
     }
 
     /// AppRules.LAT_* for the last phrase.
@@ -278,8 +342,19 @@ final class AppModel {
         if !claudeChecked {
             cachedClaude = ClaudeTranslator()
             claudeChecked = true
+            updateClaudeGlossary()
         }
         return cachedClaude
+    }
+
+    /// Claude gets each direction's side of the glossary in its prompt. The app-side
+    /// replacement (GlossaryTerm.apply in the lane) runs for every engine.
+    private func updateClaudeGlossary() {
+        guard let claude = cachedClaude else { return }
+        for direction in Direction.allCases {
+            claude.setGlossary(GlossaryTerm.translatorGlossary(glossary, direction: direction),
+                               from: direction.source, to: direction.target)
+        }
     }
 
     private var voiceMap: [Lang: String] {
@@ -300,6 +375,7 @@ final class AppModel {
         } else {
             blackHoleDevice = BlackHoleCheck.find(in: deviceCatalog)
         }
+        refreshSpeakerWarning()
     }
 
     private func startPolling() {
@@ -319,15 +395,81 @@ final class AppModel {
     private func pollAudioStats() {
         let now = Date()
         let sinceStart = callStartedAt.map { millis(now.timeIntervalSince($0)) } ?? 0
-        func light(_ lane: TranslationLane?) -> (Check, Float) {
-            let stats = lane?.audioStats
-            let sinceBuffer = stats?.lastBufferAt.map { millis(now.timeIntervalSince($0)) } ?? -1
-            let code = AppRules.audioLight(runState: runState.code, laneActive: lane != nil,
-                                           msSinceStart: sinceStart, msSinceBuffer: sinceBuffer)
-            return (Check(light: code), code == AppRules.LIGHT_OK ? stats?.level ?? 0 : 0)
+        func since(_ date: Date?) -> Int64 { date.map { millis(now.timeIntervalSince($0)) } ?? -1 }
+
+        let incoming = incomingLane?.audioStats
+        let sourceCode = AppRules.sourceLight(runState: runState.code, laneActive: incomingLane != nil,
+                                              tapStatus: sourceTapStatus, msSinceStart: sinceStart,
+                                              msSinceBuffer: since(incoming?.lastBufferAt),
+                                              msSinceSignal: since(incoming?.lastSignalAt))
+        sourceCheck = Check(light: sourceCode)
+        sourceLevel = sourceCode == AppRules.LIGHT_OK ? incoming?.level ?? 0 : 0
+
+        let outgoing = outgoingLane?.audioStats
+        let micCode = AppRules.audioLight(runState: runState.code, laneActive: outgoingLane != nil,
+                                          msSinceStart: sinceStart, msSinceBuffer: since(outgoing?.lastBufferAt))
+        micCheck = Check(light: micCode)
+        micLevel = micCode == AppRules.LIGHT_OK ? outgoing?.level ?? 0 : 0
+
+        if isRunning {
+            translatorsFailed = Int32([incomingLane, outgoingLane].compactMap { $0 }.filter { $0.translatorError != nil }.count)
         }
-        (sourceCheck, sourceLevel) = light(incomingLane)
-        (micCheck, micLevel) = light(outgoingLane)
+        if sourceCheck == .warn && !silenceWarned {
+            silenceWarned = true
+            if banner?.kind != .error {
+                banner = Banner(kind: .warning, text: Self.silenceText(activeSourceName),
+                                action: .privacySettings("Privacy_ScreenCapture"), actionTitle: "Открыть настройки")
+            }
+        }
+    }
+
+    // MARK: Process tap status
+
+    /// AppAudioTapSource.Status → AppRules.TAP_* (+ the failure text). Called on the tap's queue.
+    nonisolated static func tapCode(_ status: AppAudioTapSource.Status) -> (code: Int32, detail: String?) {
+        switch status {
+        case .idle: return (AppRules.TAP_IDLE, nil)
+        case .waitingForApp: return (AppRules.TAP_WAITING, nil)
+        case .capturing: return (AppRules.TAP_CAPTURING, nil)
+        case .failed(let why): return (AppRules.TAP_FAILED, why)
+        }
+    }
+
+    private func tapStatusChanged(_ code: Int32, _ detail: String?, from tap: AppAudioTapSource) {
+        guard tap === incomingTap else { return }
+        sourceTapStatus = code
+        sourceTapDetail = detail
+        log.info("source tap status \(code, privacy: .public) \(detail ?? "", privacy: .public)")
+        pollAudioStats()
+    }
+
+    private func makeIncomingSource() -> AudioSource {
+        if let url = launch.incomingFile {
+            incomingTap = nil
+            sourceTapStatus = AppRules.TAP_NONE
+            return fileSource(url, direction: .incoming)
+        }
+        let tap = AppAudioTapSource(target: source.target)
+        tap.onStatusChange = { [weak self, weak tap] status in
+            let (code, detail) = AppModel.tapCode(status)
+            Task { @MainActor in
+                guard let self, let tap else { return }
+                self.tapStatusChanged(code, detail, from: tap)
+            }
+        }
+        incomingTap = tap
+        sourceTapStatus = AppRules.TAP_IDLE
+        return tap
+    }
+
+    /// Test mode: a file played in real time instead of a device.
+    private func fileSource(_ url: URL, direction: Direction) -> AudioSource {
+        let file = FileSource(url: url, realtime: true)
+        let log = self.log
+        file.onFinish = {
+            log.info("test file ended (\(direction.rawValue, privacy: .public)): \(url.lastPathComponent, privacy: .public)")
+        }
+        return file
     }
 
     // MARK: Start / stop
@@ -354,19 +496,32 @@ final class AppModel {
         lastTranscriptURL = nil
         memory.reset()
         callStartedAt = Date()
-        activeSourceName = sourceTitle
+        activeSourceName = launch.incomingFile.map { "файл \($0.lastPathComponent)" } ?? sourceTitle
         everStarted = true
         lanesStarted = 0
         lanesFailed = 0
+        translatorsFailed = 0
+        silenceWarned = false
+        sourceTapDetail = nil
         pollAudioStats()
+
+        // The microphone prompt comes before the engine starts: MicSource refuses an undecided permission.
+        let micIsLive = launch.outgoingFile == nil
+        if micIsLive,
+           AudioRules.micStartDecision(authorizationStatus: MicSource.permission.rawValue) == AudioRules.micRequestFirst {
+            _ = await MicSource.requestPermission()
+        }
 
         let translator = makeTranslator()
         translatorInUse = translator.name
         let synth = SystemSpeechSynth(voiceIdentifiers: voiceMap)
-        echoGuard.configure(speakerOutput: speakerWarning)
+        let echoOutput = AppRules.echoGuardApplies(speakerOutput: speakerWarning, micIsLive: micIsLive)
+        echoGuard.configure(speakerOutput: echoOutput)
+        let callOutput: AudioPlayer? = launch.outgoingSink.map { WAVFileSink(url: $0) }
+            ?? blackHoleDevice.map { DeviceAudioPlayer(device: $0) }
         let incoming = TranslationLane(
             direction: .incoming,
-            source: AppAudioTapSource(target: source.target),
+            source: makeIncomingSource(),
             makeTranscriber: { AppleTranscriber(language: .ptBR) },
             translator: translator,
             synth: synth,
@@ -376,11 +531,11 @@ final class AppModel {
             speechOutputEnabled: speakRussian)
         let outgoing = TranslationLane(
             direction: .outgoing,
-            source: MicSource(device: micDevice),
+            source: launch.outgoingFile.map { fileSource($0, direction: .outgoing) } ?? MicSource(device: micDevice),
             makeTranscriber: { AppleTranscriber(language: .ru) },
             translator: translator,
             synth: synth,
-            player: blackHoleDevice.map { DeviceAudioPlayer(device: $0) },
+            player: callOutput,
             memory: memory,
             mode: outgoingMode,
             speechOutputEnabled: true)
@@ -393,26 +548,44 @@ final class AppModel {
         outgoing.echoGuard = echoGuard
 
         var problems: [String] = []
-        var packsMissing = false
+        var translatorProblems: [String] = []
+        var missingPacks: [Error] = []
         for (lane, title) in [(incoming, "Они → по-русски"), (outgoing, "Я → по-португальски")] {
             do {
                 try await lane.start()
                 if lane.direction == .incoming { incomingLane = lane } else { outgoingLane = lane }
                 lanesStarted += 1
+                if let error = lane.translatorError {
+                    translatorsFailed += 1
+                    translatorProblems.append("\(title): \(describe(error))")
+                    if isMissingPacks(error) { missingPacks.append(error) }
+                }
             } catch {
                 lanesFailed += 1
                 problems.append("\(title): \(describe(error))")
-                packsMissing = packsMissing || isMissingPacks(error)
+                if isMissingPacks(error) { missingPacks.append(error) }
             }
         }
 
         runState = RunState(code: AppRules.runStateAfterStart(lanesStarted: lanesStarted))
-        if !isRunning { callStartedAt = nil }
+        if !isRunning {
+            callStartedAt = nil
+            incomingTap = nil
+            sourceTapStatus = AppRules.TAP_IDLE
+        }
         pollAudioStats()
         updatePushToTalk()
 
-        switch AppRules.startBanner(lanesFailed: lanesFailed, packsMissing: packsMissing,
-                                    hasBlackHole: blackHoleDevice != nil, speakerOutput: speakerWarning) {
+        let hasCallOutput = blackHoleDevice != nil || launch.outgoingSink != nil
+        switch AppRules.startBannerAfterStart(lanesFailed: lanesFailed, translatorsFailed: translatorsFailed,
+                                              packsMissing: !missingPacks.isEmpty, hasBlackHole: hasCallOutput,
+                                              speakerOutput: echoOutput) {
+        case AppRules.BAN_NO_PACKS:
+            banner = packsBanner(missingPacks)
+        case AppRules.BAN_NO_TRANSLATOR:
+            banner = Banner(kind: .error,
+                            text: "Речь распознаётся, но перевод недоступен.\n" + translatorProblems.joined(separator: "\n"),
+                            action: .openWizard(.packs), actionTitle: "Открыть мастер")
         case AppRules.BAN_FAILED_PACKS:
             banner = Banner(kind: .error, text: problems.joined(separator: "\n"),
                             action: .openWizard(.packs), actionTitle: "Открыть мастер")
@@ -441,6 +614,8 @@ final class AppModel {
         await outgoingLane?.stop()
         incomingLane = nil
         outgoingLane = nil
+        incomingTap = nil
+        sourceTapStatus = AppRules.TAP_IDLE
         incomingSpeaking = false
         outgoingSpeaking = false
         incomingPartial = ""
@@ -456,11 +631,13 @@ final class AppModel {
         await stop()
     }
 
+    /// Apple on the device; Claude only when chosen and its key exists (then Apple is the fallback).
+    /// Speech never goes to the cloud unless the owner picked Claude.
     private func makeTranslator() -> Translator {
         let choice = AppRules.translatorChoice(preferred: translatorKind.ruleCode,
                                                claudeAvailable: translatorKind == .claude && claudeTranslator() != nil)
-        if choice == AppRules.TR_CLAUDE, let claude = claudeTranslator() { return claude }
-        return AppleTranslator()
+        let claude = choice == AppRules.TR_CLAUDE ? claudeTranslator() : nil
+        return RoutingTranslator(apple: AppleTranslator(), claude: claude, preferClaude: claude != nil)
     }
 
     private func isMissingPacks(_ error: Error) -> Bool {
@@ -468,9 +645,35 @@ final class AppModel {
         return false
     }
 
+    /// «Перевод не работает: не скачаны пакеты …» with the way to the wizard's packs step.
+    private func packsBanner(_ errors: [Error]) -> Banner {
+        var pairs: [String] = []
+        for error in errors {
+            if case PonteSpeechError.translationAssetsMissing(let from, let to) = error {
+                let pair = "«\(from.title) → \(to.title)»"
+                if !pairs.contains(pair) { pairs.append(pair) }
+            }
+        }
+        let which = pairs.isEmpty ? "" : " " + pairs.joined(separator: ", ")
+        return Banner(kind: .error,
+                      text: "Перевод не работает: не скачаны языковые пакеты Apple\(which). Речь распознаётся, "
+                          + "оригинал виден. Скачайте пакеты в мастере — перевод включится сам.",
+                      action: .openWizard(.packs), actionTitle: "Скачать пакеты")
+    }
+
     private func describe(_ error: Error) -> String {
         if case PonteSpeechError.translationAssetsMissing(let from, let to) = error {
-            return "не скачан языковой пакет \(from.rawValue) → \(to.rawValue)"
+            return "не скачан языковой пакет перевода \(from.rawValue) → \(to.rawValue)"
+        }
+        if let audio = error as? PonteAudioError {
+            switch audio {
+            case .permissionRequired(.microphone), .permissionDenied(.microphone):
+                return "нет доступа к микрофону. Разрешите его: Системные настройки → Конфиденциальность и безопасность → Микрофон."
+            case .deviceNotFound(let name):
+                return "устройство «\(name)» не подключено"
+            default:
+                return audio.description
+            }
         }
         return error.localizedDescription
     }
@@ -490,6 +693,14 @@ final class AppModel {
                 lines.append(line)
             }
             if let latency = line.latency { lastLatency = latency }
+        case .translationFailed(let error):
+            if isMissingPacks(error) {
+                // The start banner says it already; show it again only if it was closed.
+                if banner?.action != .openWizard(.packs) { banner = packsBanner([error]) }
+            } else {
+                let text = "Перевод: \(describe(error))"
+                if banner?.text != text { banner = Banner(kind: .warning, text: text) }
+            }
         case .speaking(let on):
             if direction == .incoming {
                 incomingSpeaking = on
@@ -539,9 +750,11 @@ final class AppModel {
         do {
             let url = try TranscriptExporter.write(lines: lines, startedAt: callStartedAt ?? lines[0].at,
                                                    endedAt: isRunning ? nil : Date(),
-                                                   sourceName: activeSourceName)
+                                                   sourceName: activeSourceName,
+                                                   to: launch.transcriptDir ?? TranscriptExporter.defaultFolder)
             lastTranscriptURL = url
-            banner = Banner(kind: .info, text: "Стенограмма сохранена: ~/Documents/Ponte/\(url.lastPathComponent)",
+            log.info("transcript saved: \(url.path, privacy: .public)")
+            banner = Banner(kind: .info, text: "Стенограмма сохранена: \((url.path as NSString).abbreviatingWithTildeInPath)",
                             action: .reveal(url), actionTitle: "Показать")
             return url
         } catch {
@@ -559,6 +772,8 @@ final class AppModel {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         case .accessibility:
             requestAccessibility()
+        case .privacySettings(let anchor):
+            Permissions.openPrivacySettings(anchor)
         }
     }
 
@@ -583,6 +798,6 @@ final class AppModel {
         let synth = SystemSpeechSynth(voiceIdentifiers: voiceMap)
         let buffers = try await synth.synthesize(Self.testPhrase, lang: .ptBR)
         let player = DeviceAudioPlayer(device: intoCall ? blackHoleDevice : headphonesDevice)
-        for buffer in buffers { await player.play(buffer) }
+        await player.play(buffers)
     }
 }

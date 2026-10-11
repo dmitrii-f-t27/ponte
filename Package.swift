@@ -19,7 +19,7 @@ let package = Package(
         .executableTarget(name: "PonteApp", dependencies: ["PonteCore", "PonteAudio", "PonteSpeech", "PonteSpecs"]),
         .executableTarget(name: "AudioProbe", dependencies: ["PonteCore", "PonteAudio"]),
         .executableTarget(name: "SpeechProbe", dependencies: ["PonteCore", "PonteSpeech"]),
-        .testTarget(name: "PonteTests", dependencies: ["PonteCore", "PonteAudio", "PonteSpeech", "PonteSpecs"]),
+        .testTarget(name: "PonteTests", dependencies: ["PonteCore", "PonteAudio", "PonteSpeech", "PonteSpecs", "PonteApp"]),
     ],
     swiftLanguageModes: [.v5]
 )

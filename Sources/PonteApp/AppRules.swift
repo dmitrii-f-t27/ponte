@@ -13,7 +13,8 @@
 //
 // Swift keeps: views and Russian texts, system calls, Unicode work (lowercasing,
 // word boundaries for the glossary), concurrency (tasks, generations, locks).
-// This file is also compiled into PonteTests (see Tests/PonteTests/AppLogic).
+// Device kinds and echo risk come from AudioRules (PonteAudio); the voice meter and
+// phrase timing from the transcriber (SpeechRules): they are not repeated here.
 
 enum AppRules {
     // MARK: - Packed steps
@@ -203,30 +204,26 @@ enum AppRules {
         return msSinceSpeech >= 0 && msSinceSpeech < ECHO_TAIL_MS
     }
 
-    /// The Mac's own speakers. Inputs are lowercased UTF-8 (Swift lowercases).
-    static func isBuiltInSpeaker(uidLower: [UInt8], nameLower: [UInt8]) -> Bool {
-        contains(uidLower, Array("builtinspeaker".utf8))
-            || contains(nameLower, Array("speakers".utf8))
-            || contains(nameLower, Array("динамики".utf8))
+    /// The echo guard is armed only when the owner listens on a loudspeaker
+    /// (AudioRules.echoRisk == echoSpeaker) and the outgoing lane hears a live microphone
+    /// (a test file cannot pick up the speakers).
+    static func echoGuardApplies(speakerOutput: Bool, micIsLive: Bool) -> Bool {
+        speakerOutput && micIsLive
     }
 
     // MARK: - Phrase timing
 
-    static let VOICE_RMS_THRESHOLD: Double = 0.01   // about −40 dBFS
-    static let END_GAP_MS: Int64 = 250
-
-    static func isVoice(rms: Double) -> Bool { rms >= VOICE_RMS_THRESHOLD }
-
     static let END_NOW: Int32 = 0
-    static let END_LAST_VOICE: Int32 = 1
+    // 1 was END_LAST_VOICE (the lane's own voice meter, replaced by the transcriber's timing).
     static let END_LAST_PARTIAL: Int32 = 2
+    static let END_TRANSCRIBER: Int32 = 3
 
-    /// Which moment counts as "the speaker finished this phrase" when its final arrives.
-    /// Silence for END_GAP_MS since the last loud buffer → that buffer. Still talking
-    /// (the next phrase started) → the last volatile update of this phrase. Else now.
-    /// Negative values mean "unknown".
-    static func phraseEndSource(msSinceVoice: Int64, msSincePartial: Int64) -> Int32 {
-        if msSinceVoice >= END_GAP_MS { return END_LAST_VOICE }
+    /// Which moment counts as "the speaker finished this phrase" when its final arrives:
+    /// the transcriber's own timing (Transcriber.timing(for:), the wall clock time when the
+    /// end of the voice reached it) if known; else the last volatile update of the phrase;
+    /// else now. Arguments are milliseconds before now; negative means "unknown".
+    static func phraseEndChoice(msSinceTimedEnd: Int64, msSincePartial: Int64) -> Int32 {
+        if msSinceTimedEnd >= 0 { return END_TRANSCRIBER }
         if msSincePartial >= 0 { return END_LAST_PARTIAL }
         return END_NOW
     }
@@ -276,6 +273,32 @@ enum AppRules {
         return BAN_NONE
     }
 
+    static let BAN_NO_PACKS: Int32 = 5           // lanes listen, translation packs missing: error + packs step
+    static let BAN_NO_TRANSLATOR: Int32 = 6      // lanes listen, translator failed otherwise: error
+
+    /// Banner after «Старт» when a lane can run without its translator (recognition only).
+    /// `translatorsFailed` = started lanes whose translator could not be prepared;
+    /// `packsMissing` = one of the failures (lane or translator) was a missing language pack.
+    /// A failed lane wins; then a failed translator; then startBanner's warnings.
+    static func startBannerAfterStart(lanesFailed: Int32, translatorsFailed: Int32, packsMissing: Bool,
+                                      hasBlackHole: Bool, speakerOutput: Bool) -> Int32 {
+        if lanesFailed == 0 && translatorsFailed > 0 { return packsMissing ? BAN_NO_PACKS : BAN_NO_TRANSLATOR }
+        return startBanner(lanesFailed: lanesFailed, packsMissing: packsMissing,
+                           hasBlackHole: hasBlackHole, speakerOutput: speakerOutput)
+    }
+
+    // MARK: - Translator that could not be prepared at «Старт»
+
+    /// A lane whose translator failed to prepare still transcribes and shows the originals.
+    /// Before each phrase it tries to prepare again (the owner may have downloaded the packs
+    /// meanwhile), at most once per PREPARE_RETRY_MS.
+    static let PREPARE_RETRY_MS: Int64 = 5_000
+
+    /// `msSinceAttempt` < 0 = never tried.
+    static func retryTranslatorPrepare(prepared: Bool, msSinceAttempt: Int64) -> Bool {
+        !prepared && (msSinceAttempt < 0 || msSinceAttempt >= PREPARE_RETRY_MS)
+    }
+
     static func autosaveOnStop(lines: Int32) -> Bool { lines > 0 }
 
     // MARK: - Which controls are enabled
@@ -315,6 +338,7 @@ enum AppRules {
     static let LIGHT_OK: Int32 = 1
     static let LIGHT_BAD: Int32 = 2
     static let LIGHT_BUSY: Int32 = 3
+    static let LIGHT_WARN: Int32 = 4
 
     static let AUDIO_FRESH_MS: Int64 = 2_000     // a buffer this recent means audio flows
     static let AUDIO_WARMUP_MS: Int64 = 4_000    // grace period after Старт
@@ -327,6 +351,43 @@ enum AppRules {
         if msSinceBuffer >= 0 && msSinceBuffer < AUDIO_FRESH_MS { return LIGHT_OK }
         if msSinceStart < AUDIO_WARMUP_MS { return LIGHT_BUSY }
         return LIGHT_BAD
+    }
+
+    /// Process tap status (AppAudioTapSource.Status), as codes.
+    static let TAP_NONE: Int32 = 0               // the source is not a process tap (test file)
+    static let TAP_WAITING: Int32 = 1            // the chosen app has no audio process yet
+    static let TAP_CAPTURING: Int32 = 2
+    static let TAP_FAILED: Int32 = 3
+    static let TAP_IDLE: Int32 = 4               // not started or stopped
+
+    /// Only exact zeros this long after «Старт»: the System Audio Recording permission is
+    /// probably missing (a process tap without it delivers digital silence).
+    static let SILENCE_SUSPECT_MS: Int64 = 8_000
+
+    /// «Звук источника» light. Starts from audioLight (buffers flow?), then the tap status:
+    /// failed → BAD; waiting for the app → BUSY; capturing but never a non-zero sample for
+    /// SILENCE_SUSPECT_MS → WARN. `msSinceSignal` < 0 = no non-zero sample since «Старт».
+    static func sourceLight(runState: Int32, laneActive: Bool, tapStatus: Int32, msSinceStart: Int64,
+                            msSinceBuffer: Int64, msSinceSignal: Int64) -> Int32 {
+        let base = audioLight(runState: runState, laneActive: laneActive, msSinceStart: msSinceStart,
+                              msSinceBuffer: msSinceBuffer)
+        guard runState == RUN_RUNNING, laneActive else { return base }
+        if tapStatus == TAP_FAILED { return LIGHT_BAD }
+        if tapStatus == TAP_WAITING { return LIGHT_BUSY }
+        if base == LIGHT_OK && tapStatus == TAP_CAPTURING && msSinceSignal < 0 && msSinceStart >= SILENCE_SUSPECT_MS {
+            return LIGHT_WARN
+        }
+        return base
+    }
+
+    /// Setup wizard «Запись звука программ»: listen to all audio except Ponte for CAPTURE_CHECK_MS.
+    static let CAPTURE_CHECK_MS: Int64 = 3_000
+
+    /// Result of the wizard check: tap failed or no audio at all → BAD; only exact zeros → WARN
+    /// (nothing played, or the permission is missing); any non-zero sample → OK.
+    static func captureCheckLight(tapStatus: Int32, framesSeen: Bool, signalSeen: Bool) -> Int32 {
+        if tapStatus == TAP_FAILED || !framesSeen { return LIGHT_BAD }
+        return signalSeen ? LIGHT_OK : LIGHT_WARN
     }
 
     static func blackHoleLight(found: Bool) -> Int32 { found ? LIGHT_OK : LIGHT_BAD }
@@ -443,6 +504,11 @@ enum AppRules {
         forcedStep >= 0 || !setupCompleted
     }
 
+    /// Test mode (launch arguments with files) counts as set up: the wizard opens only when forced.
+    static func wizardShowOnLaunchInMode(setupCompleted: Bool, forcedStep: Int32, testMode: Bool) -> Bool {
+        wizardShowOnLaunch(setupCompleted: setupCompleted || testMode, forcedStep: forcedStep)
+    }
+
     /// «Закрыть» keeps the old flag; «Начать работу» (finished) completes setup.
     static func wizardCompletedAfterClose(wasCompleted: Bool, finished: Bool) -> Bool {
         wasCompleted || finished
@@ -549,19 +615,6 @@ enum AppRules {
     }
 
     // MARK: - Byte helpers (t27 has its own)
-
-    private static func contains(_ hay: [UInt8], _ needle: [UInt8]) -> Bool {
-        guard !needle.isEmpty, hay.count >= needle.count else { return needle.isEmpty }
-        for start in 0...(hay.count - needle.count) where hay[start] == needle[0] {
-            var match = true
-            for k in 1..<needle.count where hay[start + k] != needle[k] {
-                match = false
-                break
-            }
-            if match { return true }
-        }
-        return false
-    }
 
     private static func appendDigits(_ out: inout [UInt8], _ value: Int32, width: Int) {
         var digits: [UInt8] = []

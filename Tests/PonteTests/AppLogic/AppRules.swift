@@ -1,1 +1,0 @@
-../../../Sources/PonteApp/AppRules.swift

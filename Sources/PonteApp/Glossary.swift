@@ -1,8 +1,6 @@
 import Foundation
 import PonteCore
 
-// Pure logic, also compiled into PonteTests (see Tests/PonteTests/AppLogic).
-
 /// A name or term with its fixed form in both languages.
 struct GlossaryTerm: Codable, Hashable, Identifiable, Sendable {
     var id = UUID()
@@ -35,6 +33,18 @@ struct GlossaryTerm: Codable, Hashable, Identifiable, Sendable {
                                                     withTemplate: NSRegularExpression.escapedTemplate(for: to))
         }
         return result
+    }
+
+    /// The glossary as a translator takes it for one direction: source-language form →
+    /// required target-language form, complete terms only (ClaudeTranslator.setGlossary).
+    static func translatorGlossary(_ terms: [GlossaryTerm], direction: Direction) -> [String: String] {
+        var map: [String: String] = [:]
+        for term in terms where term.isComplete {
+            let from = (direction == .incoming ? term.pt : term.ru).trimmingCharacters(in: .whitespaces)
+            let to = (direction == .incoming ? term.ru : term.pt).trimmingCharacters(in: .whitespaces)
+            map[from] = to
+        }
+        return map
     }
 
     static func decode(_ json: String) -> [GlossaryTerm] {

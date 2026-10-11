@@ -97,10 +97,3 @@ enum PTTKey: String, CaseIterable, Identifiable {
 extension TranslatorKind {
     var ruleCode: Int32 { self == .claude ? AppRules.TR_CLAUDE : AppRules.TR_APPLE }
 }
-
-extension AudioDevice {
-    /// The Mac's own speakers: the mic would hear the other side (AppRules.isBuiltInSpeaker).
-    var isBuiltInSpeaker: Bool {
-        AppRules.isBuiltInSpeaker(uidLower: Array(uid.lowercased().utf8), nameLower: Array(name.lowercased().utf8))
-    }
-}

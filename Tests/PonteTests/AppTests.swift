@@ -1,10 +1,10 @@
 // Tests for the app's pure logic: AppRules (the oracle for the t27 specs),
-// TranslationLane, GlossaryTerm, TranscriptExporter.
-// Package.swift's test target does not depend on the PonteApp executable, so those
-// four files are compiled into this target through symlinks in AppLogic/.
+// TranslationLane, GlossaryTerm, TranscriptExporter, LaunchOptions, WAVFileSink.
 // All fakes here are prefixed `AppTest` to avoid clashing with other agents' tests.
 import AVFoundation
 import Foundation
+import PonteAudio
+@testable import PonteApp
 import PonteCore
 import Testing
 
@@ -46,6 +46,10 @@ final class AppTestTranscriber: Transcriber {
     private(set) var finished = false
     /// Emitted as a final phrase when `finish()` flushes (push-to-talk release).
     var finalOnFinish: String?
+    /// Timing reported for finals (Transcriber.timing(for:)); nil = unknown.
+    var timings: [UUID: PhraseTiming] = [:]
+
+    func timing(for id: UUID) -> PhraseTiming? { lock.withLock { timings[id] } }
 
     init(language: Lang) { self.language = language }
 
@@ -74,26 +78,35 @@ final class AppTestTranscriber: Transcriber {
     func say(_ text: String) { emit(.final(id: UUID(), text: text)) }
 }
 
+struct AppTestPacksMissing: Error {}
+
 final class AppTestTranslator: Translator {
     let name = "test"
     private(set) var calls: [(text: String, context: [String])] = []
+    private(set) var prepareCount = 0
     var clock: AppTestClock?
     /// Simulated translation time, applied to the test clock.
     var cost: TimeInterval = 0
     /// Real delay per text, to check that order survives uneven translation times.
     var realDelay: [String: Duration] = [:]
+    /// Like a missing language pack: prepare and translate throw.
+    var broken = false
 
-    func prepare(from: Lang, to: Lang) async throws {}
+    func prepare(from: Lang, to: Lang) async throws {
+        prepareCount += 1
+        if broken { throw AppTestPacksMissing() }
+    }
 
     func translate(_ text: String, from: Lang, to: Lang, context: [String]) async throws -> String {
         calls.append((text, context))
+        if broken { throw AppTestPacksMissing() }
         if let delay = realDelay[text] { try await Task.sleep(for: delay) }
         clock?.advance(cost)
         return "T(\(text))"
     }
 }
 
-final class AppTestSynth: RateAdjustableSpeechSynth {
+final class AppTestSynth: SpeechSynth {
     private(set) var texts: [String] = []
     private(set) var rates: [Int32] = []
     private var labels: [ObjectIdentifier: String] = [:]
@@ -118,11 +131,18 @@ final class AppTestSynth: RateAdjustableSpeechSynth {
 final class AppTestPlayer: AudioPlayer {
     let device: AudioDevice? = nil
     private(set) var played: [AVAudioPCMBuffer] = []
+    /// Buffer counts of each `play` call (the lane plays a phrase in one gapless call).
+    private(set) var calls: [Int] = []
     private(set) var stopCount = 0
     var duration: Duration = .milliseconds(5)
 
     func play(_ buffer: AVAudioPCMBuffer) async {
-        played.append(buffer)
+        await play([buffer])
+    }
+
+    func play(_ buffers: [AVAudioPCMBuffer]) async {
+        calls.append(buffers.count)
+        played += buffers
         try? await Task.sleep(for: duration)
     }
 
@@ -218,18 +238,69 @@ func appTestWait(_ what: String = "", timeout: Duration = .seconds(2),
     await rig.lane.stop()
 }
 
-@MainActor @Test func laneMeasuresLatencyFromEndOfSpeech() async throws {
+@MainActor @Test func laneMeasuresLatencyFromTheTranscribersEndOfVoice() async throws {
     let rig = AppTestRig(direction: .incoming)
     rig.translator.cost = 0.3
     try await rig.lane.start()
-    rig.source.push(amplitude: 0.5)        // speech ends here (t0)
-    rig.clock.advance(0.4)
-    rig.source.push(amplitude: 0)          // silence
-    rig.clock.advance(0.1)
-    rig.current?.say("Bom dia")            // final arrives at t0 + 0.5
+    let voiceEnd = rig.clock.now                         // the speaker stops (t0)
+    rig.clock.advance(0.5)                               // the transcriber finalizes at t0 + 0.5
+    let id = UUID()
+    rig.current?.timings[id] = PhraseTiming(audioStart: 0, audioEnd: 1.2, audioEndArrivedAt: voiceEnd,
+                                            finalizedAt: rig.clock.now, forced: true)
+    rig.current?.emit(.final(id: id, text: "Bom dia"))
     try await appTestWait("translation") { rig.translatedLines.count == 1 }
-    let latency = try #require(rig.translatedLines.first?.latency)
-    #expect(abs(latency - 0.8) < 0.001)    // 0.5 endpointing + 0.3 translation
+    let line = try #require(rig.translatedLines.first)
+    #expect(abs((line.latency ?? -1) - 0.8) < 0.001)    // 0.5 recognition + 0.3 translation
+    #expect(line.at == voiceEnd)
+    await rig.lane.stop()
+}
+
+@MainActor @Test func laneWithoutTimingUsesTheLastPartial() async throws {
+    let rig = AppTestRig(direction: .incoming)
+    rig.translator.cost = 0.3
+    try await rig.lane.start()
+    let id = UUID()
+    rig.current?.emit(.partial(id: id, text: "Bom"))
+    try await appTestWait("partial") { rig.events.contains { if case .partial("Bom") = $0 { true } else { false } } }
+    let partialAt = rig.clock.now
+    rig.clock.advance(0.2)
+    rig.current?.emit(.final(id: id, text: "Bom dia"))
+    try await appTestWait("translation") { rig.translatedLines.count == 1 }
+    #expect(rig.translatedLines.first?.at == partialAt)
+    #expect(abs((rig.translatedLines.first?.latency ?? -1) - 0.5) < 0.001)
+    await rig.lane.stop()
+}
+
+@MainActor @Test func laneStartsWithoutItsTranslatorAndRetries() async throws {
+    let rig = AppTestRig(direction: .incoming)
+    rig.translator.broken = true
+    try await rig.lane.start()                           // recognition runs anyway
+    #expect(rig.lane.isRunning)
+    #expect(rig.lane.translatorError is AppTestPacksMissing)
+    rig.current?.say("Olá")
+    try await appTestWait("failed line") { rig.translatedLines.count == 1 }
+    let failed = try #require(rig.translatedLines.first)
+    #expect(failed.translation == nil && failed.translationError != nil)
+    #expect(rig.events.contains { if case .translationFailed = $0 { true } else { false } })
+    #expect(rig.translator.prepareCount == 1)            // no retry within PREPARE_RETRY_MS
+
+    rig.translator.broken = false                        // the owner downloaded the packs
+    rig.clock.advance(Double(AppRules.PREPARE_RETRY_MS) / 1000)
+    rig.current?.say("Tchau")
+    try await appTestWait("translated after retry") { rig.translatedLines.count == 2 }
+    #expect(rig.translator.prepareCount == 2)
+    #expect(rig.translatedLines.last?.translation == "T(Tchau)")
+    #expect(rig.lane.translatorError == nil)
+    await rig.lane.stop()
+}
+
+@MainActor @Test func lanePlaysEachPhraseInOneGaplessCall() async throws {
+    let rig = AppTestRig(direction: .outgoing)
+    try await rig.lane.start()
+    rig.current?.say("um")
+    rig.current?.say("dois")
+    try await appTestWait("2 played") { rig.player.played.count == 2 }
+    #expect(rig.player.calls == [1, 1])
     await rig.lane.stop()
 }
 
@@ -329,6 +400,12 @@ func appTestWait(_ what: String = "", timeout: Duration = .seconds(2),
 
 // MARK: - Glossary
 
+@Test func glossaryForTheTranslatorFollowsTheDirection() {
+    let terms = [GlossaryTerm(pt: " Trinity ", ru: "Тринити"), GlossaryTerm(pt: "Pix", ru: "")]
+    #expect(GlossaryTerm.translatorGlossary(terms, direction: .incoming) == ["Trinity": "Тринити"])
+    #expect(GlossaryTerm.translatorGlossary(terms, direction: .outgoing) == ["Тринити": "Trinity"])
+}
+
 @Test func glossaryReplacesUntranslatedTermsAsWholeWords() {
     let terms = [GlossaryTerm(pt: "Trinity", ru: "Тринити"),
                  GlossaryTerm(pt: "Dmitrii", ru: "Дмитрий"),
@@ -422,6 +499,23 @@ func appTestWait(_ what: String = "", timeout: Duration = .seconds(2),
     await rig.lane.stop()
 }
 
+@MainActor @Test func discardedPhraseRemovesItsVolatileLine() async throws {
+    let rig = AppTestRig(direction: .incoming)
+    try await rig.lane.start()
+    let id = UUID()
+    rig.current?.emit(.partial(id: id, text: "hum"))
+    rig.current?.emit(.final(id: id, text: ""))          // the recognizer decided it was noise
+    try await appTestWait("cleared") {
+        if case .partial("") = rig.events.last { return true }
+        return false
+    }
+    let partials = rig.events.compactMap { if case .partial(let t) = $0 { t } else { nil } }
+    #expect(partials == ["hum", ""])
+    #expect(!rig.events.contains { if case .phrase = $0 { true } else { false } })
+    #expect(rig.translator.calls.isEmpty)
+    await rig.lane.stop()
+}
+
 // MARK: - AppRules (oracle for the t27 specs)
 
 private typealias R = AppRules
@@ -504,15 +598,13 @@ private typealias R = AppRules
     #expect(R.echoGuardBlocksMic(speakerOutput: true, incomingSpeaking: false, msSinceSpeech: 699))
     #expect(!R.echoGuardBlocksMic(speakerOutput: true, incomingSpeaking: false, msSinceSpeech: 700))
     #expect(!R.echoGuardBlocksMic(speakerOutput: true, incomingSpeaking: false, msSinceSpeech: -1))
-    #expect(R.isBuiltInSpeaker(uidLower: Array("builtinspeakerdevice".utf8), nameLower: []))
-    #expect(R.isBuiltInSpeaker(uidLower: [], nameLower: Array("macbook pro speakers".utf8)))
-    #expect(R.isBuiltInSpeaker(uidLower: [], nameLower: Array("динамики macbook pro".utf8)))
-    #expect(!R.isBuiltInSpeaker(uidLower: Array("bluetooth-s6".utf8), nameLower: Array("s6-l".utf8)))
-    #expect(R.isVoice(rms: 0.01) && !R.isVoice(rms: 0.0099))
-    #expect(R.phraseEndSource(msSinceVoice: 250, msSincePartial: 10) == R.END_LAST_VOICE)
-    #expect(R.phraseEndSource(msSinceVoice: 249, msSincePartial: 10) == R.END_LAST_PARTIAL)
-    #expect(R.phraseEndSource(msSinceVoice: -1, msSincePartial: 0) == R.END_LAST_PARTIAL)
-    #expect(R.phraseEndSource(msSinceVoice: 100, msSincePartial: -1) == R.END_NOW)
+    #expect(R.echoGuardApplies(speakerOutput: true, micIsLive: true))
+    #expect(!R.echoGuardApplies(speakerOutput: true, micIsLive: false))
+    #expect(!R.echoGuardApplies(speakerOutput: false, micIsLive: true))
+    #expect(R.phraseEndChoice(msSinceTimedEnd: 0, msSincePartial: 10) == R.END_TRANSCRIBER)
+    #expect(R.phraseEndChoice(msSinceTimedEnd: 700, msSincePartial: -1) == R.END_TRANSCRIBER)
+    #expect(R.phraseEndChoice(msSinceTimedEnd: -1, msSincePartial: 0) == R.END_LAST_PARTIAL)
+    #expect(R.phraseEndChoice(msSinceTimedEnd: -1, msSincePartial: -1) == R.END_NOW)
     #expect(R.latencyMs(endMs: 1_000, readyMs: 2_250) == 1_250)
     #expect(R.latencyMs(endMs: 2_000, readyMs: 1_000) == 0)
     #expect([0, 3, 4, 5, 9].map { R.contextOverflow(count: Int32($0)) } == [0, 0, 0, 1, 5])
@@ -530,6 +622,21 @@ private typealias R = AppRules
     #expect(R.startBanner(lanesFailed: 0, packsMissing: false, hasBlackHole: false, speakerOutput: true) == R.BAN_NO_BLACKHOLE)
     #expect(R.startBanner(lanesFailed: 0, packsMissing: false, hasBlackHole: true, speakerOutput: true) == R.BAN_SPEAKERS)
     #expect(R.startBanner(lanesFailed: 0, packsMissing: true, hasBlackHole: true, speakerOutput: false) == R.BAN_NONE)
+    func after(_ lanes: Int32, _ translators: Int32, packs: Bool = false, bh: Bool = true, speakers: Bool = false) -> Int32 {
+        R.startBannerAfterStart(lanesFailed: lanes, translatorsFailed: translators, packsMissing: packs,
+                                hasBlackHole: bh, speakerOutput: speakers)
+    }
+    #expect(after(1, 1, packs: true) == R.BAN_FAILED_PACKS)
+    #expect(after(1, 0) == R.BAN_FAILED_OTHER)
+    #expect(after(0, 2, packs: true, bh: false) == R.BAN_NO_PACKS)
+    #expect(after(0, 1, bh: false, speakers: true) == R.BAN_NO_TRANSLATOR)
+    #expect(after(0, 0, bh: false) == R.BAN_NO_BLACKHOLE)
+    #expect(after(0, 0, speakers: true) == R.BAN_SPEAKERS)
+    #expect(after(0, 0) == R.BAN_NONE)
+    #expect(R.retryTranslatorPrepare(prepared: false, msSinceAttempt: -1))
+    #expect(!R.retryTranslatorPrepare(prepared: false, msSinceAttempt: 4_999))
+    #expect(R.retryTranslatorPrepare(prepared: false, msSinceAttempt: 5_000))
+    #expect(!R.retryTranslatorPrepare(prepared: true, msSinceAttempt: 60_000))
     #expect(R.autosaveOnStop(lines: 1) && !R.autosaveOnStop(lines: 0))
 
     func on(_ b: Int32, _ run: Int32, inc: Int32 = 0, out: Int32 = 0, bh: Bool = true, busy: Bool = false) -> Bool {
@@ -564,6 +671,26 @@ private typealias R = AppRules
     #expect(R.modelsLight(runState: R.RUN_IDLE, everStarted: true, lanesStarted: 2, lanesFailed: 0) == R.LIGHT_OK)
     #expect([-1, 0, 2_000, 2_001, 4_000, 4_001].map { R.latencyColor(ms: Int64($0)) }
             == [R.LAT_NONE, R.LAT_GOOD, R.LAT_GOOD, R.LAT_SLOW, R.LAT_SLOW, R.LAT_BAD])
+
+    func source(_ run: Int32 = R.RUN_RUNNING, active: Bool = true, tap: Int32 = R.TAP_CAPTURING,
+                start: Int64 = 9_000, buffer: Int64 = 100, signal: Int64 = 100) -> Int32 {
+        R.sourceLight(runState: run, laneActive: active, tapStatus: tap, msSinceStart: start,
+                      msSinceBuffer: buffer, msSinceSignal: signal)
+    }
+    #expect(source() == R.LIGHT_OK)
+    #expect(source(R.RUN_STARTING) == R.LIGHT_BUSY)
+    #expect(source(R.RUN_IDLE, tap: R.TAP_FAILED) == R.LIGHT_UNKNOWN)
+    #expect(source(active: false) == R.LIGHT_BAD)
+    #expect(source(tap: R.TAP_FAILED) == R.LIGHT_BAD)
+    #expect(source(tap: R.TAP_WAITING, buffer: -1, signal: -1) == R.LIGHT_BUSY)
+    #expect(source(signal: -1) == R.LIGHT_WARN)                          // only zeros for 9 s
+    #expect(source(start: 7_999, signal: -1) == R.LIGHT_OK)              // too early to tell
+    #expect(source(tap: R.TAP_NONE, signal: -1) == R.LIGHT_OK)           // a test file is not a tap
+    #expect(source(start: 9_000, buffer: 2_000) == R.LIGHT_BAD)          // buffers stopped
+    #expect(R.captureCheckLight(tapStatus: R.TAP_CAPTURING, framesSeen: true, signalSeen: true) == R.LIGHT_OK)
+    #expect(R.captureCheckLight(tapStatus: R.TAP_CAPTURING, framesSeen: true, signalSeen: false) == R.LIGHT_WARN)
+    #expect(R.captureCheckLight(tapStatus: R.TAP_CAPTURING, framesSeen: false, signalSeen: false) == R.LIGHT_BAD)
+    #expect(R.captureCheckLight(tapStatus: R.TAP_FAILED, framesSeen: true, signalSeen: true) == R.LIGHT_BAD)
 }
 
 @Test func rulesSourceTranslatorPushToTalk() {
@@ -608,6 +735,9 @@ private typealias R = AppRules
     #expect(R.wizardShowOnLaunch(setupCompleted: false, forcedStep: -1))
     #expect(!R.wizardShowOnLaunch(setupCompleted: true, forcedStep: -1))
     #expect(R.wizardShowOnLaunch(setupCompleted: true, forcedStep: 3))
+    #expect(!R.wizardShowOnLaunchInMode(setupCompleted: false, forcedStep: -1, testMode: true))
+    #expect(R.wizardShowOnLaunchInMode(setupCompleted: false, forcedStep: -1, testMode: false))
+    #expect(R.wizardShowOnLaunchInMode(setupCompleted: true, forcedStep: 2, testMode: true))
     #expect(R.wizardCompletedAfterClose(wasCompleted: false, finished: true))
     #expect(!R.wizardCompletedAfterClose(wasCompleted: false, finished: false))
     #expect(R.wizardCompletedAfterClose(wasCompleted: true, finished: false))
@@ -643,4 +773,50 @@ private typealias R = AppRules
     #expect(esc("строка\r\n- вторая\n3) третья") == "строка\n\\- вторая\n3\\) третья")
     #expect(R.markdownEscape([]) == [])
     #expect(TranscriptExporter.escaped(String(repeating: "я", count: 1_100)).utf8.count == 2_048)
+}
+
+// MARK: - Test mode
+
+@Test func launchOptionsReadTheArgumentDomain() {
+    let none = LaunchOptions(arguments: [:])
+    #expect(!none.isTestMode && !none.autostart && none.wizardStep == AppRules.WZ_NONE)
+    let options = LaunchOptions(arguments: [
+        "PonteIncomingFile": "/tmp/pt_1.wav", "PonteOutgoingFile": "~/ru_1.wav",
+        "PonteOutgoingSink": "/tmp/out.wav", "PonteTranscriptDir": "/tmp/e2e",
+        "PonteAutostart": "YES", "PonteWizardStep": "2", "PonteAppearance": "dark",
+    ])
+    #expect(options.isTestMode && options.autostart)
+    #expect(options.incomingFile?.path == "/tmp/pt_1.wav")
+    #expect(options.outgoingFile?.path == NSHomeDirectory() + "/ru_1.wav")
+    #expect(options.outgoingSink?.lastPathComponent == "out.wav")
+    #expect(options.transcriptDir?.path == "/tmp/e2e")
+    #expect(options.wizardStep == 2 && options.appearance == "dark")
+    #expect(!LaunchOptions(arguments: ["PonteAutostart": "NO"]).autostart)
+    #expect(LaunchOptions(arguments: ["PonteTranscriptDir": "/tmp/x"]).isTestMode)
+}
+
+/// The synthesizer renders 22 050 Hz mono; the call output runs at 48 kHz. The sink resamples
+/// like DeviceAudioPlayer: same duration, same pitch, nothing lost at the end.
+@Test func wavSinkResamplesSynthesizedSpeechTo48kHz() async throws {
+    let rate = 22_050.0
+    let tone = (0..<Int(rate)).map { Float(0.5 * sin(2 * Double.pi * 440 * Double($0) / rate)) }
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ponte-sink-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let url = folder.appendingPathComponent("out.wav")
+    let sink = WAVFileSink(url: url, realtime: false)
+    await sink.play([PCM.buffer(tone, sampleRate: rate)])
+    await sink.play([PCM.buffer(Array(tone[..<11_025]), sampleRate: rate), PCM.buffer(Array(tone[11_025...]), sampleRate: rate)])
+    #expect(sink.lastError == nil)
+
+    let file = try AVAudioFile(forReading: url)
+    #expect(file.fileFormat.sampleRate == 48_000)
+    #expect(file.fileFormat.channelCount == 1)
+    #expect(abs(Int(file.length) - 96_000) <= 64)               // 2 × 1 s
+    let read = PCM.samples(try FileSource.readMono(url: url))
+    let first = Array(read[2_000..<46_000])                     // skip the edges of the resampler
+    var crossings = 0
+    for i in 1..<first.count where (first[i - 1] < 0) != (first[i] < 0) { crossings += 1 }
+    let hz = Double(crossings) / 2 / (Double(first.count) / 48_000)
+    #expect(abs(hz - 440) < 3)
+    #expect(abs(AudioRules.rms(first) - Float(0.5 / 2.0.squareRoot())) < 0.01)
 }

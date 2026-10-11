@@ -1,3 +1,4 @@
+import AVFoundation
 import PonteAudio
 import PonteCore
 import PonteSpeech
@@ -34,7 +35,7 @@ final class SetupState {
     var mic = Permissions.microphone
     var speech = Permissions.speech
     var capture: Check = .unknown
-    var captureError: String?
+    var captureDetail: String?
     var models: [Lang: Check] = [.ptBR: .unknown, .ru: .unknown]
     var modelErrors: [Lang: String] = [:]
     var packs: [Direction: Check] = [.incoming: .unknown, .outgoing: .unknown]
@@ -49,20 +50,36 @@ final class SetupState {
         speech = Permissions.speech
     }
 
-    /// Starts a short tap on all system audio: macOS asks for «Запись звука» the first time.
+    /// Listens to all audio except Ponte for AppRules.CAPTURE_CHECK_MS (macOS asks for the
+    /// System Audio Recording permission the first time). The verdict comes from the tap status
+    /// and the samples: a tap without the permission delivers only exact zeros.
     func checkCapture() async {
         capture = .busy
-        captureError = nil
+        captureDetail = nil
         let source = AppAudioTapSource(target: .systemExceptSelf)
+        let meter = CaptureMeter()
         do {
-            try source.start { _, _ in }
-            try? await Task.sleep(for: .milliseconds(800))
-            source.stop()
-            capture = .ok
+            try source.start { buffer, _ in meter.add(buffer) }
         } catch {
             source.stop()
             capture = .bad
-            captureError = error.localizedDescription
+            captureDetail = "Не удалось подключиться к звуку: \(error)"
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(Int(AppRules.CAPTURE_CHECK_MS)))
+        let status = AppModel.tapCode(source.status)
+        source.stop()
+        let (frames, signal) = meter.result
+        let light = AppRules.captureCheckLight(tapStatus: status.code, framesSeen: frames > 0, signalSeen: signal)
+        capture = Check(light: light)
+        switch light {
+        case AppRules.LIGHT_OK:
+            captureDetail = "Звук других программ слышен."
+        case AppRules.LIGHT_WARN:
+            captureDetail = "Слышна только тишина. Включите звук в любой программе (видео, музыку) и нажмите «Проверить» ещё раз. "
+                + "Если звук играет, а здесь тишина, — разрешите Ponte запись системного звука в Системных настройках."
+        default:
+            captureDetail = "Звук не приходит" + (status.detail.map { ": \($0)" } ?? ".")
         }
     }
 
@@ -261,10 +278,11 @@ struct SetupWizardView: View {
                 }
             }
             StepRow(icon: "speaker.wave.2", title: "Запись звука программ",
-                    detail: state.captureError ?? "Слышать собеседников из Zoom, браузера, Telegram и других программ.",
+                    detail: state.captureDetail ?? "Слышать собеседников из Zoom, браузера, Telegram и других программ.",
                     check: state.capture) {
                 Button("Проверить") { Task { await state.checkCapture() } }
-                if state.capture == .bad {
+                    .disabled(state.capture == .busy)
+                if state.capture == .bad || state.capture == .warn {
                     Button("Открыть настройки") { Permissions.openPrivacySettings("Privacy_ScreenCapture") }
                 }
             }
@@ -452,6 +470,24 @@ struct SetupWizardView: View {
     }
 }
 
+/// Counts what the capture check heard (called on the tap's delivery queue).
+private final class CaptureMeter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var frames = 0
+    private var signal = false
+
+    func add(_ buffer: AVAudioPCMBuffer) {
+        let (rms, peak) = buffer.laneLevels
+        let heard = AudioRules.levelCode(peak: peak, rms: rms) != AudioRules.levelDigitalSilence
+        lock.withLock {
+            frames += Int(buffer.frameLength)
+            signal = signal || heard
+        }
+    }
+
+    var result: (frames: Int, signal: Bool) { lock.withLock { (frames, signal) } }
+}
+
 private struct StepRow<Actions: View>: View {
     let icon: String
     let title: String
@@ -479,6 +515,7 @@ private struct StepRow<Actions: View>: View {
                 case .ok: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                 case .bad: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
                 case .busy: ProgressView().controlSize(.small)
+                case .warn: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
                 case .unknown: Image(systemName: "circle").foregroundStyle(.tertiary)
                 }
             }

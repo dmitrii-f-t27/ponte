@@ -58,6 +58,8 @@ struct StatusChip: View {
             Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
         case .busy:
             ProgressView().controlSize(.mini)
+        case .warn:
+            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
         case .unknown:
             Image(systemName: "minus.circle").foregroundStyle(.tertiary)
         }
@@ -135,6 +137,11 @@ struct LineRow: View {
                     .font(.system(size: isNewest ? fontSize + 2 : fontSize, weight: isNewest ? .semibold : .regular))
                     .foregroundStyle(Color.primary.opacity(isNewest ? 1 : 0.72))
                     .fixedSize(horizontal: false, vertical: true)
+            } else if let error = line.translationError {
+                Label("Перевод не получен", systemImage: "exclamationmark.triangle")
+                    .font(.system(size: max(13, fontSize - 6)))
+                    .foregroundStyle(.orange)
+                    .help(error)
             } else {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)

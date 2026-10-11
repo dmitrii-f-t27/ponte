@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import os
+import PonteAudio
 import PonteCore
 
 // One direction of the call:
@@ -8,9 +9,9 @@ import PonteCore
 // → ConversationLine → optional SpeechSynth → AudioPlayer.
 //
 // Every decision is asked from AppRules (gate machine, phrase pipeline, speech
-// cancel, replay, speech rate, echo guard, phrase end). This file only does the
-// plumbing: tasks, queues, locks, generations. It knows only the PonteCore
-// protocols, so tests drive it with fakes. Also compiled into PonteTests.
+// cancel, replay, speech rate, echo guard, phrase end, translator retry) and AudioRules
+// (levels). This file only does the plumbing: tasks, queues, locks, generations. It knows
+// only the PonteCore protocols, so tests drive it with fakes.
 
 /// How audio reaches the transcriber.
 enum CaptureMode: String, CaseIterable, Codable, Sendable {
@@ -22,18 +23,16 @@ enum CaptureMode: String, CaseIterable, Codable, Sendable {
     var ruleCode: Int32 { self == .continuous ? AppRules.MODE_CONTINUOUS : AppRules.MODE_PUSH_TO_TALK }
 }
 
-/// Proposed addition to the SpeechSynth contract: speak faster when phrases pile up.
-protocol RateAdjustableSpeechSynth: SpeechSynth {
-    func synthesize(_ text: String, lang: Lang, ratePercent: Int32) async throws -> [AVAudioPCMBuffer]
-}
-
 enum LaneEvent {
-    /// Volatile text of the current phrase; "" clears it.
+    /// Volatile text of the current phrase; "" clears it (also when the phrase was discarded).
     case partial(String)
     /// A final phrase arrived; translation is pending.
     case phrase(ConversationLine)
-    /// The same line with translation and latency filled in (translation nil if it failed).
+    /// The same line with translation and latency filled in. If the translation failed,
+    /// `translation` is nil and `translationError` says why.
     case translated(ConversationLine)
+    /// The translator failed on a phrase (sent right after its `.translated`).
+    case translationFailed(Error)
     /// Synthesized speech for this lane is playing.
     case speaking(Bool)
     /// A non-fatal problem worth showing to the user.
@@ -93,7 +92,9 @@ final class EchoGuard: @unchecked Sendable {
 struct LaneAudioStats: Sendable {
     var buffers: Int = 0
     var lastBufferAt: Date?
-    var lastVoiceAt: Date?
+    /// Last buffer with a non-zero sample (AudioRules.levelCode ≠ levelDigitalSilence).
+    var lastSignalAt: Date?
+    /// RMS of the last buffer (AudioRules.rms).
     var level: Float = 0
 }
 
@@ -132,6 +133,9 @@ final class TranslationLane {
     private(set) var isKeyHeld = false
     private(set) var lastTranslatedLine: ConversationLine?
     var isRunning: Bool { gatePhase == AppRules.GATE_OPEN || gatePhase == AppRules.GATE_CLOSED }
+    /// Why the translator could not be prepared at `start()` (the lane then only transcribes
+    /// until a retry succeeds); nil when it is ready.
+    private(set) var translatorError: Error?
 
     private let source: AudioSource
     private let makeTranscriber: () -> Transcriber
@@ -144,6 +148,8 @@ final class TranslationLane {
     private let log = Logger(subsystem: "app.ponte.translator", category: "lane")
 
     private var preparedTranscriber: Transcriber?
+    private var translatorPrepared = false
+    private var lastPrepareAttempt: Date?
     private var segment: Segment?
     private var gateChange: Task<Void, Never>?
     private var openSegments: [Segment] = []
@@ -188,14 +194,16 @@ final class TranslationLane {
 
     // MARK: Lifecycle
 
-    /// Prepares models and the translator, then starts capturing.
+    /// Prepares the speech model, then starts capturing. A translator that cannot be prepared
+    /// (for example a missing language pack) does not stop the lane: `translatorError` is set,
+    /// originals are shown, and preparation is retried before later phrases.
     func start() async throws {
         guard gatePhase == AppRules.GATE_STOPPED else { return }
         await gateEvent(AppRules.GEV_START)
         do {
             let first = makeTranscriber()
             try await first.prepare()
-            try await translator.prepare(from: direction.source, to: direction.target)
+            await prepareTranslator()
             preparedTranscriber = first
             startWorkers()
             try source.start { [intake] buffer, _ in intake.handle(buffer) }
@@ -206,6 +214,19 @@ final class TranslationLane {
             throw error
         }
         await gateEvent(AppRules.GEV_STARTED)
+    }
+
+    private func prepareTranslator() async {
+        lastPrepareAttempt = clock()
+        do {
+            try await translator.prepare(from: direction.source, to: direction.target)
+            translatorPrepared = true
+            translatorError = nil
+        } catch {
+            translatorPrepared = false
+            translatorError = error
+            log.error("translator not ready \(self.direction.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Stops capture, flushes the transcriber and waits for pending translations
@@ -302,7 +323,7 @@ final class TranslationLane {
                     Task { await transcriber.finish() }
                 }
                 for await event in stream {
-                    self?.handle(event)
+                    self?.handle(event, from: transcriber)
                 }
             } catch {
                 self?.onEvent(.problem("Распознавание: \(error.localizedDescription)"))
@@ -323,38 +344,40 @@ final class TranslationLane {
 
     // MARK: Transcript events
 
-    private func handle(_ event: TranscriptEvent) {
+    private func handle(_ event: TranscriptEvent, from transcriber: Transcriber) {
         switch event {
         case .partial(let id, let text):
             lastPartialAt[id] = clock()
             let step = AppRules.phraseStep(stage: AppRules.PH_LISTENING, event: AppRules.PEV_PARTIAL, flags: 0)
             if AppRules.stepAction(step) == AppRules.PACT_SHOW_PARTIAL { onEvent(.partial(text)) }
         case .final(let id, let text):
+            // Also a discarded phrase (empty text): its volatile line goes away.
             let partialAt = lastPartialAt.removeValue(forKey: id)
             onEvent(.partial(""))
             let phrase = text.trimmingCharacters(in: .whitespacesAndNewlines)
             let step = AppRules.phraseStep(stage: AppRules.PH_LISTENING, event: AppRules.PEV_FINAL,
                                            flags: phrase.isEmpty ? AppRules.PF_EMPTY_TEXT : 0)
             guard AppRules.stepAction(step) == AppRules.PACT_TRANSLATE else { return }
-            let end = phraseEnd(lastPartialAt: partialAt)
+            let timing = transcriber.timing(for: id)
+            let end = phraseEnd(timing: timing, lastPartialAt: partialAt)
             let line = ConversationLine(id: id, direction: direction, at: end, original: phrase)
             onEvent(.phrase(line))
             let context = memory.snapshot()
             memory.add(phrase)
             let speak = AppRules.speakRequested(speechEnabled: speechOutputEnabled, paused: isPaused)
             translateInput?.yield(PendingPhrase(line: line, context: context, end: end,
+                                                recognitionMs: timing.map { millis($0.recognitionLatency) },
                                                 speak: speak, generation: speechGeneration))
         }
     }
 
-    private func phraseEnd(lastPartialAt: Date?) -> Date {
+    private func phraseEnd(timing: PhraseTiming?, lastPartialAt: Date?) -> Date {
         let now = clock()
-        let voiceAt = intake.stats().lastVoiceAt
-        let source = AppRules.phraseEndSource(
-            msSinceVoice: voiceAt.map { millis(now.timeIntervalSince($0)) } ?? -1,
+        let choice = AppRules.phraseEndChoice(
+            msSinceTimedEnd: timing.map { max(0, millis(now.timeIntervalSince($0.audioEndArrivedAt))) } ?? -1,
             msSincePartial: lastPartialAt.map { max(-1, millis(now.timeIntervalSince($0))) } ?? -1)
-        switch source {
-        case AppRules.END_LAST_VOICE: return voiceAt ?? now
+        switch choice {
+        case AppRules.END_TRANSCRIBER: return timing?.audioEndArrivedAt ?? now
         case AppRules.END_LAST_PARTIAL: return lastPartialAt ?? now
         default: return now
         }
@@ -366,6 +389,8 @@ final class TranslationLane {
         var line: ConversationLine
         let context: [String]
         let end: Date
+        /// End of the voice → final text, from the transcriber (for the log).
+        let recognitionMs: Int64?
         let speak: Bool
         let generation: Int
     }
@@ -447,16 +472,23 @@ final class TranslationLane {
 
     private func translate(_ pending: PendingPhrase) async {
         var line = pending.line
+        let sinceAttempt = lastPrepareAttempt.map { millis(clock().timeIntervalSince($0)) } ?? -1
+        if AppRules.retryTranslatorPrepare(prepared: translatorPrepared, msSinceAttempt: sinceAttempt) {
+            await prepareTranslator()
+        }
         do {
             let raw = try await translator.translate(line.original, from: direction.source,
                                                      to: direction.target, context: pending.context)
+            // Names and terms the translator passed through: fixed in the app for every engine
+            // (Claude also gets the glossary in its prompt).
             let text = GlossaryTerm.apply(glossary, to: raw, direction: direction)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             line.translation = text
             let latency = AppRules.latencyMs(endMs: millis(pending.end.timeIntervalSince1970),
                                              readyMs: millis(clock().timeIntervalSince1970))
             line.latency = Double(latency) / 1000
-            log.info("latency \(self.direction.rawValue, privacy: .public) \(latency, privacy: .public) ms")
+            let recognition = pending.recognitionMs.map { String($0) } ?? "?"
+            log.info("latency \(self.direction.rawValue, privacy: .public) \(latency, privacy: .public) ms (recognition \(recognition, privacy: .public) ms)")
             lastTranslatedLine = line
             var extra: Int32 = text.isEmpty ? AppRules.PF_EMPTY_TEXT : 0
             if pending.speak { extra |= AppRules.PF_SPEAK_REQUESTED }
@@ -470,9 +502,11 @@ final class TranslationLane {
         } catch {
             // PEV_TRANSLATE_FAILED always shows the original only.
             _ = AppRules.phraseStep(stage: AppRules.PH_TRANSLATING, event: AppRules.PEV_TRANSLATE_FAILED, flags: 0)
+            line.translationError = error is CancellationError ? "перевод прерван" : error.localizedDescription
             onEvent(.translated(line))
             if !(error is CancellationError) {
-                onEvent(.problem("Перевод: \(error.localizedDescription)"))
+                log.error("translation failed \(self.direction.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                onEvent(.translationFailed(error))
             }
         }
     }
@@ -487,12 +521,7 @@ final class TranslationLane {
         do {
             let waiting = request.counted ? speechBacklog - 1 : speechBacklog
             let rate = AppRules.speechRatePercent(waiting: waiting)
-            let buffers: [AVAudioPCMBuffer]
-            if let rated = synth as? RateAdjustableSpeechSynth {
-                buffers = try await rated.synthesize(request.text, lang: direction.target, ratePercent: rate)
-            } else {
-                buffers = try await synth.synthesize(request.text, lang: direction.target)
-            }
+            let buffers = try await synth.synthesize(request.text, lang: direction.target, ratePercent: rate)
             if !buffers.isEmpty { lastSpoken = (request.text, buffers) }
             let done = AppRules.phraseStep(stage: AppRules.PH_SYNTH_QUEUED, event: AppRules.PEV_SYNTHESIZED,
                                            flags: flags(generation: request.generation,
@@ -518,10 +547,8 @@ final class TranslationLane {
             return
         }
         onEvent(.speaking(true))
-        for buffer in request.buffers {
-            guard request.generation == speechGeneration else { break }   // cancelled mid-phrase
-            await player.play(buffer)
-        }
+        // One gapless call per phrase; cancelSpeech() → player.stopAll() ends it early.
+        await player.play(request.buffers)
         let finish = AppRules.phraseStep(stage: AppRules.PH_PLAYING, event: AppRules.PEV_PLAYED, flags: 0)
         endOfSpeech(request.counted)
         if AppRules.stepAction(finish) == AppRules.PACT_FINISH, request.generation == speechGeneration {
@@ -548,19 +575,18 @@ final class AudioIntake: @unchecked Sendable {
     func stats() -> LaneAudioStats { lock.withLock { current } }
 
     func handle(_ buffer: AVAudioPCMBuffer) {
-        let level = buffer.laneRMS
+        let (rms, peak) = buffer.laneLevels
+        let signal = AudioRules.levelCode(peak: peak, rms: rms) != AudioRules.levelDigitalSilence
         let now = clock()
         let (segment, echo): (Segment?, EchoGuard?) = lock.withLock {
             current.buffers += 1
             current.lastBufferAt = now
-            current.level = level
+            current.level = rms
+            if signal { current.lastSignalAt = now }
             return (self.segment, self.echoGuard)
         }
         guard let segment else { return }
         if let echo, echo.blocksMic(at: now) { return }
-        if AppRules.isVoice(rms: Double(level)) {
-            lock.withLock { current.lastVoiceAt = now }
-        }
         segment.append(buffer)
     }
 }
@@ -617,21 +643,11 @@ final class Segment: @unchecked Sendable {
 }
 
 extension AVAudioPCMBuffer {
-    /// RMS of the first channel (Float32 or Int16), 0 if unknown.
-    var laneRMS: Float {
-        let frames = Int(frameLength)
-        guard frames > 0 else { return 0 }
-        var sum: Float = 0
-        if let data = floatChannelData {
-            for i in 0..<frames { sum += data[0][i] * data[0][i] }
-        } else if let data = int16ChannelData {
-            for i in 0..<frames {
-                let v = Float(data[0][i]) / Float(Int16.max)
-                sum += v * v
-            }
-        } else {
-            return 0
-        }
-        return (sum / Float(frames)).squareRoot()
+    /// RMS and peak of the first channel (AudioRules). Sources deliver Float32 (PonteCore
+    /// contract); any other sample type reads as silence.
+    var laneLevels: (rms: Float, peak: Float) {
+        guard frameLength > 0, let data = floatChannelData else { return (0, 0) }
+        let samples = UnsafeBufferPointer(start: data[0], count: Int(frameLength))
+        return (AudioRules.rms(samples), AudioRules.peak(samples))
     }
 }

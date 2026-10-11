@@ -181,7 +181,7 @@ private struct StatusRow: View {
     var body: some View {
         HStack(spacing: 8) {
             StatusChip(title: "Звук источника", systemImage: "speaker.wave.2", check: model.sourceCheck,
-                       level: model.sourceLevel, help: "Идёт ли звук из выбранной программы")
+                       level: model.sourceLevel, help: model.sourceHelp)
             StatusChip(title: "Микрофон", systemImage: "mic", check: model.micCheck,
                        level: model.micLevel, help: model.micDevice?.name ?? "Системный микрофон")
             StatusChip(title: "BlackHole", systemImage: "cable.connector",
