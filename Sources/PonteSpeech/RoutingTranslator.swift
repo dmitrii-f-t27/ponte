@@ -50,7 +50,7 @@ public final class RoutingTranslator: Translator, @unchecked Sendable {
                 try await claude.prepare(from: from, to: to)
                 claudeOK = true
             } catch {
-                if appleError == nil, apple == nil { throw error }
+                if SpeechRules.rethrowsClaudeError(appleFailed: appleError != nil, hasApple: apple != nil) { throw error }
             }
         }
         let engine = SpeechRules.primaryEngine(preferred: preferred, appleReady: isAppleReady(from, to),
@@ -60,7 +60,7 @@ public final class RoutingTranslator: Translator, @unchecked Sendable {
         }
     }
 
-    private var preferred: Int { preferClaude ? SpeechRules.engineClaude : SpeechRules.engineApple }
+    private var preferred: Int { SpeechRules.preferredEngine(preferClaude: preferClaude) }
 
     private func isAppleReady(_ from: Lang, _ to: Lang) -> Bool {
         apple != nil && lock.withLock { appleReady.contains(Self.key(from, to)) }
@@ -79,14 +79,15 @@ public final class RoutingTranslator: Translator, @unchecked Sendable {
                 let result = try await Self.withTimeout(ms: SpeechRules.translationTimeoutMs(engine: engine), name: translator.name) {
                     try await translator.translate(text, from: from, to: to, context: context)
                 }
-                if result.isEmpty && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if SpeechRules.emptyTranslation(resultEmpty: result.isEmpty,
+                                                inputEmpty: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
                     throw PonteSpeechError.cloudEmptyResponse
                 }
                 lock.withLock { _lastEngine = engine }
                 return result
             } catch {
                 let code = Self.errorCode(error)
-                if engine == SpeechRules.engineApple, code == SpeechRules.errorAssetsMissing {
+                if SpeechRules.forgetsAppleReady(engine: engine, errorCode: code) {
                     _ = lock.withLock { appleReady.remove(Self.key(from, to)) }
                 }
                 let fallback = SpeechRules.fallbackEngine(failed: engine, appleReady: isAppleReady(from, to),
@@ -109,25 +110,30 @@ public final class RoutingTranslator: Translator, @unchecked Sendable {
         }
     }
 
-    /// Maps an error to a `SpeechRules` error code.
+    /// Maps an error to a `SpeechRules` error code: the Swift error type gives the kind, the rule the code.
     static func errorCode(_ error: Error) -> Int {
+        let (kind, status) = errorKind(error)
+        return SpeechRules.errorCode(kind: kind, httpStatus: status)
+    }
+
+    static func errorKind(_ error: Error) -> (kind: Int, httpStatus: Int) {
         guard let e = error as? PonteSpeechError else {
-            return (error as? URLError) != nil ? SpeechRules.errorNetwork : SpeechRules.errorOther
+            return ((error as? URLError) != nil ? SpeechRules.kindURL : SpeechRules.kindOther, 0)
         }
         switch e {
-        case .translationTimedOut: return SpeechRules.errorTimeout
-        case .translationAssetsMissing: return SpeechRules.errorAssetsMissing
-        case .translationUnsupported: return SpeechRules.errorUnsupported
-        case .cloudRequestFailed(let status, _): return SpeechRules.errorCode(httpStatus: status)
-        case .cloudKeyMissing: return SpeechRules.errorRejected
-        case .cloudRefused: return SpeechRules.errorRefused
-        case .cloudEmptyResponse: return SpeechRules.errorEmpty
-        default: return SpeechRules.errorOther
+        case .translationTimedOut: return (SpeechRules.kindTimeout, 0)
+        case .translationAssetsMissing: return (SpeechRules.kindAssetsMissing, 0)
+        case .translationUnsupported: return (SpeechRules.kindUnsupported, 0)
+        case .cloudRequestFailed(let status, _): return (SpeechRules.kindCloudRequest, status)
+        case .cloudKeyMissing: return (SpeechRules.kindKeyMissing, 0)
+        case .cloudRefused: return (SpeechRules.kindRefused, 0)
+        case .cloudEmptyResponse: return (SpeechRules.kindEmpty, 0)
+        default: return (SpeechRules.kindOther, 0)
         }
     }
 
     static func withTimeout<T: Sendable>(ms: Int, name: String, _ work: @escaping @Sendable () async throws -> T) async throws -> T {
-        guard ms > 0 else { return try await work() }
+        guard SpeechRules.hasTimeout(ms: ms) else { return try await work() }
         return try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { try await work() }
             group.addTask {

@@ -40,12 +40,7 @@ public struct SpeechVoice: Hashable, Identifiable, Sendable {
 /// voices, then the preferred name for the language (Luciana for pt-BR, Milena for ru);
 /// ties by name, then identifier.
 public enum VoiceRanking {
-    public static func preferredNames(for lang: Lang) -> [String] {
-        switch lang {
-        case .ptBR: return ["Luciana", "Felipe", "Fernanda"]
-        case .ru: return ["Milena", "Yuri", "Katya"]
-        }
-    }
+    public static func preferredNames(for lang: Lang) -> [String] { SpeechRules.preferredVoiceNames(lang) }
 
     public static func rank(_ voices: [SpeechVoice], preferredNames: [String]) -> [SpeechVoice] {
         func key(_ v: SpeechVoice) -> Int {
@@ -53,10 +48,13 @@ public enum VoiceRanking {
             return SpeechRules.voiceRankKey(qualityCode: v.quality.rawValue, isNovelty: v.isNovelty, preferredIndex: index)
         }
         return voices.map { ($0, key($0)) }.sorted { a, b in
-            if a.1 != b.1 { return a.1 > b.1 }
-            if a.0.name != b.0.name { return a.0.name < b.0.name }
-            return a.0.id < b.0.id
+            SpeechRules.voiceBefore(keyA: a.1, keyB: b.1, nameOrder: order(a.0.name, b.0.name), idOrder: order(a.0.id, b.0.id))
         }.map(\.0)
+    }
+
+    /// Swift's String comparison of a with b: -1 before, 0 equal, 1 after.
+    static func order(_ a: String, _ b: String) -> Int {
+        a == b ? 0 : (a < b ? -1 : 1)
     }
 }
 
@@ -91,9 +89,13 @@ public final class SystemSpeechSynth: SpeechSynth, @unchecked Sendable {
 
     /// The voice `synthesize` uses for the language.
     public func voice(for lang: Lang) -> AVSpeechSynthesisVoice? {
-        if let id = voiceIdentifiers[lang], let v = AVSpeechSynthesisVoice(identifier: id) { return v }
-        if let best = Self.voices(for: lang).first, let v = AVSpeechSynthesisVoice(identifier: best.id) { return v }
-        return AVSpeechSynthesisVoice(language: lang.rawValue)
+        let saved = voiceIdentifiers[lang].flatMap { AVSpeechSynthesisVoice(identifier: $0) }
+        let best = Self.voices(for: lang).first.flatMap { AVSpeechSynthesisVoice(identifier: $0.id) }
+        switch SpeechRules.voiceSource(hasSaved: saved != nil, hasBest: best != nil) {
+        case SpeechRules.voiceSourceSaved: return saved
+        case SpeechRules.voiceSourceBest: return best
+        default: return AVSpeechSynthesisVoice(language: lang.rawValue)
+        }
     }
 
     /// One Float32 mono buffer at the voice's native sample rate (22 050 Hz for the compact voices).
@@ -109,10 +111,9 @@ public final class SystemSpeechSynth: SpeechSynth, @unchecked Sendable {
 
         let utterance = AVSpeechUtterance(string: phrase)
         utterance.voice = voice
-        if rate != nil || ratePercent != 100 {
-            let base = rate.map { Int(($0 * 1000).rounded()) } ?? SpeechRules.defaultUtteranceRateMilli
-            let milli = SpeechRules.utteranceRateMilli(ratePercent: Int(ratePercent), baseRateMilli: base)
-            utterance.rate = Float(milli) / 1000
+        if SpeechRules.setsRate(rate: rate, ratePercent: Int(ratePercent)) {
+            let milli = SpeechRules.utteranceRateMilli(ratePercent: Int(ratePercent), baseRateMilli: SpeechRules.baseRateMilli(rate: rate))
+            utterance.rate = SpeechRules.utteranceRate(milli: milli)
         }
 
         let timeoutMs = SpeechRules.synthesisTimeoutMs(textBytes: phrase.utf8.count)

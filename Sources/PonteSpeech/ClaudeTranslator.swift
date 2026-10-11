@@ -81,7 +81,7 @@ public struct ClaudeRequestBuilder: Sendable {
     public var glossary: [String: String]
     /// Short output; adaptive thinking stays on (Haiku 5.5 default) and low effort keeps latency down.
     public var maxTokens = SpeechRules.claudeMaxTokens
-    public var effort = ["low", "medium", "high"][min(max(SpeechRules.claudeEffortCode, 0), 2)]
+    public var effort = SpeechRules.effortName(code: SpeechRules.claudeEffortCode)
 
     public init(model: String = ClaudeRequestBuilder.defaultModel, glossary: [String: String] = [:]) {
         self.model = model
@@ -152,7 +152,7 @@ public struct ClaudeRequestBuilder: Sendable {
     /// Text of the reply. Reads content blocks by type: thinking blocks may come first.
     public static func parseResponse(_ data: Data, status: Int) throws -> String {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        guard (200..<300).contains(status) else {
+        guard SpeechRules.httpSuccess(status: status) else {
             let error = json?["error"] as? [String: Any]
             let message = (error?["message"] as? String) ?? String(data: data.prefix(300), encoding: .utf8) ?? ""
             throw PonteSpeechError.cloudRequestFailed(status: status, message: message)

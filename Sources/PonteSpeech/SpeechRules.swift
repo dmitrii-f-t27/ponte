@@ -10,6 +10,7 @@
 // Units: times are integer milliseconds; audio level is RMS × 100 000; text is UTF-8 bytes.
 // Domains: phrase texts up to SG_TEXT_MAX bytes (punctuationCode reads the last SG_TEXT_MAX bytes,
 // cutByteIndex any length with maxBytes below SG_TEXT_MAX - 2); voice identifiers up to VO_ID_MAX bytes.
+import PonteCore
 import PonteSpecs
 
 public enum SpeechRules {
@@ -284,6 +285,225 @@ public enum SpeechRules {
     public static func utteranceRateMilli(ratePercent: Int, baseRateMilli: Int) -> Int {
         Int(vo_utterance_rate_milli(Int64(ratePercent), Int64(baseRateMilli)))
     }
+
+    // MARK: - Rules moved here from the rest of PonteSpeech
+
+    /// Language codes of segment_rules and voice_rules (the same numbers).
+    public static let langPtBR = Int(SG_LANG_PT_BR)
+    public static let langRu = Int(SG_LANG_RU)
+    public static func langCode(_ lang: Lang) -> Int {
+        switch lang {
+        case .ptBR: return langPtBR
+        case .ru: return langRu
+        }
+    }
+
+    /// The SpeechAnalyzer module a language uses: SpeechTranscriber, or DictationTranscriber for Russian.
+    public static let moduleSpeech = Int(SG_MODULE_SPEECH)
+    public static let moduleDictation = Int(SG_MODULE_DICTATION)
+    public static func transcriberKind(_ lang: Lang) -> Int { Int(sg_transcriber_kind(Int64(langCode(lang)))) }
+
+    /// AppleTranscriber defaults: fast results (pt-BR) and Ponte's own cuts.
+    public static let fastResultsDefault = SG_FAST_RESULTS_DEFAULT != 0
+    public static let ownCutsDefault = SG_OWN_CUTS_DEFAULT != 0
+
+    /// Seconds to whole milliseconds, rounded half away from zero (finite input).
+    public static func millis(_ seconds: Double) -> Int { Int(sg_millis(seconds)) }
+
+    /// Level units (RMS × 100 000, rounded) of a window's RMS.
+    public static func level(rms: Float) -> Int { Int(sg_level_from_rms(rms)) }
+
+    /// Frames in one meter window, and of the silence fed after a stall cut (at least 1).
+    public static func meterWindowFrames(sampleRate: Double) -> Int { Int(sg_meter_window_frames(sampleRate)) }
+    public static func stallSilenceFrames(sampleRate: Double) -> Int { Int(sg_stall_silence_frames(sampleRate)) }
+
+    /// Arrival marks: trimmed when there are too many, to those ending in the last 120 s of audio.
+    public static func trimsArrivals(count: Int) -> Bool { sg_trims_arrivals(Int64(count)) }
+    public static func keepsArrival(audioEnd: Double, end: Double) -> Bool { sg_keeps_arrival(audioEnd, end) }
+    /// The mark that tells when audio up to `t` arrived.
+    public static func arrivalCovers(audioEnd: Double, t: Double) -> Bool { sg_arrival_covers(audioEnd, t) }
+
+    /// Phrase measures for `finalizeAction`: where the phrase starts, the current pause, the speech so far.
+    public static func measureStart(phraseStart: Double, voiceStart: Double?) -> Double {
+        sg_measure_start(phraseStart, voiceStart != nil, voiceStart ?? 0)
+    }
+    public static func measurePause(now: Double, start: Double, silence: Double?) -> Double {
+        sg_measure_pause(now, start, silence != nil, silence ?? 0)
+    }
+    public static func measureSpeech(now: Double, start: Double, silence: Double?) -> Double {
+        sg_measure_speech(now, start, silence != nil, silence ?? 0)
+    }
+
+    /// `finalizeAction` flags of the transcriber's state.
+    public static func finalizeFlags(hasVolatileText: Bool, lastVoiceEnd: Double, phraseStart: Double,
+                                     finishing: Bool, cutsEnabled: Bool) -> Int {
+        Int(sg_finalize_flags(hasVolatileText, lastVoiceEnd, phraseStart, finishing, cutsEnabled))
+    }
+
+    /// Milliseconds since the last cut, `Int.max` when there was none.
+    public static func lastCutAgoMs(now: Double, lastCut: Double?) -> Int {
+        Int(sg_last_cut_ago_ms(now, lastCut != nil, lastCut ?? 0))
+    }
+
+    /// Where the analyzer is told to finalize for a cut decided at `now`.
+    public static func cutTime(now: Double, action: Int, pauseMs: Int) -> Double {
+        sg_cut_time(now, Int64(action), Int64(pauseMs))
+    }
+
+    /// The watchdog's cut of a source that stopped mid-phrase. nil: no append yet / no cut yet.
+    public static func stallCut(finishing: Bool, cutsEnabled: Bool, hasVolatileText: Bool, msSinceAppend: Int?,
+                                msFedSinceCut: Int?) -> Bool {
+        sg_stall_cut(finishing, cutsEnabled, hasVolatileText, msSinceAppend != nil, Int64(msSinceAppend ?? 0),
+                     msFedSinceCut != nil, Int64(msFedSinceCut ?? 0))
+    }
+
+    /// A final was forced by a cut inside the phrase.
+    public static func cutInPhrase(lastCut: Double?, phraseStart: Double) -> Bool {
+        sg_cut_in_phrase(lastCut != nil, lastCut ?? 0, phraseStart)
+    }
+
+    /// What a final result emits.
+    public static let eventNone = Int(SG_EVENT_NONE)
+    public static let eventFinal = Int(SG_EVENT_FINAL)
+    public static let eventDiscard = Int(SG_EVENT_DISCARD)
+    public static func finalEvent(keep: Bool, partialShown: Bool) -> Int { Int(sg_final_event(keep, partialShown)) }
+    public static func partialEvent(keep: Bool, changed: Bool) -> Bool { sg_partial_event(keep, changed) }
+
+    /// The phrase start moves forward to a finite result time.
+    public static func advancePhraseStart(_ phraseStart: Double, to t: Double) -> Double { sg_advance_phrase_start(phraseStart, t) }
+
+    /// Phrase timing: where its audio starts and ends (first and last word, or the result range).
+    public static func timingStart(firstWordStart: Double?, phraseStart: Double) -> Double {
+        sg_timing_start(firstWordStart != nil, firstWordStart ?? 0, phraseStart)
+    }
+    public static func timingEnd(lastWordStart: Double?, lastWordEnd: Double, rangeEnd: Double, audioStart: Double,
+                                 lastVoiceEnd: Double) -> Double {
+        sg_timing_end(lastWordStart != nil, lastWordStart ?? 0, lastWordEnd, rangeEnd, audioStart, lastVoiceEnd)
+    }
+    public static func trimsTimings(count: Int) -> Bool { sg_trims_timings(Int64(count)) }
+
+    /// A result range the level meter can measure, and a recognized word worth keeping.
+    public static func rangeMeasurable(start: Double, end: Double) -> Bool { sg_range_measurable(start, end) }
+    public static func timedWord(start: Double, end: Double, wordBytes: Int) -> Bool { sg_timed_word(start, end, Int64(wordBytes)) }
+
+    /// VoiceActivity: what one meter window changes.
+    public static let activityKeep = Int(SG_ACTIVITY_KEEP)
+    public static let activitySilenceStarts = Int(SG_ACTIVITY_SILENCE_STARTS)
+    public static let activityVoiceStarts = Int(SG_ACTIVITY_VOICE_STARTS)
+    public static let activitySilenceEnds = Int(SG_ACTIVITY_SILENCE_ENDS)
+    public static let activitySilenceEndsVoiceStarts = Int(SG_ACTIVITY_SILENCE_ENDS_VOICE_STARTS)
+    public static let activitySegmentCloses = Int(SG_ACTIVITY_SEGMENT_CLOSES)
+    public static func activityStep(voice: Bool, silenceStart: Double?, hasVoice: Bool, start: Double) -> Int {
+        Int(sg_activity_step(voice, silenceStart != nil, silenceStart ?? 0, hasVoice, start))
+    }
+    /// Closed voice segments to drop from the front (the meter keeps the last 256).
+    public static func segmentsToDrop(count: Int) -> Int { Int(sg_segments_to_drop(Int64(count))) }
+    /// End of the open voice segment.
+    public static func openSegmentEnd(voiceStart: Double, silenceStart: Double?, lastEnd: Double) -> Double {
+        sg_open_segment_end(voiceStart, silenceStart != nil, silenceStart ?? 0, lastEnd)
+    }
+    /// Seconds of a voice segment inside a range.
+    public static func overlapSeconds(lower: Double, upper: Double, rangeLower: Double, rangeUpper: Double) -> Double {
+        sg_overlap_seconds(lower, upper, rangeLower, rangeUpper)
+    }
+
+    /// AudioConversion: output capacity, frames drained at the end, input statuses
+    /// (AVAudioConverterInputStatus raw values).
+    public static func conversionCapacity(frames: Int, fromRate: Double, toRate: Double) -> Int {
+        Int(sg_conversion_capacity(Int64(frames), fromRate, toRate))
+    }
+    public static let flushFrames = Int(SG_FLUSH_FRAMES)
+    public static let inputHaveData = Int(SG_INPUT_HAVE_DATA)
+    public static let inputNoDataNow = Int(SG_INPUT_NO_DATA_NOW)
+    public static let inputEndOfStream = Int(SG_INPUT_END_OF_STREAM)
+    public static func converterInput(fed: Bool, final: Bool) -> Int { Int(sg_converter_input(fed, final)) }
+
+    /// Frames an RMS window reads: `count` (or the whole buffer) from `from`; 0 when nothing.
+    public static func windowCount(from: Int, count: Int?, frameLength: Int) -> Int {
+        Int(sg_window_count(Int64(from), count != nil, Int64(count ?? 0), Int64(frameLength)))
+    }
+    public static func int16ToFloat(_ v: Int16) -> Float { sg_int16_to_float(v) }
+    public static func int32ToFloat(_ v: Int32) -> Float { sg_int32_to_float(v) }
+
+    /// sum + Σ v² over the samples in order, in Float (blocks of SG_RMS_BLOCK).
+    public static func sumSquares(_ samples: [Float], sum: Float = 0) -> Float {
+        let block = Int(SG_RMS_BLOCK)
+        var scratch = [Float](repeating: 0, count: block)
+        var total = sum
+        var at = 0
+        while at < samples.count {
+            let n = min(block, samples.count - at)
+            scratch.replaceSubrange(0..<n, with: samples[at..<(at + n)])
+            total = sg_sum_squares_f32(&scratch, Int64(n), total)
+            at += n
+        }
+        return total
+    }
+    /// √(sum / count) in Float.
+    public static func rms(sumOfSquares: Float, count: Int) -> Float { sg_rms_f32(sumOfSquares, Int64(count)) }
+
+    /// ClaudeRequestBuilder: the effort name for a code (clamped to low…high), and a 2xx status.
+    public static func effortName(code: Int) -> String {
+        var out = [UInt8](repeating: 0, count: Int(CX_TEXT_OUT_MAX))
+        let n = Int(cx_effort_name(Int64(code), &out))
+        return String(decoding: out[0..<n], as: UTF8.self)
+    }
+    public static func httpSuccess(status: Int) -> Bool { cx_http_success(Int64(status)) }
+
+    /// RoutingTranslator rules.
+    public static func preferredEngine(preferClaude: Bool) -> Int { Int(cx_preferred_engine(preferClaude)) }
+    public static func rethrowsClaudeError(appleFailed: Bool, hasApple: Bool) -> Bool { cx_rethrows_claude_error(appleFailed, hasApple) }
+    public static func emptyTranslation(resultEmpty: Bool, inputEmpty: Bool) -> Bool { cx_empty_translation(resultEmpty, inputEmpty) }
+    public static func forgetsAppleReady(engine: Int, errorCode: Int) -> Bool { cx_forgets_apple_ready(Int64(engine), Int64(errorCode)) }
+    public static func hasTimeout(ms: Int) -> Bool { cx_has_timeout(Int64(ms)) }
+
+    /// The kind of a translator error (RoutingTranslator reads the Swift error type into these).
+    public static let kindOther = Int(CX_KIND_OTHER)
+    public static let kindTimeout = Int(CX_KIND_TIMEOUT)
+    public static let kindAssetsMissing = Int(CX_KIND_ASSETS_MISSING)
+    public static let kindUnsupported = Int(CX_KIND_UNSUPPORTED)
+    public static let kindCloudRequest = Int(CX_KIND_CLOUD_REQUEST)
+    public static let kindKeyMissing = Int(CX_KIND_KEY_MISSING)
+    public static let kindRefused = Int(CX_KIND_REFUSED)
+    public static let kindEmpty = Int(CX_KIND_EMPTY)
+    public static let kindURL = Int(CX_KIND_URL)
+    public static func errorCode(kind: Int, httpStatus: Int) -> Int { Int(cx_error_code_for_kind(Int64(kind), Int64(httpStatus))) }
+
+    /// AppleTranslator.prepare: the pack status (LanguageAvailability.Status) and what follows from it.
+    public static let availInstalled = Int(CX_AVAIL_INSTALLED)
+    public static let availSupported = Int(CX_AVAIL_SUPPORTED)
+    public static let availUnsupported = Int(CX_AVAIL_UNSUPPORTED)
+    public static let availUnknown = Int(CX_AVAIL_UNKNOWN)
+    public static let packReady = Int(CX_PACK_READY)
+    public static let packMissing = Int(CX_PACK_MISSING)
+    public static let packUnavailable = Int(CX_PACK_UNAVAILABLE)
+    public static func packResult(status: Int) -> Int { Int(cx_pack_result(Int64(status))) }
+
+    /// VoiceRanking: the preferred voice names of a language, best first.
+    public static func preferredVoiceNames(_ lang: Lang) -> [String] {
+        let code = Int64(langCode(lang))
+        var out = [UInt8](repeating: 0, count: Int(VO_ID_MAX))
+        return (0..<vo_preferred_count(code)).map { i in
+            let n = Int(vo_preferred_name(code, i, &out))
+            return String(decoding: out[0..<n], as: UTF8.self)
+        }
+    }
+
+    /// VoiceRanking order: `nameOrder` and `idOrder` compare a with b (-1 before, 0 equal, 1 after).
+    public static func voiceBefore(keyA: Int, keyB: Int, nameOrder: Int, idOrder: Int) -> Bool {
+        vo_voice_before(Int64(keyA), Int64(keyB), Int64(nameOrder), Int64(idOrder))
+    }
+
+    /// Which voice speaks.
+    public static let voiceSourceSaved = Int(VO_SOURCE_SAVED)
+    public static let voiceSourceBest = Int(VO_SOURCE_BEST)
+    public static let voiceSourceLanguage = Int(VO_SOURCE_LANGUAGE)
+    public static func voiceSource(hasSaved: Bool, hasBest: Bool) -> Int { Int(vo_voice_source(hasSaved, hasBest)) }
+
+    /// The utterance rate: whether it is set, the base in thousandths, and the AVSpeechUtterance value.
+    public static func setsRate(rate: Float?, ratePercent: Int) -> Bool { vo_sets_rate(rate != nil, Int64(ratePercent)) }
+    public static func baseRateMilli(rate: Float?) -> Int { Int(vo_base_rate_milli(rate != nil, rate ?? 0)) }
+    public static func utteranceRate(milli: Int) -> Float { vo_utterance_rate(Int64(milli)) }
 }
 
 /// Phrase text for `segment_rules`: a buffer of `SG_TEXT_MAX` bytes and the length the C reads.

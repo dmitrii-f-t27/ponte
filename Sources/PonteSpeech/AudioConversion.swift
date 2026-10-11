@@ -21,20 +21,18 @@ enum AudioConversion {
     /// Converts one buffer with a stateful converter (keeps resampler state between calls).
     static func convert(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter) throws -> AVAudioPCMBuffer {
         let format = converter.outputFormat
-        let ratio = format.sampleRate / buffer.format.sampleRate
-        let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 256
+        let capacity = AVAudioFrameCount(SpeechRules.conversionCapacity(
+            frames: Int(buffer.frameLength), fromRate: buffer.format.sampleRate, toRate: format.sampleRate))
         guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
             throw PonteSpeechError.audioConversionFailed("no output buffer for \(format)")
         }
         var fed = false
         var error: NSError?
         let status = converter.convert(to: out, error: &error) { _, inputStatus in
-            if fed {
-                inputStatus.pointee = .noDataNow
-                return nil
-            }
+            let input = SpeechRules.converterInput(fed: fed, final: false)
+            inputStatus.pointee = AVAudioConverterInputStatus(rawValue: input) ?? .endOfStream
+            guard input == SpeechRules.inputHaveData else { return nil }
             fed = true
-            inputStatus.pointee = .haveData
             return buffer
         }
         if status == .error {
@@ -45,10 +43,12 @@ enum AudioConversion {
 
     /// Drains the frames a resampler still holds at the end of the stream.
     static func flush(_ converter: AVAudioConverter) -> AVAudioPCMBuffer? {
-        guard let out = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: 4096) else { return nil }
+        guard let out = AVAudioPCMBuffer(pcmFormat: converter.outputFormat,
+                                         frameCapacity: AVAudioFrameCount(SpeechRules.flushFrames)) else { return nil }
         var error: NSError?
         let status = converter.convert(to: out, error: &error) { _, inputStatus in
-            inputStatus.pointee = .endOfStream
+            let input = SpeechRules.converterInput(fed: true, final: true)
+            inputStatus.pointee = AVAudioConverterInputStatus(rawValue: input) ?? .endOfStream
             return nil
         }
         guard status != .error, out.frameLength > 0 else { return nil }
@@ -57,20 +57,21 @@ enum AudioConversion {
 
     /// Root mean square of the first channel over `count` frames from `from`, samples scaled to -1...1.
     static func rms(_ buffer: AVAudioPCMBuffer, from: Int = 0, count: Int? = nil) -> Float {
-        let n = min(count ?? Int(buffer.frameLength), Int(buffer.frameLength) - from)
-        guard n > 0, from >= 0 else { return 0 }
+        let n = SpeechRules.windowCount(from: from, count: count, frameLength: Int(buffer.frameLength))
+        guard n > 0 else { return 0 }
         let stride = buffer.stride
-        var sum: Float = 0
+        // The sample type picks the channel-data accessor; the math is in SpeechRules.
+        let samples: [Float]
         if let f = buffer.floatChannelData?[0] {
-            for i in from..<(from + n) { let v = f[i * stride]; sum += v * v }
+            samples = (from..<(from + n)).map { f[$0 * stride] }
         } else if let s = buffer.int16ChannelData?[0] {
-            for i in from..<(from + n) { let v = Float(s[i * stride]) / 32768; sum += v * v }
+            samples = (from..<(from + n)).map { SpeechRules.int16ToFloat(s[$0 * stride]) }
         } else if let s = buffer.int32ChannelData?[0] {
-            for i in from..<(from + n) { let v = Float(s[i * stride]) / 2147483648; sum += v * v }
+            samples = (from..<(from + n)).map { SpeechRules.int32ToFloat(s[$0 * stride]) }
         } else {
             return 0
         }
-        return (sum / Float(n)).squareRoot()
+        return SpeechRules.rms(sumOfSquares: SpeechRules.sumSquares(samples), count: n)
     }
 
     /// Converts any PCM buffers to one Float32 mono buffer at `sampleRate` (nil keeps the source rate).

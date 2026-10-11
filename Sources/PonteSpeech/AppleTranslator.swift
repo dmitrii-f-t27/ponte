@@ -23,15 +23,23 @@ public final class AppleTranslator: Translator, @unchecked Sendable {
     }
 
     public func prepare(from: Lang, to: Lang) async throws {
-        switch await Self.status(from: from, to: to) {
-        case .installed:
+        switch SpeechRules.packResult(status: Self.availabilityCode(await Self.status(from: from, to: to))) {
+        case SpeechRules.packReady:
             _ = session(from: from, to: to)
-        case .supported:
+        case SpeechRules.packMissing:
             throw PonteSpeechError.translationAssetsMissing(from: from, to: to)
-        case .unsupported:
+        default:
             throw PonteSpeechError.translationUnsupported(from: from, to: to)
-        @unknown default:
-            throw PonteSpeechError.translationUnsupported(from: from, to: to)
+        }
+    }
+
+    /// LanguageAvailability.Status → SpeechRules pack status code.
+    public static func availabilityCode(_ status: LanguageAvailability.Status) -> Int {
+        switch status {
+        case .installed: return SpeechRules.availInstalled
+        case .supported: return SpeechRules.availSupported
+        case .unsupported: return SpeechRules.availUnsupported
+        @unknown default: return SpeechRules.availUnknown
         }
     }
 

@@ -13,28 +13,33 @@ struct VoiceActivity: Equatable {
     private(set) var lastEnd: Double = 0
 
     /// Level units of `SpeechRules`: RMS × 100 000.
-    static func level(rms: Float) -> Int { Int((Double(rms) * 100_000).rounded()) }
+    static func level(rms: Float) -> Int { SpeechRules.level(rms: rms) }
 
     /// Adds one meter window. Returns true when the window is voice.
     @discardableResult
     mutating func add(level: Int, start: Double, duration: Double) -> Bool {
         let voice = SpeechRules.isVoice(level: level, floorMilli: floorMilli)
-        if voice {
-            if let s = silenceStart {
-                if let v = voiceStart, Int(((start - s) * 1000).rounded()) >= SpeechRules.minRecordedPauseMs {
-                    voiceSegments.append(v...s)
-                    if voiceSegments.count > 256 { voiceSegments.removeFirst(voiceSegments.count - 256) }
-                    voiceStart = start
-                }
-                silenceStart = nil
-            }
-            if voiceStart == nil { voiceStart = start }
-        } else if silenceStart == nil {
+        switch SpeechRules.activityStep(voice: voice, silenceStart: silenceStart, hasVoice: voiceStart != nil, start: start) {
+        case SpeechRules.activitySegmentCloses:
+            if let v = voiceStart, let s = silenceStart { voiceSegments.append(v...s) }
+            voiceSegments.removeFirst(SpeechRules.segmentsToDrop(count: voiceSegments.count))
+            voiceStart = start
+            silenceStart = nil
+        case SpeechRules.activitySilenceEnds:
+            silenceStart = nil
+        case SpeechRules.activitySilenceEndsVoiceStarts:
+            silenceStart = nil
+            voiceStart = start
+        case SpeechRules.activityVoiceStarts:
+            voiceStart = start
+        case SpeechRules.activitySilenceStarts:
             silenceStart = start
+        default:
+            break
         }
         lastEnd = start + duration
         floorMilli = SpeechRules.nextNoiseFloor(floorMilli: floorMilli, hasFloor: hasFloor, level: level,
-                                                durationMs: Int((duration * 1000).rounded()))
+                                                durationMs: SpeechRules.millis(duration))
         hasFloor = true
         return voice
     }
@@ -42,9 +47,10 @@ struct VoiceActivity: Equatable {
     /// Seconds of voice inside `range` (closed segments plus the open one).
     func voiceDuration(in range: ClosedRange<Double>) -> Double {
         var segments = voiceSegments
-        if let v = voiceStart { segments.append(v...max(v, silenceStart ?? lastEnd)) }
+        if let v = voiceStart { segments.append(v...SpeechRules.openSegmentEnd(voiceStart: v, silenceStart: silenceStart, lastEnd: lastEnd)) }
         return segments.reduce(0) { total, seg in
-            total + max(0, min(seg.upperBound, range.upperBound) - max(seg.lowerBound, range.lowerBound))
+            total + SpeechRules.overlapSeconds(lower: seg.lowerBound, upper: seg.upperBound,
+                                               rangeLower: range.lowerBound, rangeUpper: range.upperBound)
         }
     }
 }

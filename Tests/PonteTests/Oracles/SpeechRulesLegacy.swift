@@ -15,6 +15,8 @@
 //   - deterministic: no clocks, no randomness, no globals that change.
 // Integer ranges: products below fit in 64-bit (t27: use i64 for levels × durations).
 
+import AVFoundation
+
 enum SpeechRulesLegacy {
 
     // MARK: - Voice activity (level meter)
@@ -448,4 +450,220 @@ enum SpeechRulesLegacy {
         let rate = baseRateMilli + (ratePercent - 100) * utteranceRateMilliPer10Percent / 10
         return min(1000, max(0, rate))
     }
+}
+
+// MARK: - Decisions extracted unchanged from the rest of PonteSpeech before they moved to t27 (2026-10-11)
+
+extension SpeechRulesLegacy {
+    /// AppleTranscriber.prepare / makeModule: `switch language { case .ptBR: speech; case .ru: dictation }`.
+    /// Language codes 0 pt-BR, 1 ru; module codes 0 SpeechTranscriber, 1 DictationTranscriber.
+    static func transcriberKind(language: Int) -> Int { language == 1 ? 1 : 0 }
+
+    /// AppleTranscriber: `fastResults = true`, `ownCutsEnabled = true`.
+    static let fastResultsDefault = true
+    static let ownCutsDefault = true
+
+    /// AppleTranscriber.ms.
+    static func millis(_ seconds: Double) -> Int { Int((seconds * 1000).rounded()) }
+
+    /// VoiceActivity.level.
+    static func level(rms: Float) -> Int { Int((Double(rms) * 100_000).rounded()) }
+
+    /// AppleTranscriber.feed / finalizeIfStalled.
+    static func meterWindowFrames(sampleRate rate: Double) -> Int { max(1, Int(rate) * meterWindowMs / 1000) }
+    static func stallSilenceFrames(sampleRate rate: Double) -> Int { max(1, Int(rate) * stallFlushSilenceMs / 1000) }
+
+    /// AppleTranscriber.feed: `arrivals.count > 2400`, `$0.audioEnd > end - 120`.
+    static func trimsArrivals(count: Int) -> Bool { count > 2400 }
+    static func keepsArrival(audioEnd: Double, end: Double) -> Bool { audioEnd > end - 120 }
+    /// AppleTranscriber.arrivalTime: `$0.audioEnd >= t - 0.0005`.
+    static func arrivalCovers(audioEnd: Double, t: Double) -> Bool { audioEnd >= t - 0.0005 }
+
+    /// AppleTranscriber.cutDecision: start, pause and speech of the phrase.
+    static func measure(now: Double, phraseStart: Double, voiceStart: Double?, silence: Double?)
+        -> (start: Double, pause: Double, speech: Double) {
+        let start = max(phraseStart, voiceStart ?? phraseStart)
+        var pause = 0.0
+        var speech = now - start
+        if let silence {
+            if silence > start {
+                pause = now - silence
+                speech = silence - start
+            } else {
+                speech = 0   // silent since before this phrase's speech
+            }
+        }
+        return (start, pause, speech)
+    }
+
+    static func finalizeFlags(hasVolatileText: Bool, lastVoiceEnd: Double, phraseStart: Double,
+                              finishing: Bool, cutsEnabled: Bool) -> Int {
+        var flags = 0
+        if hasVolatileText || lastVoiceEnd > phraseStart + 0.05 { flags |= flagHasContent }
+        if finishing { flags |= flagFinishing }
+        if !cutsEnabled { flags |= flagCutsDisabled }
+        return flags
+    }
+
+    static func lastCutAgoMs(now: Double, lastCut: Double?) -> Int { lastCut.map { millis(now - $0) } ?? Int.max }
+
+    static func cutTime(now: Double, action: Int, pauseMs: Int) -> Double {
+        now - Double(cutBackoffMs(action: action, pauseMs: pauseMs)) / 1000
+    }
+
+    /// AppleTranscriber.finalizeIfStalled.
+    static func stallCut(finishing: Bool, cutsEnabled: Bool, hasVolatileText: Bool, msSinceAppend: Int?,
+                         msFedSinceCut: Int?) -> Bool {
+        guard !finishing, cutsEnabled, hasVolatileText, let since = msSinceAppend, since > stallTimeoutMs else { return false }
+        if let fedSince = msFedSinceCut, fedSince <= minCutSpacingMs { return false }
+        return true
+    }
+
+    /// AppleTranscriber.handle.
+    static func cutInPhrase(lastCut: Double?, phraseStart: Double) -> Bool { lastCut.map { $0 > phraseStart } ?? false }
+
+    /// 0 none, 1 final, 2 discard (the empty final).
+    static func finalEvent(keep: Bool, partialShown: Bool) -> Int {
+        if keep { return 1 }
+        if partialShown { return 2 }
+        return 0
+    }
+
+    static func partialEvent(keep: Bool, changed: Bool) -> Bool { keep && changed }
+
+    static func advancePhraseStart(_ phraseStart: Double, to t: Double) -> Double {
+        var p = phraseStart
+        if t.isFinite { p = max(p, t) }
+        return p
+    }
+
+    /// AppleTranscriber.recordTiming.
+    static func timing(firstWordStart: Double?, lastWord: (start: Double, end: Double)?, rangeEnd: Double,
+                       phraseStart: Double, lastVoiceEnd: Double) -> (start: Double, end: Double) {
+        var audioEnd = lastWord?.end ?? rangeEnd
+        let audioStart = firstWordStart ?? phraseStart
+        let lastWordStart = lastWord?.start ?? audioStart
+        if audioEnd > lastVoiceEnd && lastVoiceEnd > lastWordStart { audioEnd = lastVoiceEnd }
+        return (audioStart, audioEnd)
+    }
+
+    static func trimsTimings(count: Int) -> Bool { count > 200 }
+
+    /// AppleTranscriber.voiceDuration / tokens.
+    static func rangeMeasurable(start: Double, end: Double) -> Bool { start.isFinite && end.isFinite && end > start }
+    static func timedWord(start: Double, end: Double, wordBytes: Int) -> Bool { start.isFinite && end.isFinite && wordBytes > 0 }
+
+    /// VoiceActivity.add, as a state change of (silenceStart, voiceStart) plus the closed segment.
+    static func activity(voice: Bool, silenceStart: Double?, voiceStart: Double?, start: Double)
+        -> (silenceStart: Double?, voiceStart: Double?, closed: ClosedRange<Double>?) {
+        var silence = silenceStart
+        var voiceAt = voiceStart
+        var closed: ClosedRange<Double>?
+        if voice {
+            if let s = silence {
+                if let v = voiceAt, Int(((start - s) * 1000).rounded()) >= minRecordedPauseMs {
+                    closed = v...s
+                    voiceAt = start
+                }
+                silence = nil
+            }
+            if voiceAt == nil { voiceAt = start }
+        } else if silence == nil {
+            silence = start
+        }
+        return (silence, voiceAt, closed)
+    }
+
+    static func segmentsToDrop(count: Int) -> Int { count > 256 ? count - 256 : 0 }
+
+    static func openSegmentEnd(voiceStart v: Double, silenceStart: Double?, lastEnd: Double) -> Double {
+        max(v, silenceStart ?? lastEnd)
+    }
+
+    static func overlapSeconds(lower: Double, upper: Double, rangeLower: Double, rangeUpper: Double) -> Double {
+        max(0, min(upper, rangeUpper) - max(lower, rangeLower))
+    }
+
+    /// AudioConversion.convert / flush / rms.
+    static func conversionCapacity(frames: Int, fromRate: Double, toRate: Double) -> Int {
+        let ratio = toRate / fromRate
+        return Int(AVAudioFrameCount((Double(frames) * ratio).rounded(.up)) + 256)
+    }
+    static let flushFrames = 4096
+    /// AVAudioConverterInputStatus raw values: `fed ? .noDataNow : .haveData`; flush: `.endOfStream`.
+    static func converterInput(fed: Bool, final: Bool) -> Int {
+        if fed { return final ? AVAudioConverterInputStatus.endOfStream.rawValue : AVAudioConverterInputStatus.noDataNow.rawValue }
+        return AVAudioConverterInputStatus.haveData.rawValue
+    }
+    static func windowCount(from: Int, count: Int?, frameLength: Int) -> Int {
+        let n = min(count ?? frameLength, frameLength - from)
+        guard n > 0, from >= 0 else { return 0 }
+        return n
+    }
+    static func int16ToFloat(_ v: Int16) -> Float { Float(v) / 32768 }
+    static func int32ToFloat(_ v: Int32) -> Float { Float(v) / 2147483648 }
+    static func rms(_ samples: [Float]) -> Float {
+        var sum: Float = 0
+        for v in samples { sum += v * v }
+        return (sum / Float(samples.count)).squareRoot()
+    }
+
+    /// ClaudeRequestBuilder.effort and parseResponse.
+    static func effortName(code: Int) -> String { ["low", "medium", "high"][min(max(code, 0), 2)] }
+    static func httpSuccess(status: Int) -> Bool { (200..<300).contains(status) }
+
+    /// RoutingTranslator.
+    static func preferredEngine(preferClaude: Bool) -> Int { preferClaude ? engineClaude : engineApple }
+    static func rethrowsClaudeError(appleFailed: Bool, hasApple: Bool) -> Bool { !appleFailed && !hasApple }
+    static func emptyTranslation(resultEmpty: Bool, inputEmpty: Bool) -> Bool { resultEmpty && !inputEmpty }
+    static func forgetsAppleReady(engine: Int, errorCode: Int) -> Bool { engine == engineApple && errorCode == errorAssetsMissing }
+    static func hasTimeout(ms: Int) -> Bool { ms > 0 }
+    /// Kinds in the order of RoutingTranslator.errorCode's cases: 0 other, 1 timeout, 2 assets missing,
+    /// 3 unsupported, 4 cloud request (by HTTP status), 5 key missing, 6 refused, 7 empty, 8 URLError.
+    static func errorCode(kind: Int, httpStatus: Int) -> Int {
+        switch kind {
+        case 1: return errorTimeout
+        case 2: return errorAssetsMissing
+        case 3: return errorUnsupported
+        case 4: return errorCode(httpStatus: httpStatus)
+        case 5: return errorRejected
+        case 6: return errorRefused
+        case 7: return errorEmpty
+        case 8: return errorNetwork
+        default: return errorOther
+        }
+    }
+
+    /// AppleTranslator.prepare: installed (0) → ready (0), supported (1) → missing (1), else unavailable (2).
+    static func packResult(status: Int) -> Int {
+        switch status {
+        case 0: return 0
+        case 1: return 1
+        default: return 2
+        }
+    }
+
+    /// VoiceRanking.preferredNames.
+    static func preferredVoiceNames(language: Int) -> [String] {
+        language == 1 ? ["Milena", "Yuri", "Katya"] : ["Luciana", "Felipe", "Fernanda"]
+    }
+
+    /// VoiceRanking.rank's sort.
+    static func voiceBefore(keyA: Int, keyB: Int, nameA: String, nameB: String, idA: String, idB: String) -> Bool {
+        if keyA != keyB { return keyA > keyB }
+        if nameA != nameB { return nameA < nameB }
+        return idA < idB
+    }
+
+    /// SystemSpeechSynth.voice(for:): 0 saved, 1 best installed, 2 the language's default.
+    static func voiceSource(hasSaved: Bool, hasBest: Bool) -> Int {
+        if hasSaved { return 0 }
+        if hasBest { return 1 }
+        return 2
+    }
+
+    /// SystemSpeechSynth.synthesize.
+    static func setsRate(rate: Float?, ratePercent: Int) -> Bool { rate != nil || ratePercent != 100 }
+    static func baseRateMilli(rate: Float?) -> Int { rate.map { Int(($0 * 1000).rounded()) } ?? defaultUtteranceRateMilli }
+    static func utteranceRate(milli: Int) -> Float { Float(milli) / 1000 }
 }

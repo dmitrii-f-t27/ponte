@@ -21,10 +21,10 @@ struct TimedToken: Equatable {
 public final class AppleTranscriber: Transcriber, @unchecked Sendable {
     public let language: Lang
     /// pt-BR only: `SpeechTranscriber.ReportingOption.fastResults` (lower latency, slightly less accurate).
-    public var fastResults = true
+    public var fastResults = SpeechRules.fastResultsDefault
     /// Ponte's own finalization (`SpeechRules.finalizeAction`). Off = the analyzer alone decides
     /// (it finalizes about 2.9 s after the speaker stops). Change before `start()`.
-    public var ownCutsEnabled = true
+    public var ownCutsEnabled = SpeechRules.ownCutsDefault
     /// Progress of the last model download, for the setup wizard.
     public private(set) var installationProgress: Progress?
     /// The error that stopped the last session early (for example a TCC refusal), if any.
@@ -96,19 +96,13 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
     public func prepare() async throws {
         if lock.withLock({ analyzerFormat != nil }) { return }
 
-        let locale: Locale
-        switch language {
-        case .ptBR:
-            guard let l = await SpeechTranscriber.supportedLocale(equivalentTo: language.locale) else {
-                throw PonteSpeechError.unsupportedLanguage(language)
-            }
-            locale = l
-        case .ru:
-            guard let l = await DictationTranscriber.supportedLocale(equivalentTo: language.locale) else {
-                throw PonteSpeechError.unsupportedLanguage(language)
-            }
-            locale = l
+        let supported: Locale?
+        if SpeechRules.transcriberKind(language) == SpeechRules.moduleDictation {
+            supported = await DictationTranscriber.supportedLocale(equivalentTo: language.locale)
+        } else {
+            supported = await SpeechTranscriber.supportedLocale(equivalentTo: language.locale)
         }
+        guard let locale = supported else { throw PonteSpeechError.unsupportedLanguage(language) }
         let modules = [makeModule(locale: locale).any]
 
         do {
@@ -250,18 +244,16 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
     // MARK: - Internals
 
     private func makeModule(locale: Locale) -> Module {
-        switch language {
-        case .ptBR:
-            var reporting: Set<SpeechTranscriber.ReportingOption> = [.volatileResults]
-            if fastResults { reporting.insert(.fastResults) }
-            return .speech(SpeechTranscriber(locale: locale, transcriptionOptions: [],
-                                             reportingOptions: reporting, attributeOptions: [.audioTimeRange]))
-        case .ru:
+        if SpeechRules.transcriberKind(language) == SpeechRules.moduleDictation {
             return .dictation(DictationTranscriber(locale: locale, contentHints: [],
                                                    transcriptionOptions: [.punctuation],
                                                    reportingOptions: [.volatileResults, .frequentFinalization],
                                                    attributeOptions: [.audioTimeRange]))
         }
+        var reporting: Set<SpeechTranscriber.ReportingOption> = [.volatileResults]
+        if fastResults { reporting.insert(.fastResults) }
+        return .speech(SpeechTranscriber(locale: locale, transcriptionOptions: [],
+                                         reportingOptions: reporting, attributeOptions: [.audioTimeRange]))
     }
 
     /// Call with `lock` held. Meters the level in `SpeechRules.meterWindowMs` windows, passes the audio
@@ -269,11 +261,11 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
     private func feed(_ converted: AVAudioPCMBuffer, format: AVAudioFormat,
                       continuation: AsyncStream<AnalyzerInput>.Continuation) {
         let rate = format.sampleRate
-        let window = max(1, Int(rate) * SpeechRules.meterWindowMs / 1000)
+        let window = SpeechRules.meterWindowFrames(sampleRate: rate)
         let total = Int(converted.frameLength)
         var offset = 0
         while offset < total {
-            let n = min(window, total - offset)
+            let n = SpeechRules.windowCount(from: offset, count: window, frameLength: total)
             let level = VoiceActivity.level(rms: AudioConversion.rms(converted, from: offset, count: n))
             let start = Double(framesFed + AVAudioFramePosition(offset)) / rate
             let duration = Double(n) / rate
@@ -288,40 +280,31 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
         let now = Date()
         lastAppendAt = now
         arrivals.append((end, now))
-        if arrivals.count > 2400, let cut = arrivals.firstIndex(where: { $0.audioEnd > end - 120 }) {
+        if SpeechRules.trimsArrivals(count: arrivals.count),
+           let cut = arrivals.firstIndex(where: { SpeechRules.keepsArrival(audioEnd: $0.audioEnd, end: end) }) {
             arrivals.removeFirst(cut)
         }
         continuation.yield(AnalyzerInput(buffer: converted))
         if let cut = cutDecision(now: end) { requestFinalize(through: cut) }
     }
 
-    private static func ms(_ seconds: Double) -> Int { Int((seconds * 1000).rounded()) }
+    private static func ms(_ seconds: Double) -> Int { SpeechRules.millis(seconds) }
 
     /// Call with `lock` held. Measures the phrase and asks `SpeechRules.finalizeAction`.
     private func cutDecision(now: Double) -> Double? {
         guard analyzer != nil else { return nil }
-        let start = max(phraseStart, phraseVoiceStart ?? phraseStart)
-        var pause = 0.0
-        var speech = now - start
-        if let silence = activity.silenceStart {
-            if silence > start {
-                pause = now - silence
-                speech = silence - start
-            } else {
-                speech = 0   // silent since before this phrase's speech
-            }
-        }
-        var flags = 0
-        if !volatileText.isEmpty || lastVoiceEnd > phraseStart + 0.05 { flags |= SpeechRules.flagHasContent }
-        if finishing { flags |= SpeechRules.flagFinishing }
-        if !ownCutsEnabled { flags |= SpeechRules.flagCutsDisabled }
+        let start = SpeechRules.measureStart(phraseStart: phraseStart, voiceStart: phraseVoiceStart)
+        let pause = SpeechRules.measurePause(now: now, start: start, silence: activity.silenceStart)
+        let speech = SpeechRules.measureSpeech(now: now, start: start, silence: activity.silenceStart)
+        let flags = SpeechRules.finalizeFlags(hasVolatileText: !volatileText.isEmpty, lastVoiceEnd: lastVoiceEnd,
+                                              phraseStart: phraseStart, finishing: finishing, cutsEnabled: ownCutsEnabled)
         let action = SpeechRules.finalizeAction(
             pauseMs: Self.ms(pause), speechMs: Self.ms(speech),
             punctuation: SpeechRules.punctuationCode(utf8: Array(volatileText.utf8)),
-            lastCutAgoMs: lastCut.map { Self.ms(now - $0) } ?? Int.max,
+            lastCutAgoMs: SpeechRules.lastCutAgoMs(now: now, lastCut: lastCut),
             phraseAgeMs: Self.ms(now - phraseStart), flags: flags)
         guard action != SpeechRules.actionWait else { return nil }
-        let cut = now - Double(SpeechRules.cutBackoffMs(action: action, pauseMs: Self.ms(pause))) / 1000
+        let cut = SpeechRules.cutTime(now: now, action: action, pauseMs: Self.ms(pause))
         if Self.debug { Self.log("cut \(action): finalize(through: \(f(cut))) at \(f(now))") }
         return cut
     }
@@ -342,18 +325,18 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
     /// The source stopped sending audio in the middle of a phrase: finalize what was heard.
     private func finalizeIfStalled(_ analyzer: SpeechAnalyzer) {
         lock.withLock {
-            guard self.analyzer === analyzer, !finishing, ownCutsEnabled, !volatileText.isEmpty,
-                  let last = lastAppendAt,
-                  Self.ms(Date().timeIntervalSince(last)) > SpeechRules.stallTimeoutMs else { return }
             let fed = fedSeconds
-            if let lastCut, Self.ms(fed - lastCut) <= SpeechRules.minCutSpacingMs { return }
+            guard self.analyzer === analyzer,
+                  SpeechRules.stallCut(finishing: finishing, cutsEnabled: ownCutsEnabled, hasVolatileText: !volatileText.isEmpty,
+                                       msSinceAppend: lastAppendAt.map { Self.ms(Date().timeIntervalSince($0)) },
+                                       msFedSinceCut: lastCut.map { Self.ms(fed - $0) }) else { return }
             if Self.debug { Self.log("source stalled: finalize at \(f(fed))") }
             requestFinalize(through: fed)
             // The analyzer finalizes only once it has audio past the cut: give it silence,
             // as a live source would.
             if let format = analyzerFormat, let continuation = inputContinuation,
                let silence = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(
-                   max(1, Int(format.sampleRate) * SpeechRules.stallFlushSilenceMs / 1000))) {
+                   SpeechRules.stallSilenceFrames(sampleRate: format.sampleRate))) {
                 silence.frameLength = silence.frameCapacity   // zero-filled
                 feed(silence, format: format, continuation: continuation)
             }
@@ -362,7 +345,7 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
 
     /// Call with `lock` held.
     private func arrivalTime(ofAudio t: Double) -> Date {
-        if let mark = arrivals.first(where: { $0.audioEnd >= t - 0.0005 }) { return mark.at }
+        if let mark = arrivals.first(where: { SpeechRules.arrivalCovers(audioEnd: $0.audioEnd, t: t) }) { return mark.at }
         return arrivals.last?.at ?? Date()
     }
 
@@ -412,28 +395,32 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
             : SpeechRules.phraseAction(utf8: Array(plain.utf8), voiceMs: Self.ms(voiceDuration(rangeStart, rangeEnd)))
         let keep = verdict == SpeechRules.phraseKeep
         if isFinal {
-            if keep {
+            switch SpeechRules.finalEvent(keep: keep, partialShown: !lastPartialText.isEmpty) {
+            case SpeechRules.eventFinal:
                 let id = currentID
-                let forced = lastCut.map { $0 > phraseStart } ?? false   // a cut was requested in this phrase
+                // A cut was requested in this phrase.
+                let forced = SpeechRules.cutInPhrase(lastCut: lastCut, phraseStart: phraseStart)
                 recordTiming(id: id, tokens: tokens, rangeEnd: rangeEnd, forced: forced)
                 event = .final(id: id, text: plain)
                 currentID = UUID()
-            } else if !lastPartialText.isEmpty {
+            case SpeechRules.eventDiscard:
                 // Close the partial the UI already shows: an empty final means "discard".
                 event = .final(id: currentID, text: "")
                 currentID = UUID()
+            default:
+                break
             }
             if !keep, !plain.isEmpty, Self.debug { Self.log("dropped final (\(verdict)): \(plain)") }
-            if rangeEnd.isFinite { phraseStart = max(phraseStart, rangeEnd) }
+            phraseStart = SpeechRules.advancePhraseStart(phraseStart, to: rangeEnd)
             phraseVoiceStart = nil
             volatileTokens = []
             volatileText = ""
             lastPartialText = ""
         } else {
-            if rangeStart.isFinite { phraseStart = max(phraseStart, rangeStart) }
+            phraseStart = SpeechRules.advancePhraseStart(phraseStart, to: rangeStart)
             volatileTokens = tokens
             volatileText = keep ? plain : ""
-            if keep, plain != lastPartialText {
+            if SpeechRules.partialEvent(keep: keep, changed: plain != lastPartialText) {
                 lastPartialText = plain
                 event = .partial(id: currentID, text: plain)
             }
@@ -444,21 +431,20 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
 
     /// Call with `lock` held.
     private func recordTiming(id: UUID, tokens: [TimedToken], rangeEnd: Double, forced: Bool) {
-        var audioEnd = tokens.last?.end ?? rangeEnd
-        let audioStart = tokens.first?.start ?? phraseStart
+        let audioStart = SpeechRules.timingStart(firstWordStart: tokens.first?.start, phraseStart: phraseStart)
         // Word times can run into the following silence; the level meter knows when the voice stopped.
-        let lastWordStart = tokens.last?.start ?? audioStart
-        if audioEnd > lastVoiceEnd && lastVoiceEnd > lastWordStart { audioEnd = lastVoiceEnd }
+        let audioEnd = SpeechRules.timingEnd(lastWordStart: tokens.last?.start, lastWordEnd: tokens.last?.end ?? 0,
+                                             rangeEnd: rangeEnd, audioStart: audioStart, lastVoiceEnd: lastVoiceEnd)
         timings[id] = PhraseTiming(audioStart: audioStart, audioEnd: audioEnd,
                                    audioEndArrivedAt: arrivalTime(ofAudio: audioEnd),
                                    finalizedAt: Date(), forced: forced)
         timingOrder.append(id)
-        if timingOrder.count > 200 { timings[timingOrder.removeFirst()] = nil }
+        if SpeechRules.trimsTimings(count: timingOrder.count) { timings[timingOrder.removeFirst()] = nil }
     }
 
     /// Call with `lock` held.
     private func voiceDuration(_ start: Double, _ end: Double) -> Double {
-        guard start.isFinite, end.isFinite, end > start else { return 0 }
+        guard SpeechRules.rangeMeasurable(start: start, end: end) else { return 0 }
         return activity.voiceDuration(in: start...end)
     }
 
@@ -481,7 +467,7 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
                 let start = r.start.seconds
                 let end = CMTimeRangeGetEnd(r).seconds
                 let word = piece.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard start.isFinite, end.isFinite, !word.isEmpty else { continue }
+                guard SpeechRules.timedWord(start: start, end: end, wordBytes: word.utf8.count) else { continue }
                 tokens.append(TimedToken(text: word, start: start, end: end))
             } else if !tokens.isEmpty {
                 let extra = piece.trimmingCharacters(in: .whitespacesAndNewlines)
