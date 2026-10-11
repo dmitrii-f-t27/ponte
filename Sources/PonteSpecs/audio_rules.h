@@ -35,7 +35,7 @@
 #define AU_TAP_BITS_PER_CHANNEL 32
 #define AU_BLOCK_FRAMES 4096
 #define AU_BLOCK_SAMPLES 8192
-#define AU_PLANAR_MAX_CHANNELS 16
+#define AU_PLANAR_MAX_CHANNELS 64
 #define AU_LEVEL_DIGITAL_SILENCE 0
 #define AU_LEVEL_QUIET 1
 #define AU_LEVEL_SIGNAL 2
@@ -61,6 +61,9 @@
 float au_max_f(float a, float b);
 float au_min_f(float a, float b);
 int64_t au_fit(int64_t count, int64_t block);
+int64_t au_block_frames_for(int64_t channels, int64_t frames);
+int64_t au_interleaved_frames(int64_t sample_count, int64_t channels);
+int64_t au_planar_frames(int64_t lengths[static 64], int64_t channel_count);
 float au_int16_to_float(int16_t v);
 float au_int32_to_float(int32_t v);
 int64_t au_frames_in_buffer(int64_t byte_size, int64_t channels, int64_t bytes_per_sample);
@@ -68,7 +71,7 @@ int64_t au_accumulate_frames(float src[static 8192], int64_t channels, int64_t f
 float au_average_factor(int64_t total_channels);
 int64_t au_scale(float dst[static 4096], int64_t frames, float factor);
 int64_t au_downmix_interleaved(float samples[static 8192], int64_t sample_count, int64_t channels, float out[static 4096]);
-int64_t au_downmix_planar(float planar[static 8192], int64_t lengths[static 16], int64_t channel_count, float out[static 4096]);
+int64_t au_downmix_planar(float planar[static 8192], int64_t lengths[static 64], int64_t channel_count, float out[static 4096]);
 float au_clamp(float x, float lo, float hi);
 float au_clamp_unit(float x);
 float au_gain_clip(float sample, float gain);
@@ -124,6 +127,43 @@ int64_t au_fit(int64_t count, int64_t block) {
     return count;
 }
 
+int64_t au_block_frames_for(int64_t channels, int64_t frames) {
+    if (((channels > 0) && (frames > 0))) {
+        int64_t n = au_fit(frames, AU_BLOCK_FRAMES);
+        int64_t room = (AU_BLOCK_SAMPLES / channels);
+        if ((n > room)) {
+            n = room;
+        }
+        return n;
+    }
+    return 0;
+}
+
+int64_t au_interleaved_frames(int64_t sample_count, int64_t channels) {
+    if ((channels > 0)) {
+        return (sample_count / channels);
+    }
+    return 0;
+}
+
+int64_t au_planar_frames(int64_t lengths[static 64], int64_t channel_count) {
+    if (((channel_count <= 0) || (channel_count > AU_PLANAR_MAX_CHANNELS))) {
+        return 0;
+    }
+    int64_t frames = lengths[0];
+    int64_t c = 1;
+    while ((c < channel_count)) {
+        if ((lengths[c] < frames)) {
+            frames = lengths[c];
+        }
+        c = (c + 1);
+    }
+    if ((frames <= 0)) {
+        return 0;
+    }
+    return frames;
+}
+
 float au_int16_to_float(int16_t v) {
     float f = v;
     return (f / AU_INT16_FULL_SCALE);
@@ -142,12 +182,8 @@ int64_t au_frames_in_buffer(int64_t byte_size, int64_t channels, int64_t bytes_p
 }
 
 int64_t au_accumulate_frames(float src[static 8192], int64_t channels, int64_t frames, float dst[static 4096]) {
-    if (((channels > 0) && (frames > 0))) {
-        int64_t n = au_fit(frames, AU_BLOCK_FRAMES);
-        int64_t room = (AU_BLOCK_SAMPLES / channels);
-        if ((n > room)) {
-            n = room;
-        }
+    int64_t n = au_block_frames_for(channels, frames);
+    if ((n > 0)) {
         int64_t i = 0;
         if ((channels == 1)) {
             while ((i < n)) {
@@ -196,7 +232,7 @@ int64_t au_scale(float dst[static 4096], int64_t frames, float factor) {
 
 int64_t au_downmix_interleaved(float samples[static 8192], int64_t sample_count, int64_t channels, float out[static 4096]) {
     if ((channels > 0)) {
-        int64_t frames = (au_fit(sample_count, AU_BLOCK_SAMPLES) / channels);
+        int64_t frames = au_interleaved_frames(au_fit(sample_count, AU_BLOCK_SAMPLES), channels);
         frames = au_fit(frames, AU_BLOCK_FRAMES);
         int64_t i = 0;
         while ((i < frames)) {
@@ -213,29 +249,18 @@ int64_t au_downmix_interleaved(float samples[static 8192], int64_t sample_count,
     return 0;
 }
 
-int64_t au_downmix_planar(float planar[static 8192], int64_t lengths[static 16], int64_t channel_count, float out[static 4096]) {
-    if (((channel_count <= 0) || (channel_count > AU_PLANAR_MAX_CHANNELS))) {
-        return 0;
-    }
-    int64_t frames = lengths[0];
-    int64_t c = 1;
-    while ((c < channel_count)) {
-        if ((lengths[c] < frames)) {
-            frames = lengths[c];
-        }
-        c = (c + 1);
-    }
+int64_t au_downmix_planar(float planar[static 8192], int64_t lengths[static 64], int64_t channel_count, float out[static 4096]) {
+    int64_t frames = au_fit(au_planar_frames(lengths, channel_count), AU_BLOCK_FRAMES);
     if ((frames <= 0)) {
         return 0;
     }
-    frames = au_fit(frames, AU_BLOCK_FRAMES);
     int64_t i = 0;
     while ((i < frames)) {
         out[i] = 0.0;
         i = (i + 1);
     }
     int64_t offset = 0;
-    c = 0;
+    int64_t c = 0;
     while ((c < channel_count)) {
         if (((lengths[c] < 0) || ((offset + frames) > AU_BLOCK_SAMPLES))) {
             return 0;
@@ -527,7 +552,7 @@ void test_au_conversion_and_downmix(void) {
     assert((au_average_factor(2) == 0.5));
     assert((au_average_factor(4) == 0.25));
     float planar[8192] = { [0 ... (8192) - 1] = 0.0 };
-    int64_t lengths[16] = { [0 ... (16) - 1] = 0 };
+    int64_t lengths[64] = { [0 ... (64) - 1] = 0 };
     planar[0] = 1.0;
     planar[1] = 1.0;
     planar[2] = 1.0;
@@ -569,6 +594,23 @@ void test_au_conversion_and_downmix(void) {
     assert((au_accumulate_frames(src, 1, 9000, dst) == 4096));
     assert((au_accumulate_frames(src, 4, 4096, dst) == 2048));
     assert((au_downmix_interleaved(src, 9000, 1, dst) == 4096));
+    assert((au_block_frames_for(2, 10000) == 4096));
+    assert((au_block_frames_for(3, 10000) == 2730));
+    assert((au_block_frames_for(16, 100) == 100));
+    assert((au_block_frames_for(9000, 5) == 0));
+    assert((au_block_frames_for(0, 5) == 0));
+    assert((au_block_frames_for(2, 0) == 0));
+    assert((au_interleaved_frames(7, 2) == 3));
+    assert((au_interleaved_frames(7, 0) == 0));
+    int64_t lens[64] = { [0 ... (64) - 1] = 0 };
+    lens[0] = 5;
+    lens[1] = 3;
+    lens[2] = 9;
+    assert((au_planar_frames(lens, 3) == 3));
+    assert((au_planar_frames(lens, 0) == 0));
+    assert((au_planar_frames(lens, 65) == 0));
+    lens[1] = 0;
+    assert((au_planar_frames(lens, 3) == 0));
 }
 
 void test_au_gain_and_levels(void) {

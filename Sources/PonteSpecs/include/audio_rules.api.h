@@ -31,7 +31,7 @@
 #define AU_TAP_BITS_PER_CHANNEL 32
 #define AU_BLOCK_FRAMES 4096
 #define AU_BLOCK_SAMPLES 8192
-#define AU_PLANAR_MAX_CHANNELS 16
+#define AU_PLANAR_MAX_CHANNELS 64
 #define AU_LEVEL_DIGITAL_SILENCE 0
 #define AU_LEVEL_QUIET 1
 #define AU_LEVEL_SIGNAL 2
@@ -55,6 +55,9 @@
 float au_max_f(float a, float b);
 float au_min_f(float a, float b);
 int64_t au_fit(int64_t count, int64_t block);
+int64_t au_block_frames_for(int64_t channels, int64_t frames);
+int64_t au_interleaved_frames(int64_t sample_count, int64_t channels);
+int64_t au_planar_frames(int64_t lengths[static 64], int64_t channel_count);
 float au_int16_to_float(int16_t v);
 float au_int32_to_float(int32_t v);
 int64_t au_frames_in_buffer(int64_t byte_size, int64_t channels, int64_t bytes_per_sample);
@@ -62,7 +65,7 @@ int64_t au_accumulate_frames(float src[static 8192], int64_t channels, int64_t f
 float au_average_factor(int64_t total_channels);
 int64_t au_scale(float dst[static 4096], int64_t frames, float factor);
 int64_t au_downmix_interleaved(float samples[static 8192], int64_t sample_count, int64_t channels, float out[static 4096]);
-int64_t au_downmix_planar(float planar[static 8192], int64_t lengths[static 16], int64_t channel_count, float out[static 4096]);
+int64_t au_downmix_planar(float planar[static 8192], int64_t lengths[static 64], int64_t channel_count, float out[static 4096]);
 float au_clamp(float x, float lo, float hi);
 float au_clamp_unit(float x);
 float au_gain_clip(float sample, float gain);

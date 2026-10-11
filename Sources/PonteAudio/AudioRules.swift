@@ -1,512 +1,573 @@
 import Foundation
+import PonteSpecs
 
 /// Every pure decision and computation of PonteAudio, in one place.
 ///
-/// Rules for this file (it is mirrored one to one by t27 specs compiled to C; at integration the
-/// bodies call the generated C and these Swift versions stay as test oracles):
-/// - Only scalars, strings, arrays and raw Float buffers (pointer + count) in and out.
-///   No Core Audio / AVFoundation types.
-/// - Decisions return Int codes (constants below), not strings.
-/// - Deterministic: no clocks, no locale, no randomness. Text matching is ASCII case-folding on UTF-8 bytes.
-/// - Floating point: sums of squares accumulate in Double in index order; everything else is Float.
+/// The decisions are written in t27 (`Specs/audio_rules.t27`, `Specs/device_rules.t27`) and compiled to C
+/// (`Sources/PonteSpecs`). This facade only marshals: it copies Float buffers into the fixed blocks the C
+/// takes (`AU_BLOCK_FRAMES` mono samples, `AU_BLOCK_SAMPLES` interleaved or planar samples), packs strings
+/// into one UTF-8 buffer with offset/length tables (`DV_TEXT_MAX` bytes, `DV_LIST_MAX` entries), and turns
+/// the C codes back into Swift values. Constants come from the C `#define`s. The Swift that used to be
+/// here is the test oracle `AudioRulesLegacy` (Tests/PonteTests/Oracles); the differential tests compare
+/// both bit for bit.
+///
+/// Domains: a planar downmix takes at most `AU_PLANAR_MAX_CHANNELS` channels; strings and lists that do not
+/// fit the text buffer are cut (device names, UIDs, bundle IDs and paths fit by far).
 public enum AudioRules {
 
     // MARK: - Constants
 
     /// Chunk length for file/test sources and the probe meter window unit.
-    public static let chunkSeconds: Double = 0.1
+    public static let chunkSeconds: Double = AU_CHUNK_SECONDS
     /// Sample rate used when a device or file reports none.
-    public static let fallbackSampleRate: Double = 48_000
+    public static let fallbackSampleRate: Double = AU_FALLBACK_SAMPLE_RATE
     /// Floor of `dBFS` (also the value for a level of exactly 0).
-    public static let dBFSFloor: Float = -120
+    public static let dBFSFloor = Float(AU_DBFS_FLOOR)
     /// Below this RMS level (dBFS) a signal counts as "quiet" (level code 1).
-    public static let quietThresholdDBFS: Float = -60
+    public static let quietThresholdDBFS = Float(AU_QUIET_THRESHOLD_DBFS)
     /// Extra frames allocated on top of the exact resampled length.
-    public static let conversionSlackFrames = 1024
+    public static let conversionSlackFrames = Int(AU_CONVERSION_SLACK_FRAMES)
     /// Delay before re-reading the HAL process list after a change notification.
-    public static let reconcileDebounceSeconds: Double = 0.05
+    public static let reconcileDebounceSeconds: Double = AU_RECONCILE_DEBOUNCE_SECONDS
     /// UID prefix of Ponte's private tap aggregate devices (hidden from device pickers).
-    public static let ponteAggregateUIDPrefix = "ai.ponte.tap."
+    public static let ponteAggregateUIDPrefix = DeviceText.row(Int64(DV_ROW_PONTE_PREFIX))
     /// Frames per AVAudioEngine input-tap callback requested by MicSource (a hint).
-    public static let micTapBufferFrames = 2048
+    public static let micTapBufferFrames = Int(AU_MIC_TAP_BUFFER_FRAMES)
     /// How many parent processes to walk up when looking for a process's owning app.
-    public static let parentChainMaxDepth = 8
+    public static let parentChainMaxDepth = Int(DV_PARENT_CHAIN_MAX_DEPTH)
     /// Int16 / Int32 PCM full scale.
-    public static let int16FullScale: Float = 32_768
-    public static let int32FullScale: Float = 2_147_483_648
+    public static let int16FullScale = Float(AU_INT16_FULL_SCALE)
+    public static let int32FullScale = Float(AU_INT32_FULL_SCALE)
+
+    private static let blockFrames = Int(AU_BLOCK_FRAMES)
+    private static let blockSamples = Int(AU_BLOCK_SAMPLES)
+    private static let planarMaxChannels = Int(AU_PLANAR_MAX_CHANNELS)
 
     // MARK: - Audio math: sample conversion, downmix, gain
 
-    public static func int16ToFloat(_ v: Int16) -> Float { Float(v) / int16FullScale }
-    public static func int32ToFloat(_ v: Int32) -> Float { Float(v) / int32FullScale }
+    public static func int16ToFloat(_ v: Int16) -> Float { au_int16_to_float(v) }
+    public static func int32ToFloat(_ v: Int32) -> Float { au_int32_to_float(v) }
 
     /// Frames in a raw buffer: byteSize / (bytesPerSample * channels); 0 if channels or bytesPerSample ≤ 0.
     public static func framesInBuffer(byteSize: Int, channels: Int, bytesPerSample: Int) -> Int {
-        guard channels > 0, bytesPerSample > 0 else { return 0 }
-        return byteSize / (bytesPerSample * channels)
+        Int(au_frames_in_buffer(Int64(byteSize), Int64(channels), Int64(bytesPerSample)))
     }
 
     /// Adds the per-frame channel sum of an interleaved block to `dst`:
     /// dst[i] += Σ_{c<channels} src[i*channels + c], for i < frames. A planar channel is channels = 1.
-    /// Real-time safe (no allocation).
     public static func accumulateFrames(_ src: UnsafePointer<Float>, channels: Int, frames: Int,
                                         into dst: UnsafeMutablePointer<Float>) {
-        guard channels > 0, frames > 0 else { return }
-        if channels == 1 {
-            for i in 0..<frames { dst[i] += src[i] }
-            return
-        }
-        for i in 0..<frames {
-            var s: Float = 0
-            let base = i * channels
-            for c in 0..<channels { s += src[base + c] }
-            dst[i] += s
+        var srcBlock = [Float](repeating: 0, count: blockSamples)
+        var dstBlock = [Float](repeating: 0, count: blockFrames)
+        var done = 0
+        while true {
+            let n = Int(au_block_frames_for(Int64(channels), Int64(frames - done)))
+            if n <= 0 { return }
+            srcBlock.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: src + done * channels, count: n * channels) }
+            dstBlock.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: dst + done, count: n) }
+            _ = au_accumulate_frames(&srcBlock, Int64(channels), Int64(n), &dstBlock)
+            dstBlock.withUnsafeBufferPointer { (dst + done).update(from: $0.baseAddress!, count: n) }
+            done += n
         }
     }
 
     /// Weight that turns a channel sum into an average: 1 / totalChannels (1 when totalChannels ≤ 1).
     public static func averageFactor(totalChannels: Int) -> Float {
-        totalChannels > 1 ? 1 / Float(totalChannels) : 1
+        au_average_factor(Int64(totalChannels))
     }
 
-    /// dst[i] *= factor for i < frames. Real-time safe.
+    /// dst[i] *= factor for i < frames.
     public static func scale(_ dst: UnsafeMutablePointer<Float>, frames: Int, by factor: Float) {
-        guard factor != 1 else { return }
-        for i in 0..<max(0, frames) { dst[i] *= factor }
+        var block = [Float](repeating: 0, count: blockFrames)
+        var done = 0
+        while true {
+            let n = Int(au_fit(Int64(frames - done), Int64(blockFrames)))
+            if n <= 0 { return }
+            block.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: dst + done, count: n) }
+            if au_scale(&block, Int64(n), factor) == 0 { return }   // factor 1: nothing changes
+            block.withUnsafeBufferPointer { (dst + done).update(from: $0.baseAddress!, count: n) }
+            done += n
+        }
     }
 
     /// Mono average of interleaved samples (frames = samples.count / channels, remainder ignored).
     public static func downmixInterleaved(_ samples: [Float], channels: Int) -> [Float] {
-        guard channels > 0 else { return [] }
-        let frames = samples.count / channels
+        let frames = Int(au_interleaved_frames(Int64(samples.count), Int64(channels)))
         var out = [Float](repeating: 0, count: frames)
-        samples.withUnsafeBufferPointer { src in
-            out.withUnsafeMutableBufferPointer { dst in
-                guard let s = src.baseAddress, let d = dst.baseAddress else { return }
-                accumulateFrames(s, channels: channels, frames: frames, into: d)
-                scale(d, frames: frames, by: averageFactor(totalChannels: channels))
-            }
+        var input = [Float](repeating: 0, count: blockSamples)
+        var output = [Float](repeating: 0, count: blockFrames)
+        var done = 0
+        while true {
+            let n = Int(au_block_frames_for(Int64(channels), Int64(frames - done)))
+            if n <= 0 { break }
+            let start = done * channels
+            input.replaceSubrange(0..<(n * channels), with: samples[start..<(start + n * channels)])
+            let written = Int(au_downmix_interleaved(&input, Int64(n * channels), Int64(channels), &output))
+            out.replaceSubrange(done..<(done + written), with: output[0..<written])
+            done += n
         }
         return out
     }
 
     /// Mono average of planar channels (frames = shortest channel).
     public static func downmixPlanar(_ channels: [[Float]]) -> [Float] {
-        guard let frames = channels.map(\.count).min(), frames > 0 else { return [] }
+        var lengths = [Int64](repeating: 0, count: planarMaxChannels)
+        for (c, ch) in channels.prefix(planarMaxChannels).enumerated() { lengths[c] = Int64(ch.count) }
+        let frames = Int(au_planar_frames(&lengths, Int64(channels.count)))
         var out = [Float](repeating: 0, count: frames)
-        out.withUnsafeMutableBufferPointer { dst in
-            for ch in channels {
-                ch.withUnsafeBufferPointer { src in accumulateFrames(src.baseAddress!, channels: 1, frames: frames, into: dst.baseAddress!) }
+        var planar = [Float](repeating: 0, count: blockSamples)
+        var output = [Float](repeating: 0, count: blockFrames)
+        var done = 0
+        while true {
+            let n = Int(au_block_frames_for(Int64(channels.count), Int64(frames - done)))
+            if n <= 0 { break }
+            var blockLengths = [Int64](repeating: 0, count: planarMaxChannels)
+            for (c, ch) in channels.enumerated() {
+                planar.replaceSubrange((c * n)..<((c + 1) * n), with: ch[done..<(done + n)])
+                blockLengths[c] = Int64(n)
             }
-            scale(dst.baseAddress!, frames: frames, by: averageFactor(totalChannels: channels.count))
+            let written = Int(au_downmix_planar(&planar, &blockLengths, Int64(channels.count), &output))
+            out.replaceSubrange(done..<(done + written), with: output[0..<written])
+            done += n
         }
         return out
     }
 
     /// Clamps to [lo, hi].
-    public static func clamp(_ x: Float, _ lo: Float, _ hi: Float) -> Float { min(hi, max(lo, x)) }
+    public static func clamp(_ x: Float, _ lo: Float, _ hi: Float) -> Float { au_clamp(x, lo, hi) }
 
     /// Volume / gain setting clamped to 0…1.
-    public static func clampUnit(_ x: Float) -> Float { clamp(x, 0, 1) }
+    public static func clampUnit(_ x: Float) -> Float { au_clamp_unit(x) }
 
     /// One sample with gain, hard-clipped to [-1, 1].
-    public static func gainClip(_ sample: Float, gain: Float) -> Float { clamp(sample * gain, -1, 1) }
+    public static func gainClip(_ sample: Float, gain: Float) -> Float { au_gain_clip(sample, gain) }
 
-    public static func applyGain(_ samples: [Float], gain: Float) -> [Float] { samples.map { gainClip($0, gain: gain) } }
+    public static func applyGain(_ samples: [Float], gain: Float) -> [Float] {
+        var out = samples
+        var block = [Float](repeating: 0, count: blockFrames)
+        var done = 0
+        while true {
+            let n = Int(au_fit(Int64(samples.count - done), Int64(blockFrames)))
+            if n <= 0 { break }
+            block.replaceSubrange(0..<n, with: samples[done..<(done + n)])
+            _ = au_apply_gain(&block, Int64(n), gain)
+            out.replaceSubrange(done..<(done + n), with: block[0..<n])
+            done += n
+        }
+        return out
+    }
 
     // MARK: - Audio math: levels
 
     /// sqrt(sumSquares / count) as Float; 0 when count ≤ 0.
     public static func rmsFromSum(sumSquares: Double, count: Int) -> Float {
-        count > 0 ? Float((sumSquares / Double(count)).squareRoot()) : 0
+        au_rms_from_sum(sumSquares, Int64(count))
     }
 
     /// Root mean square; squares summed in Double in index order.
     public static func rms(_ samples: UnsafeBufferPointer<Float>) -> Float {
+        var block = [Float](repeating: 0, count: blockFrames)
         var sum: Double = 0
-        for s in samples { sum += Double(s) * Double(s) }
-        return rmsFromSum(sumSquares: sum, count: samples.count)
+        var done = 0
+        while let base = samples.baseAddress {
+            let n = Int(au_fit(Int64(samples.count - done), Int64(blockFrames)))
+            if n <= 0 { break }
+            block.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: base + done, count: n) }
+            sum = au_sum_squares_continue(&block, Int64(n), sum)
+            done += n
+        }
+        return au_rms_from_sum(sum, Int64(samples.count))
     }
 
     public static func rms(_ samples: [Float]) -> Float { samples.withUnsafeBufferPointer { rms($0) } }
 
     /// Largest absolute sample; 0 for no samples.
     public static func peak(_ samples: UnsafeBufferPointer<Float>) -> Float {
-        var p: Float = 0
-        for s in samples { p = max(p, abs(s)) }
+        var block = [Float](repeating: 0, count: blockFrames)
+        var p = au_peak(&block, 0)
+        var done = 0
+        while let base = samples.baseAddress {
+            let n = Int(au_fit(Int64(samples.count - done), Int64(blockFrames)))
+            if n <= 0 { break }
+            block.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: base + done, count: n) }
+            p = au_peak_continue(&block, Int64(n), p)
+            done += n
+        }
         return p
     }
 
     public static func peak(_ samples: [Float]) -> Float { samples.withUnsafeBufferPointer { peak($0) } }
 
     /// 20·log10(level), floored at `dBFSFloor`; `dBFSFloor` for level ≤ 0.
-    public static func dBFS(_ level: Float) -> Float {
-        level > 0 ? max(dBFSFloor, 20 * log10(level)) : dBFSFloor
-    }
+    public static func dBFS(_ level: Float) -> Float { au_dbfs(level) }
 
     /// Level codes for status lights and the probe.
-    public static let levelDigitalSilence = 0   // every sample exactly 0 (no signal at all / no permission)
-    public static let levelQuiet = 1            // signal present but below quietThresholdDBFS
-    public static let levelSignal = 2           // audible signal
+    public static let levelDigitalSilence = Int(AU_LEVEL_DIGITAL_SILENCE)   // every sample exactly 0
+    public static let levelQuiet = Int(AU_LEVEL_QUIET)                      // below quietThresholdDBFS
+    public static let levelSignal = Int(AU_LEVEL_SIGNAL)                    // audible signal
 
-    public static func levelCode(peak: Float, rms: Float) -> Int {
-        if peak == 0 { return levelDigitalSilence }
-        return dBFS(rms) < quietThresholdDBFS ? levelQuiet : levelSignal
-    }
+    public static func levelCode(peak: Float, rms: Float) -> Int { Int(au_level_code(peak, rms)) }
 
     /// A process tap that delivered frames but only exact zeros: the usual sign of a missing
     /// System Audio Recording permission (or a silent target).
     public static func tapSilenceSuspect(totalFrames: Int, peak: Float) -> Bool {
-        totalFrames > 0 && peak == 0
+        au_tap_silence_suspect(Int64(totalFrames), peak)
     }
 
     // MARK: - Audio math: rates, chunks, pacing
 
     /// `rate` if positive, else `fallbackSampleRate`.
-    public static func rateOrDefault(_ rate: Double) -> Double { rate > 0 ? rate : fallbackSampleRate }
+    public static func rateOrDefault(_ rate: Double) -> Double { au_rate_or_default(rate) }
 
     /// Frames in one chunk: max(1, round(sampleRate · seconds)), rounding half away from zero.
     public static func framesPerChunk(sampleRate: Double, seconds: Double = chunkSeconds) -> Int {
-        Int(max(1, (sampleRate * seconds).rounded()))
+        Int(au_frames_per_chunk(sampleRate, seconds))
     }
 
     /// Lengths of consecutive chunks covering `total` frames; the last may be shorter. [] if total ≤ 0 or chunk ≤ 0.
     public static func chunkLengths(total: Int, chunk: Int) -> [Int] {
-        guard total > 0, chunk > 0 else { return [] }
-        return stride(from: 0, to: total, by: chunk).map { min(chunk, total - $0) }
+        let count = au_chunk_count(Int64(total), Int64(chunk))
+        return (0..<count).map { Int(au_chunk_length(Int64(total), Int64(chunk), $0)) }
     }
 
     /// Output capacity for converting `frames` from one rate to another: ceil(frames·to/from) + slack.
     public static func conversionCapacity(frames: Int, fromRate: Double, toRate: Double) -> Int {
-        guard fromRate > 0, toRate > 0 else { return frames + conversionSlackFrames }
-        return Int((Double(frames) * toRate / fromRate).rounded(.up)) + conversionSlackFrames
+        Int(au_conversion_capacity(Int64(frames), fromRate, toRate))
     }
 
-    public static func needsResample(fromRate: Double, toRate: Double) -> Bool { fromRate != toRate }
+    public static func needsResample(fromRate: Double, toRate: Double) -> Bool { au_needs_resample(fromRate, toRate) }
 
     /// The resampler must average channels when it reduces the channel count.
     public static func converterShouldDownmix(inputChannels: Int, outputChannels: Int) -> Bool {
-        inputChannels > outputChannels
+        au_converter_should_downmix(Int64(inputChannels), Int64(outputChannels))
     }
 
     /// The session output rate: fixed at the first attach (fixedRate > 0) and kept afterwards.
-    public static func sessionRate(fixedRate: Double, tapRate: Double) -> Double { fixedRate > 0 ? fixedRate : tapRate }
+    public static func sessionRate(fixedRate: Double, tapRate: Double) -> Double { au_session_rate(fixedRate, tapRate) }
 
     /// Real-time pacing: how long to wait so that a chunk ending at `endFrame` is delivered when its
     /// last sample would have been heard. deadline = start + endFrame/rate seconds; 0 if already past.
     public static func pacingSleepNanos(startNanos: UInt64, nowNanos: UInt64, endFrame: Int64, sampleRate: Double) -> UInt64 {
-        guard sampleRate > 0, endFrame > 0 else { return 0 }
-        let deadline = startNanos + UInt64(Double(endFrame) / sampleRate * 1e9)
-        return deadline > nowNanos ? deadline - nowNanos : 0
+        au_pacing_sleep_nanos(startNanos, nowNanos, endFrame, sampleRate)
     }
 
     /// Player conversion path codes.
-    public static let convertNone = 0       // identical format: schedule as is
-    public static let convertDownmix = 1    // same rate: downmix / sample type only
-    public static let convertResample = 2   // different rate: stateful resampler
+    public static let convertNone = Int(AU_CONVERT_NONE)           // identical format: schedule as is
+    public static let convertDownmix = Int(AU_CONVERT_DOWNMIX)     // same rate: downmix / sample type only
+    public static let convertResample = Int(AU_CONVERT_RESAMPLE)   // different rate: stateful resampler
 
     public static func conversionPath(sameFormat: Bool, sameRate: Bool) -> Int {
-        sameFormat ? convertNone : (sameRate ? convertDownmix : convertResample)
+        Int(au_conversion_path(sameFormat, sameRate))
     }
 
     /// A process-tap stream Ponte can read: linear PCM, float, 32-bit, positive rate.
     public static func isUsableTapFormat(isLinearPCM: Bool, isFloat: Bool, bitsPerChannel: Int, sampleRate: Double) -> Bool {
-        isLinearPCM && isFloat && bitsPerChannel == 32 && sampleRate > 0
+        au_is_usable_tap_format(isLinearPCM, isFloat, Int64(bitsPerChannel), sampleRate)
     }
 
     // MARK: - Process tap lifecycle
 
     /// What to do after the HAL process list (or the tap format) changed, or at start.
-    public static let tapKeep = 0           // nothing changed
-    public static let tapWait = 1           // target app gone: destroy the tap (if any) and wait for it
-    public static let tapUpdate = 2         // swap the tapped processes on the live tap (no audio gap)
-    public static let tapRebuild = 3        // destroy (if any) and build a new tap + aggregate
+    public static let tapKeep = Int(AU_TAP_KEEP)           // nothing changed
+    public static let tapWait = Int(AU_TAP_WAIT)           // target app gone: destroy the tap (if any) and wait
+    public static let tapUpdate = Int(AU_TAP_UPDATE)       // swap the tapped processes on the live tap
+    public static let tapRebuild = Int(AU_TAP_REBUILD)     // destroy (if any) and build a new tap + aggregate
 
-    /// - attached: a tap exists now. desiredCount: processes to tap (to exclude, for system audio).
-    /// - sameSet: desired processes equal the attached ones. isGlobal: "all system audio except Ponte".
-    /// - force: the tap format changed, or this is the first attach at start.
     /// If `tapUpdate` fails at run time, the caller falls back to `tapRebuild`.
     public static func tapAction(attached: Bool, desiredCount: Int, sameSet: Bool, isGlobal: Bool, force: Bool) -> Int {
-        if !force && attached && sameSet { return tapKeep }
-        let nothingToTap = desiredCount == 0 && !isGlobal
-        if !force && !attached && nothingToTap { return tapKeep }
-        if nothingToTap { return tapWait }
-        if !force && attached { return tapUpdate }
-        return tapRebuild
+        Int(au_tap_action(attached, Int64(desiredCount), sameSet, isGlobal, force))
     }
 
     // MARK: - Microphone permission
 
     /// AVAuthorizationStatus raw values: 0 notDetermined, 1 restricted, 2 denied, 3 authorized.
-    public static let micStart = 0          // authorized
-    public static let micRequestFirst = 1   // not decided: ask (an undecided permission blocks AVAudioEngine)
-    public static let micDenied = 2         // restricted / denied: only System Settings can fix it
+    public static let micStart = Int(AU_MIC_START)                 // authorized
+    public static let micRequestFirst = Int(AU_MIC_REQUEST_FIRST)  // not decided: ask first
+    public static let micDenied = Int(AU_MIC_DENIED)               // restricted / denied
 
     public static func micStartDecision(authorizationStatus: Int) -> Int {
-        switch authorizationStatus {
-        case 3: return micStart
-        case 0: return micRequestFirst
-        default: return micDenied
-        }
+        Int(au_mic_start_decision(Int64(authorizationStatus)))
     }
 
     // MARK: - Devices
 
     /// Device kind codes.
-    public static let kindUnknown = 0
-    public static let kindBuiltInSpeaker = 1
-    public static let kindBuiltInHeadphones = 2
-    public static let kindBuiltInMic = 3
-    public static let kindBlackHole = 4          // virtual mic for the call app
-    public static let kindBluetooth = 5          // classic and LE
-    public static let kindUSB = 6
-    public static let kindDisplay = 7            // HDMI / DisplayPort (monitor speakers)
-    public static let kindAirPlay = 8
-    public static let kindAggregate = 9          // user aggregate / multi-output
-    public static let kindPonteAggregate = 10    // Ponte's own private tap aggregate
-    public static let kindVirtual = 11           // other virtual drivers (Zoom, Teams, Loopback…)
-    public static let kindContinuity = 12        // iPhone as mic (Continuity Capture)
-    public static let kindOtherWired = 13        // PCI, FireWire, Thunderbolt, AVB
+    public static let kindUnknown = Int(DV_KIND_UNKNOWN)
+    public static let kindBuiltInSpeaker = Int(DV_KIND_BUILT_IN_SPEAKER)
+    public static let kindBuiltInHeadphones = Int(DV_KIND_BUILT_IN_HEADPHONES)
+    public static let kindBuiltInMic = Int(DV_KIND_BUILT_IN_MIC)
+    public static let kindBlackHole = Int(DV_KIND_BLACKHOLE)                // virtual mic for the call app
+    public static let kindBluetooth = Int(DV_KIND_BLUETOOTH)                // classic and LE
+    public static let kindUSB = Int(DV_KIND_USB)
+    public static let kindDisplay = Int(DV_KIND_DISPLAY)                    // HDMI / DisplayPort
+    public static let kindAirPlay = Int(DV_KIND_AIRPLAY)
+    public static let kindAggregate = Int(DV_KIND_AGGREGATE)                // user aggregate / multi-output
+    public static let kindPonteAggregate = Int(DV_KIND_PONTE_AGGREGATE)     // Ponte's own tap aggregate
+    public static let kindVirtual = Int(DV_KIND_VIRTUAL)                    // other virtual drivers
+    public static let kindContinuity = Int(DV_KIND_CONTINUITY)              // iPhone as mic
+    public static let kindOtherWired = Int(DV_KIND_OTHER_WIRED)             // PCI, FireWire, Thunderbolt, AVB
 
     /// Core Audio transport type four-char codes (kAudioDeviceTransportType*), as plain UInt32.
-    public static let transportBuiltIn: UInt32 = 0x626C_746E      // 'bltn'
-    public static let transportAggregate: UInt32 = 0x6772_7570    // 'grup'
-    public static let transportVirtual: UInt32 = 0x7669_7274      // 'virt'
-    public static let transportPCI: UInt32 = 0x7063_6920          // 'pci '
-    public static let transportUSB: UInt32 = 0x7573_6220          // 'usb '
-    public static let transportFireWire: UInt32 = 0x3133_3934     // '1394'
-    public static let transportBluetooth: UInt32 = 0x626C_7565    // 'blue'
-    public static let transportBluetoothLE: UInt32 = 0x626C_6561  // 'blea'
-    public static let transportHDMI: UInt32 = 0x6864_6D69         // 'hdmi'
-    public static let transportDisplayPort: UInt32 = 0x6470_7274  // 'dprt'
-    public static let transportAirPlay: UInt32 = 0x6169_7270      // 'airp'
-    public static let transportAVB: UInt32 = 0x6561_7662          // 'eavb'
-    public static let transportThunderbolt: UInt32 = 0x7468_756E  // 'thun'
-    public static let transportContinuityWired: UInt32 = 0x6363_7764     // 'ccwd'
-    public static let transportContinuityWireless: UInt32 = 0x6363_776C  // 'ccwl'
+    public static let transportBuiltIn = UInt32(DV_TRANSPORT_BUILT_IN)
+    public static let transportAggregate = UInt32(DV_TRANSPORT_AGGREGATE)
+    public static let transportVirtual = UInt32(DV_TRANSPORT_VIRTUAL)
+    public static let transportPCI = UInt32(DV_TRANSPORT_PCI)
+    public static let transportUSB = UInt32(DV_TRANSPORT_USB)
+    public static let transportFireWire = UInt32(DV_TRANSPORT_FIREWIRE)
+    public static let transportBluetooth = UInt32(DV_TRANSPORT_BLUETOOTH)
+    public static let transportBluetoothLE = UInt32(DV_TRANSPORT_BLUETOOTH_LE)
+    public static let transportHDMI = UInt32(DV_TRANSPORT_HDMI)
+    public static let transportDisplayPort = UInt32(DV_TRANSPORT_DISPLAYPORT)
+    public static let transportAirPlay = UInt32(DV_TRANSPORT_AIRPLAY)
+    public static let transportAVB = UInt32(DV_TRANSPORT_AVB)
+    public static let transportThunderbolt = UInt32(DV_TRANSPORT_THUNDERBOLT)
+    public static let transportContinuityWired = UInt32(DV_TRANSPORT_CONTINUITY_WIRED)
+    public static let transportContinuityWireless = UInt32(DV_TRANSPORT_CONTINUITY_WIRELESS)
 
     /// BlackHole by name: contains "blackhole" (ASCII case-insensitive).
-    public static func isBlackHole(name: String) -> Bool { containsCI(name, "blackhole") }
+    public static func isBlackHole(name: String) -> Bool {
+        var t = DeviceText([name])
+        return dv_is_blackhole(&t.bytes, t.off(0), t.len(0))
+    }
 
-    public static func isPonteAggregate(uid: String) -> Bool { uid.utf8.starts(with: ponteAggregateUIDPrefix.utf8) }
+    public static func isPonteAggregate(uid: String) -> Bool {
+        var t = DeviceText([uid])
+        return dv_is_ponte_aggregate(&t.bytes, t.off(0), t.len(0))
+    }
 
     /// Classifies a device. Order: Ponte aggregate (uid prefix) → BlackHole (name) → transport type.
     /// Built-in: "headphone" in uid or name → headphones; else output channels > 0 → speaker; else input → mic.
     public static func deviceKind(name: String, uid: String, transportType: UInt32,
                                   inputChannels: Int, outputChannels: Int) -> Int {
-        if isPonteAggregate(uid: uid) { return kindPonteAggregate }
-        if isBlackHole(name: name) { return kindBlackHole }
-        switch transportType {
-        case transportBuiltIn:
-            if containsCI(uid, "headphone") || containsCI(name, "headphone") { return kindBuiltInHeadphones }
-            if outputChannels > 0 { return kindBuiltInSpeaker }
-            return inputChannels > 0 ? kindBuiltInMic : kindUnknown
-        case transportBluetooth, transportBluetoothLE: return kindBluetooth
-        case transportUSB: return kindUSB
-        case transportHDMI, transportDisplayPort: return kindDisplay
-        case transportAirPlay: return kindAirPlay
-        case transportAggregate: return kindAggregate
-        case transportVirtual: return kindVirtual
-        case transportContinuityWired, transportContinuityWireless: return kindContinuity
-        case transportPCI, transportFireWire, transportThunderbolt, transportAVB: return kindOtherWired
-        default: return kindUnknown
-        }
+        var t = DeviceText([name, uid])
+        return Int(dv_device_kind(&t.bytes, t.off(0), t.len(0), t.off(1), t.len(1), transportType,
+                                  Int64(inputChannels), Int64(outputChannels)))
     }
 
     /// Echo risk of playing the other side's voice on this output (the mic would hear it again).
-    public static let echoNone = 0      // headphones, virtual devices, mics
-    public static let echoSpeaker = 1   // a loudspeaker: show "use headphones"
-    public static let echoMaybe = 2     // cannot tell (Bluetooth, USB, other wired, unknown)
+    public static let echoNone = Int(DV_ECHO_NONE)          // headphones, virtual devices, mics
+    public static let echoSpeaker = Int(DV_ECHO_SPEAKER)    // a loudspeaker: show "use headphones"
+    public static let echoMaybe = Int(DV_ECHO_MAYBE)        // cannot tell (Bluetooth, USB, other wired, unknown)
 
-    public static func echoRisk(kind: Int) -> Int {
-        switch kind {
-        case kindBuiltInSpeaker, kindDisplay, kindAirPlay: return echoSpeaker
-        case kindBluetooth, kindUSB, kindOtherWired, kindUnknown: return echoMaybe
-        default: return echoNone
-        }
-    }
+    public static func echoRisk(kind: Int) -> Int { Int(dv_echo_risk(Int64(kind))) }
 
     /// Never use these as "my microphone" or "my headphones": the call's virtual mic and Ponte's own tap.
-    public static func isExcludedForMonitoring(kind: Int) -> Bool { kind == kindBlackHole || kind == kindPonteAggregate }
+    public static func isExcludedForMonitoring(kind: Int) -> Bool { dv_is_excluded_for_monitoring(Int64(kind)) }
 
     /// The BlackHole device to play into: among BlackHole devices with output channels, the first whose
     /// name contains "2ch" (ASCII case-insensitive), else the first. -1 if none.
     public static func pickBlackHoleIndex(names: [String], outputChannels: [Int]) -> Int {
-        let candidates = names.indices.filter { isBlackHole(name: names[$0]) && outputChannels[$0] > 0 }
-        return candidates.first { containsCI(names[$0], "2ch") } ?? candidates.first ?? -1
+        var t = DeviceText(names)
+        var outputs = DeviceText.list(outputChannels)
+        return Int(dv_pick_blackhole_index(&t.bytes, &t.offsets, &t.lengths, &outputs, t.count))
     }
 
     /// "My microphone": the default input if it has input channels and is not excluded; else the first
     /// built-in mic; else the first non-excluded device with input channels. -1 if none.
     public static func pickMicIndex(kinds: [Int], inputChannels: [Int], defaultIndex: Int) -> Int {
-        let usable = { (i: Int) in inputChannels[i] > 0 && !isExcludedForMonitoring(kind: kinds[i]) }
-        if kinds.indices.contains(defaultIndex), usable(defaultIndex) { return defaultIndex }
-        if let i = kinds.indices.first(where: { usable($0) && kinds[$0] == kindBuiltInMic }) { return i }
-        return kinds.indices.first(where: usable) ?? -1
+        var k = DeviceText.list(kinds)
+        var inputs = DeviceText.list(inputChannels)
+        return Int(dv_pick_mic_index(&k, &inputs, DeviceText.listCount(kinds.count), Int64(defaultIndex)))
     }
 
     /// Where to play the Russian voice for the owner: the default output if usable; else by kind
     /// priority built-in headphones → Bluetooth → USB → built-in speaker → any other usable. -1 if none.
     public static func pickListenOutputIndex(kinds: [Int], outputChannels: [Int], defaultIndex: Int) -> Int {
-        let usable = { (i: Int) in outputChannels[i] > 0 && !isExcludedForMonitoring(kind: kinds[i]) }
-        if kinds.indices.contains(defaultIndex), usable(defaultIndex) { return defaultIndex }
-        for kind in [kindBuiltInHeadphones, kindBluetooth, kindUSB, kindBuiltInSpeaker] {
-            if let i = kinds.indices.first(where: { usable($0) && kinds[$0] == kind }) { return i }
-        }
-        return kinds.indices.first(where: usable) ?? -1
+        var k = DeviceText.list(kinds)
+        var outputs = DeviceText.list(outputChannels)
+        return Int(dv_pick_listen_output_index(&k, &outputs, DeviceText.listCount(kinds.count), Int64(defaultIndex)))
     }
 
     /// Device lookup: exact UID, then exact name, then name contains query (ASCII case-insensitive). -1 if none.
     public static func matchDeviceIndex(query: String, names: [String], uids: [String]) -> Int {
-        if let i = uids.firstIndex(of: query) { return i }
-        if let i = names.firstIndex(of: query) { return i }
-        return names.firstIndex { containsCI($0, query) } ?? -1
+        var t = DeviceText([query] + names + uids)
+        let n = names.count
+        var nameOffsets = DeviceText.slots(t.offsets, from: 1, count: n)
+        var nameLengths = DeviceText.slots(t.lengths, from: 1, count: n)
+        var uidOffsets = DeviceText.slots(t.offsets, from: 1 + n, count: uids.count)
+        var uidLengths = DeviceText.slots(t.lengths, from: 1 + n, count: uids.count)
+        return Int(dv_match_device_index(&t.bytes, t.off(0), t.len(0), &nameOffsets, &nameLengths,
+                                         &uidOffsets, &uidLengths, DeviceText.listCount(n)))
     }
 
     // MARK: - App catalog
 
     /// Known call apps, sorted by bundle ID; labels are parallel. Must equal AudioApp.knownCallApps.
-    public static let knownCallAppBundleIDs = [
-        "com.apple.FaceTime",
-        "com.apple.Safari",
-        "com.google.Chrome",
-        "com.microsoft.teams2",
-        "net.whatsapp.WhatsApp",
-        "org.telegram.desktop",
-        "ru.keepcoder.Telegram",
-        "us.zoom.xos",
-    ]
-    public static let knownCallAppLabels = [
-        "FaceTime",
-        "Safari (Meet)",
-        "Chrome (Meet)",
-        "Teams",
-        "WhatsApp",
-        "Telegram Desktop",
-        "Telegram",
-        "Zoom",
-    ]
+    public static let knownCallAppBundleIDs: [String] = (0..<Int64(DV_CALL_APPS)).map { i in
+        DeviceText.bytes { dv_call_app_bundle_id(i, $0) }
+    }
+    public static let knownCallAppLabels: [String] = (0..<Int64(DV_CALL_APPS)).map { i in
+        DeviceText.bytes { dv_call_app_label(i, $0) }
+    }
 
     /// Index into `knownCallAppBundleIDs` (exact match), or -1.
-    public static func knownCallAppIndex(bundleID: String) -> Int { knownCallAppBundleIDs.firstIndex(of: bundleID) ?? -1 }
+    public static func knownCallAppIndex(bundleID: String) -> Int {
+        var t = DeviceText([bundleID])
+        return Int(dv_known_call_app_index(&t.bytes, t.off(0), t.len(0)))
+    }
 
-    public static func isKnownCallApp(bundleID: String) -> Bool { knownCallAppIndex(bundleID: bundleID) >= 0 }
+    public static func isKnownCallApp(bundleID: String) -> Bool {
+        var t = DeviceText([bundleID])
+        return dv_is_known_call_app(&t.bytes, t.off(0), t.len(0))
+    }
 
     /// Processes that carry a call app's audio without belonging to it (parallel arrays: target → process).
     /// FaceTime calls run in avconferenced / callservicesd (TelephonyUtilities). Unverified on a live call.
-    public static let companionTargetBundleIDs = ["com.apple.FaceTime", "com.apple.FaceTime"]
-    public static let companionProcessBundleIDs = ["com.apple.avconferenced", "com.apple.TelephonyUtilities"]
+    public static let companionTargetBundleIDs: [String] = (0..<Int64(DV_COMPANIONS)).map { i in
+        DeviceText.row(Int64(DV_ROW_FIRST_COMPANION_TARGET) + i)
+    }
+    public static let companionProcessBundleIDs: [String] = (0..<Int64(DV_COMPANIONS)).map { i in
+        DeviceText.row(Int64(DV_ROW_FIRST_COMPANION_PROCESS) + i)
+    }
 
     public static func isCompanionProcess(processBundleID: String, targetBundleID: String) -> Bool {
-        zip(companionTargetBundleIDs, companionProcessBundleIDs).contains { $0 == targetBundleID && $1 == processBundleID }
+        var t = DeviceText([processBundleID, targetBundleID])
+        return dv_is_companion_process(&t.bytes, t.off(0), t.len(0), t.off(1), t.len(1))
     }
 
     /// Does this HAL process belong in a tap of `targetBundleID`? Never Ponte itself.
     /// processBundleID is "" when the HAL reports none.
     public static func isTapTargetProcess(processBundleID: String, ownerBundleID: String, targetBundleID: String,
                                           pid: Int32, selfPID: Int32) -> Bool {
-        guard pid != selfPID else { return false }
-        return ownerBundleID == targetBundleID
-            || (!processBundleID.isEmpty && processBundleID == targetBundleID)
-            || isCompanionProcess(processBundleID: processBundleID, targetBundleID: targetBundleID)
+        var t = DeviceText([processBundleID, ownerBundleID, targetBundleID])
+        return dv_is_tap_target_process(&t.bytes, t.off(0), t.len(0), t.off(1), t.len(1), t.off(2), t.len(2), pid, selfPID)
     }
 
     /// Helper → parent app by bundle-ID prefix: the index of the longest `appBundleIDs[i]` such that
     /// helperBundleID starts with appBundleIDs[i] + "." (com.google.Chrome.helper → com.google.Chrome). -1 if none.
     public static func parentAppIndex(helperBundleID: String, appBundleIDs: [String]) -> Int {
-        var best = -1
-        var bestLength = -1
-        for (i, app) in appBundleIDs.enumerated() where !app.isEmpty {
-            let prefix = Array(app.utf8) + [UInt8(ascii: ".")]
-            if helperBundleID.utf8.starts(with: prefix), prefix.count > bestLength {
-                best = i
-                bestLength = prefix.count
-            }
-        }
-        return best
+        var t = DeviceText([helperBundleID] + appBundleIDs)
+        var offsets = DeviceText.slots(t.offsets, from: 1, count: appBundleIDs.count)
+        var lengths = DeviceText.slots(t.lengths, from: 1, count: appBundleIDs.count)
+        return Int(dv_parent_app_index(&t.bytes, t.off(0), t.len(0), &offsets, &lengths,
+                                       DeviceText.listCount(appBundleIDs.count)))
     }
 
     /// Byte length (UTF-8) of the path up to and including the first component that ends in ".app",
     /// e.g. "/Applications/Google Chrome.app/Contents/…/Helper.app/…" → length of "/Applications/Google Chrome.app".
     /// -1 if no component ends in ".app".
     public static func outermostAppPathLength(_ path: String) -> Int {
-        let bytes = Array(path.utf8)
-        let suffix = Array(".app".utf8)
-        var i = 0
-        while i + suffix.count <= bytes.count {
-            if Array(bytes[i..<(i + suffix.count)]) == suffix {
-                let end = i + suffix.count
-                let componentStart = bytes[..<i].lastIndex(of: UInt8(ascii: "/")).map { $0 + 1 } ?? 0
-                if (end == bytes.count || bytes[end] == UInt8(ascii: "/")) && i > componentStart { return end }
-            }
-            i += 1
-        }
-        return -1
+        var t = DeviceText([path])
+        return Int(dv_outermost_app_path_length(&t.bytes, t.off(0), t.len(0)))
     }
 
     /// Where a process's owning app comes from (first true wins, in this order).
-    public static let ownerSelf = 1            // the process is itself a regular (Dock) app
-    public static let ownerAppBundlePath = 2   // outermost .app in its executable path (Chrome/Electron helpers)
-    public static let ownerResponsible = 3     // its responsible process is an app (WebKit.GPU → Safari; CLI → terminal)
-    public static let ownerParent = 4          // a regular app among its parent processes
-    public static let ownerBundlePrefix = 5    // bundle-ID prefix of a running regular app
-    public static let ownerFallback = 6        // itself (its own bundle ID, or "pid.<n>")
+    public static let ownerSelf = Int(DV_OWNER_SELF)                    // itself a regular (Dock) app
+    public static let ownerAppBundlePath = Int(DV_OWNER_APP_BUNDLE_PATH) // outermost .app in its executable path
+    public static let ownerResponsible = Int(DV_OWNER_RESPONSIBLE)      // its responsible process is an app
+    public static let ownerParent = Int(DV_OWNER_PARENT)                // a regular app among its parents
+    public static let ownerBundlePrefix = Int(DV_OWNER_BUNDLE_PREFIX)   // bundle-ID prefix of a running app
+    public static let ownerFallback = Int(DV_OWNER_FALLBACK)            // itself
 
     public static func ownerSource(selfIsRegularApp: Bool, hasAppBundlePath: Bool, hasResponsibleApp: Bool,
                                    hasRegularParentApp: Bool, hasPrefixParent: Bool) -> Int {
-        if selfIsRegularApp { return ownerSelf }
-        if hasAppBundlePath { return ownerAppBundlePath }
-        if hasResponsibleApp { return ownerResponsible }
-        if hasRegularParentApp { return ownerParent }
-        if hasPrefixParent { return ownerBundlePrefix }
-        return ownerFallback
+        Int(dv_owner_source(selfIsRegularApp, hasAppBundlePath, hasResponsibleApp, hasRegularParentApp, hasPrefixParent))
     }
 
     /// Ponte's own process never appears as a source.
     public static func isSelfProcess(pid: Int32, ownerPID: Int32, selfPID: Int32) -> Bool {
-        pid == selfPID || ownerPID == selfPID
+        dv_is_self_process(pid, ownerPID, selfPID)
     }
 
     /// Show an app in the source picker: a Dock app, anything playing now, or a known call app.
     public static func shouldListApp(isRegularApp: Bool, isPlaying: Bool, isKnownCallApp: Bool) -> Bool {
-        isRegularApp || isPlaying || isKnownCallApp
+        dv_should_list_app(isRegularApp, isPlaying, isKnownCallApp)
     }
 
     /// Picker rank: 0 playing call app, 1 other playing app, 2 idle call app, 3 the rest.
     public static func appRank(isKnownCallApp: Bool, isPlaying: Bool) -> Int {
-        switch (isKnownCallApp, isPlaying) {
-        case (true, true): return 0
-        case (false, true): return 1
-        case (true, false): return 2
-        case (false, false): return 3
-        }
+        Int(dv_app_rank(isKnownCallApp, isPlaying))
     }
 
     /// Display order: indices sorted by rank, then by name (ASCII case-folded UTF-8 bytes), then by index.
     public static func appSortOrder(ranks: [Int], names: [String]) -> [Int] {
-        let keys = names.map(foldedBytes)
-        return ranks.indices.sorted { a, b in
-            if ranks[a] != ranks[b] { return ranks[a] < ranks[b] }
-            if keys[a] != keys[b] { return keys[a].lexicographicallyPrecedes(keys[b]) }
-            return a < b
-        }
+        var r = DeviceText.list(ranks)
+        var t = DeviceText(names)
+        var order = [Int64](repeating: 0, count: DeviceText.listMax)
+        let n = Int(dv_app_sort_order(&r, &t.bytes, &t.offsets, &t.lengths, DeviceText.listCount(ranks.count), &order))
+        return order[0..<n].map { Int($0) }
     }
 
     // MARK: - Text helpers (ASCII case folding on UTF-8 bytes)
 
     /// UTF-8 bytes with A–Z mapped to a–z; other bytes unchanged.
     public static func foldedBytes(_ s: String) -> [UInt8] {
-        s.utf8.map { ($0 >= 65 && $0 <= 90) ? $0 + 32 : $0 }
+        let all = Array(s.utf8)
+        var result: [UInt8] = []
+        result.reserveCapacity(all.count)
+        var block = [UInt8](repeating: 0, count: DeviceText.textMax)
+        var out = [UInt8](repeating: 0, count: DeviceText.textMax)
+        var done = 0
+        while done < all.count {
+            let n = min(all.count - done, DeviceText.textMax)
+            block.replaceSubrange(0..<n, with: all[done..<(done + n)])
+            let written = Int(dv_folded_bytes(&block, 0, Int64(n), &out))
+            result += out[0..<written]
+            done += n
+        }
+        return result
     }
 
     /// `haystack` contains `needle`, ASCII case-insensitive. An empty needle matches.
     public static func containsCI(_ haystack: String, _ needle: String) -> Bool {
-        let h = foldedBytes(haystack), n = foldedBytes(needle)
-        guard !n.isEmpty else { return true }
-        guard n.count <= h.count else { return false }
-        for i in 0...(h.count - n.count) where h[i] == n[0] {
-            if Array(h[i..<(i + n.count)]) == n { return true }
-        }
-        return false
+        var t = DeviceText([haystack, needle])
+        return dv_contains_ci(&t.bytes, t.off(0), t.len(0), t.off(1), t.len(1))
     }
+}
+
+/// Strings packed for `device_rules`: one UTF-8 buffer of `DV_TEXT_MAX` bytes and offset/length tables of
+/// `DV_LIST_MAX` entries. Strings past the buffer are cut; the C reads a slice outside it as empty.
+struct DeviceText {
+    static let textMax = Int(DV_TEXT_MAX)
+    static let listMax = Int(DV_LIST_MAX)
+
+    var bytes = [UInt8](repeating: 0, count: textMax)
+    var offsets = [UInt32](repeating: 0, count: listMax)
+    var lengths = [UInt32](repeating: 0, count: listMax)
+    private(set) var count: Int64 = 0
+
+    init(_ strings: [String]) {
+        var at = 0
+        for (i, s) in strings.enumerated() {
+            let u = Array(s.utf8)
+            let n = min(u.count, Self.textMax - at)
+            bytes.replaceSubrange(at..<(at + n), with: u[0..<n])
+            if i < Self.listMax {
+                offsets[i] = UInt32(at)
+                lengths[i] = UInt32(n)
+            }
+            at += n
+        }
+        count = Self.listCount(strings.count)
+    }
+
+    func off(_ i: Int) -> Int64 { Int64(offsets[i]) }
+    func len(_ i: Int) -> Int64 { Int64(lengths[i]) }
+
+    /// `count` offset (or length) entries starting at `from`, in a table of `DV_LIST_MAX`.
+    static func slots(_ table: [UInt32], from: Int, count: Int) -> [UInt32] {
+        var out = [UInt32](repeating: 0, count: listMax)
+        let n = max(0, min(count, listMax - from))
+        if n > 0 { out.replaceSubrange(0..<n, with: table[from..<(from + n)]) }
+        return out
+    }
+
+    /// An Int list as the C table of `DV_LIST_MAX` Int64 values.
+    static func list(_ values: [Int]) -> [Int64] {
+        var out = [Int64](repeating: 0, count: listMax)
+        for (i, v) in values.prefix(listMax).enumerated() { out[i] = Int64(v) }
+        return out
+    }
+
+    static func listCount(_ n: Int) -> Int64 { Int64(min(n, listMax)) }
+
+    /// The string a C function writes into a `DV_TEXT_MAX` buffer (it returns the length).
+    static func bytes(_ write: (UnsafeMutablePointer<UInt8>) -> Int64) -> String {
+        var out = [UInt8](repeating: 0, count: textMax)
+        let n = out.withUnsafeMutableBufferPointer { Int(write($0.baseAddress!)) }
+        return String(decoding: out[0..<n], as: UTF8.self)
+    }
+
+    /// Row `row` of the device word table.
+    static func row(_ row: Int64) -> String { bytes { dv_row_bytes(row, $0) } }
 }

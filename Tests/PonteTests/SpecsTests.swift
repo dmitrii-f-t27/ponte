@@ -137,7 +137,7 @@ private struct Samples {
         #expect(out[0] == Float(9) * (Float(1) / Float(3)))
         // Planar: shortest channel, channels added in order.
         var planar = [Float](repeating: 0, count: 8192)
-        var lengths = [Int64](repeating: 0, count: 16)
+        var lengths = [Int64](repeating: 0, count: 64)
         planar.replaceSubrange(0..<6, with: [1, 1, 1, 0, -1, 1])
         lengths[0] = 3; lengths[1] = 3
         #expect(au_downmix_planar(&planar, &lengths, 2, &out) == 3)

@@ -39,8 +39,8 @@ pub const AU_TAP_BITS_PER_CHANNEL : i64 = 32;
 ; --- Block sizes (C only: Swift passes buffers of exactly these sizes) ---------------------------------------
 pub const AU_BLOCK_FRAMES : i64 = 4096;
 pub const AU_BLOCK_SAMPLES : i64 = 8192;
-; au_downmix_planar takes at most this many channels.
-pub const AU_PLANAR_MAX_CHANNELS : i64 = 16;
+; au_downmix_planar and au_planar_frames take at most this many channels.
+pub const AU_PLANAR_MAX_CHANNELS : i64 = 64;
 
 ; --- Level codes (levelDigitalSilence, levelQuiet, levelSignal) -----------------------------------------------
 pub const AU_LEVEL_DIGITAL_SILENCE : i64 = 0;
@@ -89,6 +89,39 @@ pub fn au_fit(count: i64, block: i64) -> i64 {
     return count;
 }
 
+; --- Blocks -----------------------------------------------------------------------------------------------------------
+; How many of `frames` frames of `channels` channels one block holds: at most AU_BLOCK_FRAMES frames and
+; AU_BLOCK_SAMPLES samples; 0 when channels or frames is not positive (or one frame does not fit).
+pub fn au_block_frames_for(channels: i64, frames: i64) -> i64 {
+    if (channels > 0 and frames > 0) {
+        var n: i64 = au_fit(frames, AU_BLOCK_FRAMES);
+        var room: i64 = AU_BLOCK_SAMPLES / channels;
+        if (n > room) { n = room; }
+        return n;
+    }
+    return 0;
+}
+
+; Frames in sample_count interleaved samples of `channels` channels (a remainder ignored); 0 for no channels.
+pub fn au_interleaved_frames(sample_count: i64, channels: i64) -> i64 {
+    if (channels > 0) { return sample_count / channels; }
+    return 0;
+}
+
+; Frames of planar channels: the shortest of channel_count lengths; 0 for no channels, more than
+; AU_PLANAR_MAX_CHANNELS, or a shortest length that is not positive.
+pub fn au_planar_frames(lengths: [64]i64, channel_count: i64) -> i64 {
+    if (channel_count <= 0 or channel_count > AU_PLANAR_MAX_CHANNELS) { return 0; }
+    var frames: i64 = lengths[0];
+    var c: i64 = 1;
+    while (c < channel_count) {
+        if (lengths[c] < frames) { frames = lengths[c]; }
+        c = c + 1;
+    }
+    if (frames <= 0) { return 0; }
+    return frames;
+}
+
 ; --- Sample conversion ----------------------------------------------------------------------------------------------
 ; int16ToFloat, int32ToFloat: Float(v) / full scale.
 pub fn au_int16_to_float(v: i16) -> f32 {
@@ -114,10 +147,8 @@ pub fn au_frames_in_buffer(byte_size: i64, channels: i64, bytes_per_sample: i64)
 ; itself; more channels first sum into a Float from 0 in channel order. Returns the frames processed:
 ; frames, but at most AU_BLOCK_FRAMES and at most AU_BLOCK_SAMPLES / channels (0 when nothing is done).
 pub fn au_accumulate_frames(src: [8192]f32, channels: i64, frames: i64, dst: [4096]f32) -> i64 {
-    if (channels > 0 and frames > 0) {
-        var n: i64 = au_fit(frames, AU_BLOCK_FRAMES);
-        var room: i64 = AU_BLOCK_SAMPLES / channels;
-        if (n > room) { n = room; }
+    var n: i64 = au_block_frames_for(channels, frames);
+    if (n > 0) {
         var i: i64 = 0;
         if (channels == 1) {
             while (i < n) {
@@ -169,7 +200,7 @@ pub fn au_scale(dst: [4096]f32, frames: i64, factor: f32) -> i64 {
 ; Returns the frame count written to out (0 when channels is not positive).
 pub fn au_downmix_interleaved(samples: [8192]f32, sample_count: i64, channels: i64, out: [4096]f32) -> i64 {
     if (channels > 0) {
-        var frames: i64 = au_fit(sample_count, AU_BLOCK_SAMPLES) / channels;
+        var frames: i64 = au_interleaved_frames(au_fit(sample_count, AU_BLOCK_SAMPLES), channels);
         frames = au_fit(frames, AU_BLOCK_FRAMES);
         var i: i64 = 0;
         while (i < frames) {
@@ -187,23 +218,16 @@ pub fn au_downmix_interleaved(samples: [8192]f32, sample_count: i64, channels: i
 ; downmixPlanar: planar holds the channels one after another, channel c with lengths[c] samples.
 ; frames = the shortest channel; nothing for no channels or no frames. Each channel is added in order,
 ; then the sum is scaled by averageFactor(channel_count). Returns the frame count written to out.
-pub fn au_downmix_planar(planar: [8192]f32, lengths: [16]i64, channel_count: i64, out: [4096]f32) -> i64 {
-    if (channel_count <= 0 or channel_count > AU_PLANAR_MAX_CHANNELS) { return 0; }
-    var frames: i64 = lengths[0];
-    var c: i64 = 1;
-    while (c < channel_count) {
-        if (lengths[c] < frames) { frames = lengths[c]; }
-        c = c + 1;
-    }
+pub fn au_downmix_planar(planar: [8192]f32, lengths: [64]i64, channel_count: i64, out: [4096]f32) -> i64 {
+    var frames: i64 = au_fit(au_planar_frames(lengths, channel_count), AU_BLOCK_FRAMES);
     if (frames <= 0) { return 0; }
-    frames = au_fit(frames, AU_BLOCK_FRAMES);
     var i: i64 = 0;
     while (i < frames) {
         out[i] = 0.0;
         i = i + 1;
     }
     var offset: i64 = 0;
-    c = 0;
+    var c: i64 = 0;
     while (c < channel_count) {
         if (lengths[c] < 0 or offset + frames > AU_BLOCK_SAMPLES) { return 0; }
         var j: i64 = 0;
@@ -501,7 +525,7 @@ test au_conversion_and_downmix {
     assert au_average_factor(4) == 0.25;
     // downmixPlanar [[1, 1, 1], [0, -1, 1]] = [0.5, 0, 1]; the shortest channel wins.
     var planar: [8192]f32 = [0.0; 8192];
-    var lengths: [16]i64 = [0; 16];
+    var lengths: [64]i64 = [0; 64];
     planar[0] = 1.0;
     planar[1] = 1.0;
     planar[2] = 1.0;
@@ -545,6 +569,24 @@ test au_conversion_and_downmix {
     assert au_accumulate_frames(src, 1, 9000, dst) == 4096;
     assert au_accumulate_frames(src, 4, 4096, dst) == 2048;
     assert au_downmix_interleaved(src, 9000, 1, dst) == 4096;
+    // Block sizes, interleaved and planar frame counts.
+    assert au_block_frames_for(2, 10000) == 4096;
+    assert au_block_frames_for(3, 10000) == 2730;
+    assert au_block_frames_for(16, 100) == 100;
+    assert au_block_frames_for(9000, 5) == 0;
+    assert au_block_frames_for(0, 5) == 0;
+    assert au_block_frames_for(2, 0) == 0;
+    assert au_interleaved_frames(7, 2) == 3;
+    assert au_interleaved_frames(7, 0) == 0;
+    var lens: [64]i64 = [0; 64];
+    lens[0] = 5;
+    lens[1] = 3;
+    lens[2] = 9;
+    assert au_planar_frames(lens, 3) == 3;
+    assert au_planar_frames(lens, 0) == 0;
+    assert au_planar_frames(lens, 65) == 0;
+    lens[1] = 0;
+    assert au_planar_frames(lens, 3) == 0;
 }
 
 test au_gain_and_levels {
