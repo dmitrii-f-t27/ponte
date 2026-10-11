@@ -47,6 +47,9 @@ pub const SG_MIN_CUT_SPACING_MS : i64 = 100;
 pub const SG_STALL_TIMEOUT_MS : i64 = 1000;
 ; watchdogPeriodMs: how often the transcriber's watchdog checks for a stalled source.
 pub const SG_WATCHDOG_PERIOD_MS : i64 = 250;
+; stallFlushSilenceMs: silence fed to the analyzer after a stall cut. SpeechAnalyzer finalizes only once it
+; has audio past the cut (measured 2026-10-11: with nothing after it, the final waited for finish()).
+pub const SG_STALL_FLUSH_SILENCE_MS : i64 = 500;
 
 ; finalizeAction results.
 pub const SG_ACTION_WAIT : i64 = 0;

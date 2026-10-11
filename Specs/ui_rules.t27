@@ -28,6 +28,10 @@ pub const UI_BAN_FAILED_OTHER : i32 = 2;
 pub const UI_BAN_NO_BLACKHOLE : i32 = 3;
 ; Warning: put on headphones.
 pub const UI_BAN_SPEAKERS : i32 = 4;
+; The lanes listen but the translation packs are missing: error with the packs step.
+pub const UI_BAN_NO_PACKS : i32 = 5;
+; The lanes listen but the translator failed otherwise: error.
+pub const UI_BAN_NO_TRANSLATOR : i32 = 6;
 
 ; --- Buttons (BTN_*) --------------------------------------------------------------------------------------------
 pub const UI_BTN_START_STOP : i32 = 1;
@@ -47,9 +51,24 @@ pub const UI_LIGHT_UNKNOWN : i32 = 0;
 pub const UI_LIGHT_OK : i32 = 1;
 pub const UI_LIGHT_BAD : i32 = 2;
 pub const UI_LIGHT_BUSY : i32 = 3;
+pub const UI_LIGHT_WARN : i32 = 4;
 ; AUDIO_FRESH_MS: a buffer this recent means audio flows. AUDIO_WARMUP_MS: grace period after start.
 pub const UI_AUDIO_FRESH_MS : i64 = 2000;
 pub const UI_AUDIO_WARMUP_MS : i64 = 4000;
+
+; --- Process tap status (TAP_*), as AppAudioTapSource.Status --------------------------------------------------
+; NONE: the source is not a process tap (a test file). WAITING: the chosen app has no audio process yet.
+; IDLE: not started or stopped.
+pub const UI_TAP_NONE : i32 = 0;
+pub const UI_TAP_WAITING : i32 = 1;
+pub const UI_TAP_CAPTURING : i32 = 2;
+pub const UI_TAP_FAILED : i32 = 3;
+pub const UI_TAP_IDLE : i32 = 4;
+; SILENCE_SUSPECT_MS: only exact zeros this long after start: the System Audio Recording permission is
+; probably missing (a process tap without it delivers digital silence).
+pub const UI_SILENCE_SUSPECT_MS : i64 = 8000;
+; CAPTURE_CHECK_MS: the wizard listens to all audio except Ponte this long.
+pub const UI_CAPTURE_CHECK_MS : i64 = 3000;
 
 ; --- Latency colour (LAT_*) -------------------------------------------------------------------------------------
 pub const UI_LAT_NONE : i32 = 0;
@@ -124,6 +143,16 @@ pub fn ui_start_banner(lanes_failed: i32, packs_missing: bool, has_blackhole: bo
     return UI_BAN_NONE;
 }
 
+; startBannerAfterStart: when a lane can run without its translator (recognition only). A failed lane
+; wins; then a failed translator (packs missing or not); then startBanner's warnings.
+pub fn ui_start_banner_after_start(lanes_failed: i32, translators_failed: i32, packs_missing: bool, has_blackhole: bool, speaker_output: bool) -> i32 {
+    if (lanes_failed == 0 and translators_failed > 0) {
+        if (packs_missing) { return UI_BAN_NO_PACKS; }
+        return UI_BAN_NO_TRANSLATOR;
+    }
+    return ui_start_banner(lanes_failed, packs_missing, has_blackhole, speaker_output);
+}
+
 ; autosaveOnStop
 pub fn ui_autosave_on_stop(lines: i32) -> bool {
     return lines > 0;
@@ -154,6 +183,28 @@ pub fn ui_audio_light(run_state: i32, lane_active: bool, ms_since_start: i64, ms
     if (ms_since_buffer >= 0 and ms_since_buffer < UI_AUDIO_FRESH_MS) { return UI_LIGHT_OK; }
     if (ms_since_start < UI_AUDIO_WARMUP_MS) { return UI_LIGHT_BUSY; }
     return UI_LIGHT_BAD;
+}
+
+; sourceLight: the source audio light. audioLight first; while running with the lane active, a failed tap
+; is BAD, a tap waiting for the app is BUSY, and a capturing tap that delivered buffers but never a
+; non-zero sample for SILENCE_SUSPECT_MS is WARN. ms_since_signal < 0: no non-zero sample since start.
+pub fn ui_source_light(run_state: i32, lane_active: bool, tap_status: i32, ms_since_start: i64, ms_since_buffer: i64, ms_since_signal: i64) -> i32 {
+    var base: i32 = ui_audio_light(run_state, lane_active, ms_since_start, ms_since_buffer);
+    if (run_state != UI_RUN_RUNNING or lane_active == false) { return base; }
+    if (tap_status == UI_TAP_FAILED) { return UI_LIGHT_BAD; }
+    if (tap_status == UI_TAP_WAITING) { return UI_LIGHT_BUSY; }
+    if (base == UI_LIGHT_OK and tap_status == UI_TAP_CAPTURING and ms_since_signal < 0 and ms_since_start >= UI_SILENCE_SUSPECT_MS) {
+        return UI_LIGHT_WARN;
+    }
+    return base;
+}
+
+; captureCheckLight: the wizard check. A failed tap or no audio at all is BAD; only exact zeros is WARN
+; (nothing played, or the permission is missing); any non-zero sample is OK.
+pub fn ui_capture_check_light(tap_status: i32, frames_seen: bool, signal_seen: bool) -> i32 {
+    if (tap_status == UI_TAP_FAILED or frames_seen == false) { return UI_LIGHT_BAD; }
+    if (signal_seen) { return UI_LIGHT_OK; }
+    return UI_LIGHT_WARN;
 }
 
 ; blackHoleLight
@@ -236,6 +287,11 @@ pub fn ui_wizard_show_on_launch(setup_completed: bool, forced_step: i32) -> bool
     return forced_step >= 0 or setup_completed == false;
 }
 
+; wizardShowOnLaunchInMode: test mode (launch arguments with files) counts as set up.
+pub fn ui_wizard_show_on_launch_in_mode(setup_completed: bool, forced_step: i32, test_mode: bool) -> bool {
+    return ui_wizard_show_on_launch(setup_completed or test_mode, forced_step);
+}
+
 ; wizardCompletedAfterClose: "close" keeps the old flag; "start working" (finished) completes setup.
 pub fn ui_wizard_completed_after_close(was_completed: bool, finished: bool) -> bool {
     return was_completed or finished;
@@ -274,6 +330,11 @@ test ui_run_and_buttons {
     assert ui_start_banner(0, false, false, true) == UI_BAN_NO_BLACKHOLE;
     assert ui_start_banner(0, false, true, true) == UI_BAN_SPEAKERS;
     assert ui_start_banner(0, true, true, false) == UI_BAN_NONE;
+    assert ui_start_banner_after_start(0, 1, true, true, false) == UI_BAN_NO_PACKS;
+    assert ui_start_banner_after_start(0, 2, false, false, true) == UI_BAN_NO_TRANSLATOR;
+    assert ui_start_banner_after_start(1, 1, true, true, false) == UI_BAN_FAILED_PACKS;
+    assert ui_start_banner_after_start(0, 0, false, false, true) == UI_BAN_NO_BLACKHOLE;
+    assert ui_start_banner_after_start(0, 0, false, true, false) == UI_BAN_NONE;
     assert ui_autosave_on_stop(1) == true;
     assert ui_autosave_on_stop(0) == false;
     assert ui_button_enabled(UI_BTN_START_STOP, UI_RUN_IDLE, 0, 0, true, false) == true;
@@ -324,6 +385,18 @@ test ui_lights_and_choices {
     assert ui_audio_light(UI_RUN_RUNNING, true, 9000, 1999) == UI_LIGHT_OK;
     assert ui_audio_light(UI_RUN_RUNNING, true, 3999, -1) == UI_LIGHT_BUSY;
     assert ui_audio_light(UI_RUN_RUNNING, true, 4000, 2000) == UI_LIGHT_BAD;
+    assert ui_source_light(UI_RUN_IDLE, true, UI_TAP_FAILED, 0, 0, 0) == UI_LIGHT_UNKNOWN;
+    assert ui_source_light(UI_RUN_RUNNING, true, UI_TAP_FAILED, 9000, 10, 10) == UI_LIGHT_BAD;
+    assert ui_source_light(UI_RUN_RUNNING, true, UI_TAP_WAITING, 9000, 10, 10) == UI_LIGHT_BUSY;
+    assert ui_source_light(UI_RUN_RUNNING, true, UI_TAP_CAPTURING, 8000, 10, -1) == UI_LIGHT_WARN;
+    assert ui_source_light(UI_RUN_RUNNING, true, UI_TAP_CAPTURING, 7999, 10, -1) == UI_LIGHT_OK;
+    assert ui_source_light(UI_RUN_RUNNING, true, UI_TAP_CAPTURING, 9000, 10, 10) == UI_LIGHT_OK;
+    assert ui_source_light(UI_RUN_RUNNING, true, UI_TAP_NONE, 9000, 10, -1) == UI_LIGHT_OK;
+    assert ui_source_light(UI_RUN_RUNNING, false, UI_TAP_FAILED, 9000, 10, -1) == UI_LIGHT_BAD;
+    assert ui_capture_check_light(UI_TAP_FAILED, true, true) == UI_LIGHT_BAD;
+    assert ui_capture_check_light(UI_TAP_CAPTURING, false, false) == UI_LIGHT_BAD;
+    assert ui_capture_check_light(UI_TAP_CAPTURING, true, false) == UI_LIGHT_WARN;
+    assert ui_capture_check_light(UI_TAP_CAPTURING, true, true) == UI_LIGHT_OK;
     assert ui_blackhole_light(true) == UI_LIGHT_OK;
     assert ui_blackhole_light(false) == UI_LIGHT_BAD;
     assert ui_models_light(UI_RUN_IDLE, false, 0, 0) == UI_LIGHT_UNKNOWN;
@@ -381,6 +454,9 @@ test ui_wizard_and_overlay {
     assert ui_wizard_show_on_launch(false, -1) == true;
     assert ui_wizard_show_on_launch(true, -1) == false;
     assert ui_wizard_show_on_launch(true, 3) == true;
+    assert ui_wizard_show_on_launch_in_mode(false, -1, true) == false;
+    assert ui_wizard_show_on_launch_in_mode(false, -1, false) == true;
+    assert ui_wizard_show_on_launch_in_mode(true, 2, true) == true;
     assert ui_wizard_completed_after_close(false, true) == true;
     assert ui_wizard_completed_after_close(false, false) == false;
     assert ui_wizard_completed_after_close(true, false) == true;

@@ -81,10 +81,10 @@
 #define LN_RATE_STEP_PERCENT 10
 #define LN_RATE_MAX_STEPS 3
 #define LN_ECHO_TAIL_MS 700
-#define LN_END_GAP_MS 250
 #define LN_END_NOW 0
-#define LN_END_LAST_VOICE 1
 #define LN_END_LAST_PARTIAL 2
+#define LN_END_TRANSCRIBER 3
+#define LN_PREPARE_RETRY_MS 5000
 #define LN_CONTEXT_PHRASES 4
 #define LN_PTT_RIGHT_OPTION 0
 #define LN_PTT_RIGHT_COMMAND 1
@@ -116,7 +116,9 @@ bool ln_cancels_speech(int32_t event, bool value);
 int32_t ln_replay_action(bool has_cached_audio, bool has_last_translation, bool has_player);
 int32_t ln_speech_rate_percent(int32_t waiting);
 bool ln_echo_guard_blocks_mic(bool speaker_output, bool incoming_speaking, int64_t ms_since_speech);
-int32_t ln_phrase_end_source(int64_t ms_since_voice, int64_t ms_since_partial);
+bool ln_echo_guard_applies(bool speaker_output, bool mic_is_live);
+int32_t ln_phrase_end_choice(int64_t ms_since_timed_end, int64_t ms_since_partial);
+bool ln_retry_translator_prepare(bool prepared, int64_t ms_since_attempt);
 int64_t ln_latency_ms(int64_t end_ms, int64_t ready_ms);
 int32_t ln_context_overflow(int32_t count);
 bool ln_ptt_key_down(int32_t key, uint64_t flags);
@@ -283,14 +285,22 @@ bool ln_echo_guard_blocks_mic(bool speaker_output, bool incoming_speaking, int64
     return ((ms_since_speech >= 0) && (ms_since_speech < LN_ECHO_TAIL_MS));
 }
 
-int32_t ln_phrase_end_source(int64_t ms_since_voice, int64_t ms_since_partial) {
-    if ((ms_since_voice >= LN_END_GAP_MS)) {
-        return LN_END_LAST_VOICE;
+bool ln_echo_guard_applies(bool speaker_output, bool mic_is_live) {
+    return (speaker_output && mic_is_live);
+}
+
+int32_t ln_phrase_end_choice(int64_t ms_since_timed_end, int64_t ms_since_partial) {
+    if ((ms_since_timed_end >= 0)) {
+        return LN_END_TRANSCRIBER;
     }
     if ((ms_since_partial >= 0)) {
         return LN_END_LAST_PARTIAL;
     }
     return LN_END_NOW;
+}
+
+bool ln_retry_translator_prepare(bool prepared, int64_t ms_since_attempt) {
+    return ((prepared == false) && ((ms_since_attempt < 0) || (ms_since_attempt >= LN_PREPARE_RETRY_MS)));
 }
 
 int64_t ln_latency_ms(int64_t end_ms, int64_t ready_ms) {
@@ -485,10 +495,18 @@ void test_ln_speech_control_rules(void) {
     assert((ln_echo_guard_blocks_mic(true, false, 699) == true));
     assert((ln_echo_guard_blocks_mic(true, false, 700) == false));
     assert((ln_echo_guard_blocks_mic(true, false, -1) == false));
-    assert((ln_phrase_end_source(250, 10) == LN_END_LAST_VOICE));
-    assert((ln_phrase_end_source(249, 10) == LN_END_LAST_PARTIAL));
-    assert((ln_phrase_end_source(-1, 0) == LN_END_LAST_PARTIAL));
-    assert((ln_phrase_end_source(100, -1) == LN_END_NOW));
+    assert((ln_echo_guard_applies(true, true) == true));
+    assert((ln_echo_guard_applies(true, false) == false));
+    assert((ln_echo_guard_applies(false, true) == false));
+    assert((ln_phrase_end_choice(0, -1) == LN_END_TRANSCRIBER));
+    assert((ln_phrase_end_choice(1500, 10) == LN_END_TRANSCRIBER));
+    assert((ln_phrase_end_choice(-1, 0) == LN_END_LAST_PARTIAL));
+    assert((ln_phrase_end_choice(-1, -1) == LN_END_NOW));
+    assert((ln_retry_translator_prepare(false, -1) == true));
+    assert((ln_retry_translator_prepare(false, 4999) == false));
+    assert((ln_retry_translator_prepare(false, 5000) == true));
+    assert((ln_retry_translator_prepare(true, -1) == false));
+    assert((ln_retry_translator_prepare(true, 9000) == false));
     assert((ln_latency_ms(1000, 2250) == 1250));
     assert((ln_latency_ms(2000, 1000) == 0));
     assert((ln_context_overflow(0) == 0));

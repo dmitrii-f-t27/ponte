@@ -26,6 +26,10 @@
 #define VO_SYNTHESIS_TIMEOUT_MAX_MS 60000
 #define VO_SYNTHESIS_MS_PER_BYTE 50
 #define VO_SYNTHESIS_END_GRACE_MS 200
+#define VO_DEFAULT_UTTERANCE_RATE_MILLI 500
+#define VO_UTTERANCE_RATE_MILLI_PER_10_PERCENT 17
+#define VO_PERCENT_NORMAL 100
+#define VO_RATE_MILLI_MAX 1000
 #define VO_ROW_ELOQUENCE 0
 #define VO_ROW_LEGACY 1
 #define VO_ROW_COUNT 2
@@ -49,6 +53,7 @@ bool vo_contains_row(uint8_t id[static 1024], int64_t len, int64_t row);
 bool vo_is_novelty_voice(uint8_t id[static 1024], int64_t len);
 int64_t vo_voice_rank_key(int64_t quality_code, bool is_novelty, int64_t preferred_index);
 int64_t vo_synthesis_timeout_ms(int64_t text_bytes);
+int64_t vo_utterance_rate_milli(int64_t rate_percent, int64_t base_rate_milli);
 int64_t vo_fixture(int64_t index, uint8_t out[static 1024], int64_t at);
 /* Function bodies: see the full header. */
 #endif

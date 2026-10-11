@@ -4,8 +4,8 @@
 ; phrase pipeline, what cancels queued speech, replay, the speech rate, the echo guard, phrase timing,
 ; the context window and push-to-talk (same codes, constants and order of checks; each function names
 ; the Swift function it mirrors). Codes are Int32, milliseconds Int64, modifier flags UInt64.
-; Not ported, by decision: AppRules.isBuiltInSpeaker (the app uses dv_device_kind / dv_echo_risk) and
-; AppRules.isVoice(rms) (the app uses sg_is_voice). ASCII only.
+; The speaker test and the voice meter are not repeated here: the app uses dv_device_kind / dv_echo_risk
+; and the transcriber's sg_is_voice. ASCII only.
 ; Generated C: Sources/PonteSpecs/lane_rules.h (Specs/generate.sh).
 
 module PonteLaneRules;
@@ -108,11 +108,15 @@ pub const LN_RATE_MAX_STEPS : i32 = 3;
 ; ECHO_TAIL_MS: the mic stays ignored this long after the voice stops.
 pub const LN_ECHO_TAIL_MS : i64 = 700;
 
-; --- Phrase timing (END_GAP_MS, END_*) ------------------------------------------------------------------------
-pub const LN_END_GAP_MS : i64 = 250;
+; --- Phrase timing (END_*) -----------------------------------------------------------------------------------
+; Which moment counts as the end of a phrase. Code 1 (the lane's own voice meter) is retired.
 pub const LN_END_NOW : i32 = 0;
-pub const LN_END_LAST_VOICE : i32 = 1;
 pub const LN_END_LAST_PARTIAL : i32 = 2;
+pub const LN_END_TRANSCRIBER : i32 = 3;
+
+; --- Translator that could not be prepared at start (PREPARE_RETRY_MS) ----------------------------------------
+; The lane still transcribes; before each phrase it prepares again, at most once per 5 s.
+pub const LN_PREPARE_RETRY_MS : i64 = 5000;
 
 ; --- Context (CONTEXT_PHRASES) ----------------------------------------------------------------------------------
 pub const LN_CONTEXT_PHRASES : i32 = 4;
@@ -262,12 +266,23 @@ pub fn ln_echo_guard_blocks_mic(speaker_output: bool, incoming_speaking: bool, m
     return ms_since_speech >= 0 and ms_since_speech < LN_ECHO_TAIL_MS;
 }
 
-; phraseEndSource: which moment counts as the end of the phrase when its final arrives: the last loud
-; buffer after END_GAP_MS of silence; else the last volatile update; else now. Negative means unknown.
-pub fn ln_phrase_end_source(ms_since_voice: i64, ms_since_partial: i64) -> i32 {
-    if (ms_since_voice >= LN_END_GAP_MS) { return LN_END_LAST_VOICE; }
+; echoGuardApplies: armed only when the owner listens on a loudspeaker and the outgoing lane hears a live
+; microphone (a test file cannot pick up the speakers).
+pub fn ln_echo_guard_applies(speaker_output: bool, mic_is_live: bool) -> bool {
+    return speaker_output and mic_is_live;
+}
+
+; phraseEndChoice: the moment the speaker finished a phrase when its final arrives: the transcriber's own
+; timing if known; else the last volatile update; else now. Milliseconds before now; negative is unknown.
+pub fn ln_phrase_end_choice(ms_since_timed_end: i64, ms_since_partial: i64) -> i32 {
+    if (ms_since_timed_end >= 0) { return LN_END_TRANSCRIBER; }
     if (ms_since_partial >= 0) { return LN_END_LAST_PARTIAL; }
     return LN_END_NOW;
+}
+
+; retryTranslatorPrepare: not prepared, and never tried (negative) or tried at least PREPARE_RETRY_MS ago.
+pub fn ln_retry_translator_prepare(prepared: bool, ms_since_attempt: i64) -> bool {
+    return prepared == false and (ms_since_attempt < 0 or ms_since_attempt >= LN_PREPARE_RETRY_MS);
 }
 
 ; latencyMs: max(0, ready - end).
@@ -436,10 +451,18 @@ test ln_speech_control_rules {
     assert ln_echo_guard_blocks_mic(true, false, 699) == true;
     assert ln_echo_guard_blocks_mic(true, false, 700) == false;
     assert ln_echo_guard_blocks_mic(true, false, -1) == false;
-    assert ln_phrase_end_source(250, 10) == LN_END_LAST_VOICE;
-    assert ln_phrase_end_source(249, 10) == LN_END_LAST_PARTIAL;
-    assert ln_phrase_end_source(-1, 0) == LN_END_LAST_PARTIAL;
-    assert ln_phrase_end_source(100, -1) == LN_END_NOW;
+    assert ln_echo_guard_applies(true, true) == true;
+    assert ln_echo_guard_applies(true, false) == false;
+    assert ln_echo_guard_applies(false, true) == false;
+    assert ln_phrase_end_choice(0, -1) == LN_END_TRANSCRIBER;
+    assert ln_phrase_end_choice(1500, 10) == LN_END_TRANSCRIBER;
+    assert ln_phrase_end_choice(-1, 0) == LN_END_LAST_PARTIAL;
+    assert ln_phrase_end_choice(-1, -1) == LN_END_NOW;
+    assert ln_retry_translator_prepare(false, -1) == true;
+    assert ln_retry_translator_prepare(false, 4999) == false;
+    assert ln_retry_translator_prepare(false, 5000) == true;
+    assert ln_retry_translator_prepare(true, -1) == false;
+    assert ln_retry_translator_prepare(true, 9000) == false;
     assert ln_latency_ms(1000, 2250) == 1250;
     assert ln_latency_ms(2000, 1000) == 0;
     assert ln_context_overflow(0) == 0;

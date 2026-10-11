@@ -326,6 +326,7 @@ private struct Samples {
         #expect(!vo_is_novelty_voice(&id, n))
         #expect(vo_synthesis_timeout_ms(100) == 10_000)
         #expect(vo_synthesis_timeout_ms(10_000) == 60_000)
+        #expect(vo_utterance_rate_milli(130, Int64(VO_DEFAULT_UTTERANCE_RATE_MILLI)) == 551)
     }
 }
 
@@ -343,7 +344,9 @@ private struct Samples {
         #expect(ln_replay_action(false, true, true) == LN_RPL_SYNTH)
         #expect([-1, 0, 1, 2, 3, 10].map { ln_speech_rate_percent(Int32($0)) } == [100, 100, 110, 120, 130, 130])
         #expect(ln_echo_guard_blocks_mic(true, false, 699) && !ln_echo_guard_blocks_mic(true, false, 700))
-        #expect(ln_phrase_end_source(250, 10) == LN_END_LAST_VOICE)
+        #expect(ln_phrase_end_choice(250, 10) == LN_END_TRANSCRIBER && ln_phrase_end_choice(-1, 3) == LN_END_LAST_PARTIAL)
+        #expect(ln_echo_guard_applies(true, true) && !ln_echo_guard_applies(true, false))
+        #expect(ln_retry_translator_prepare(false, 5000) && !ln_retry_translator_prepare(false, 4999))
         #expect(ln_latency_ms(1000, 2250) == 1250)
         #expect(ln_context_overflow(9) == 5)
         #expect(ln_ptt_key_down(LN_PTT_RIGHT_OPTION, 0x80040) && !ln_ptt_key_down(LN_PTT_RIGHT_OPTION, 0x80020))
@@ -358,6 +361,10 @@ private struct Samples {
     @Test func runButtonsLightsWizardOverlay() {
         #expect(ui_toggle_run(UI_RUN_RUNNING) == UI_TOGGLE_STOP)
         #expect(ui_start_banner(0, false, true, true) == UI_BAN_SPEAKERS)
+        #expect(ui_start_banner_after_start(0, 1, true, true, false) == UI_BAN_NO_PACKS)
+        #expect(ui_source_light(UI_RUN_RUNNING, true, UI_TAP_CAPTURING, 8000, 10, -1) == UI_LIGHT_WARN)
+        #expect(ui_capture_check_light(UI_TAP_CAPTURING, true, false) == UI_LIGHT_WARN)
+        #expect(!ui_wizard_show_on_launch_in_mode(false, -1, true))
         #expect(ui_button_enabled(UI_BTN_TEST_CALL, UI_RUN_IDLE, 0, 0, true, true) == false)
         #expect(ui_audio_light(UI_RUN_RUNNING, true, 3999, -1) == UI_LIGHT_BUSY)
         #expect(ui_models_light(UI_RUN_RUNNING, true, 1, 1) == UI_LIGHT_BAD)

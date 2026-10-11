@@ -30,6 +30,8 @@
 #define UI_BAN_FAILED_OTHER 2
 #define UI_BAN_NO_BLACKHOLE 3
 #define UI_BAN_SPEAKERS 4
+#define UI_BAN_NO_PACKS 5
+#define UI_BAN_NO_TRANSLATOR 6
 #define UI_BTN_START_STOP 1
 #define UI_BTN_SOURCE 2
 #define UI_BTN_REPLAY_INCOMING 3
@@ -45,8 +47,16 @@
 #define UI_LIGHT_OK 1
 #define UI_LIGHT_BAD 2
 #define UI_LIGHT_BUSY 3
+#define UI_LIGHT_WARN 4
 #define UI_AUDIO_FRESH_MS 2000
 #define UI_AUDIO_WARMUP_MS 4000
+#define UI_TAP_NONE 0
+#define UI_TAP_WAITING 1
+#define UI_TAP_CAPTURING 2
+#define UI_TAP_FAILED 3
+#define UI_TAP_IDLE 4
+#define UI_SILENCE_SUSPECT_MS 8000
+#define UI_CAPTURE_CHECK_MS 3000
 #define UI_LAT_NONE 0
 #define UI_LAT_GOOD 1
 #define UI_LAT_SLOW 2
@@ -87,9 +97,12 @@
 int32_t ui_toggle_run(int32_t run_state);
 int32_t ui_run_state_after_start(int32_t lanes_started);
 int32_t ui_start_banner(int32_t lanes_failed, bool packs_missing, bool has_blackhole, bool speaker_output);
+int32_t ui_start_banner_after_start(int32_t lanes_failed, int32_t translators_failed, bool packs_missing, bool has_blackhole, bool speaker_output);
 bool ui_autosave_on_stop(int32_t lines);
 bool ui_button_enabled(int32_t button, int32_t run_state, int32_t incoming_lines, int32_t outgoing_lines, bool has_blackhole, bool busy);
 int32_t ui_audio_light(int32_t run_state, bool lane_active, int64_t ms_since_start, int64_t ms_since_buffer);
+int32_t ui_source_light(int32_t run_state, bool lane_active, int32_t tap_status, int64_t ms_since_start, int64_t ms_since_buffer, int64_t ms_since_signal);
+int32_t ui_capture_check_light(int32_t tap_status, bool frames_seen, bool signal_seen);
 int32_t ui_blackhole_light(bool found);
 int32_t ui_models_light(int32_t run_state, bool ever_started, int32_t lanes_started, int32_t lanes_failed);
 int32_t ui_latency_color(int64_t ms);
@@ -99,6 +112,7 @@ int32_t ui_wizard_next(int32_t step);
 int32_t ui_wizard_previous(int32_t step);
 int32_t ui_wizard_step_mark(int32_t step, bool mic_granted, bool speech_granted, int32_t models_ready, int32_t packs_ready, bool blackhole_found, bool test_phrase_ok);
 bool ui_wizard_show_on_launch(bool setup_completed, int32_t forced_step);
+bool ui_wizard_show_on_launch_in_mode(bool setup_completed, int32_t forced_step, bool test_mode);
 bool ui_wizard_completed_after_close(bool was_completed, bool finished);
 int32_t ui_translation_font_size(int32_t stored);
 int32_t ui_overlay_line_count(int32_t available, int32_t panel_height, int32_t font_size);
@@ -138,6 +152,16 @@ int32_t ui_start_banner(int32_t lanes_failed, bool packs_missing, bool has_black
         return UI_BAN_SPEAKERS;
     }
     return UI_BAN_NONE;
+}
+
+int32_t ui_start_banner_after_start(int32_t lanes_failed, int32_t translators_failed, bool packs_missing, bool has_blackhole, bool speaker_output) {
+    if (((lanes_failed == 0) && (translators_failed > 0))) {
+        if (packs_missing) {
+            return UI_BAN_NO_PACKS;
+        }
+        return UI_BAN_NO_TRANSLATOR;
+    }
+    return ui_start_banner(lanes_failed, packs_missing, has_blackhole, speaker_output);
 }
 
 bool ui_autosave_on_stop(int32_t lines) {
@@ -193,6 +217,33 @@ int32_t ui_audio_light(int32_t run_state, bool lane_active, int64_t ms_since_sta
         return UI_LIGHT_BUSY;
     }
     return UI_LIGHT_BAD;
+}
+
+int32_t ui_source_light(int32_t run_state, bool lane_active, int32_t tap_status, int64_t ms_since_start, int64_t ms_since_buffer, int64_t ms_since_signal) {
+    int32_t base = ui_audio_light(run_state, lane_active, ms_since_start, ms_since_buffer);
+    if (((run_state != UI_RUN_RUNNING) || (lane_active == false))) {
+        return base;
+    }
+    if ((tap_status == UI_TAP_FAILED)) {
+        return UI_LIGHT_BAD;
+    }
+    if ((tap_status == UI_TAP_WAITING)) {
+        return UI_LIGHT_BUSY;
+    }
+    if (((((base == UI_LIGHT_OK) && (tap_status == UI_TAP_CAPTURING)) && (ms_since_signal < 0)) && (ms_since_start >= UI_SILENCE_SUSPECT_MS))) {
+        return UI_LIGHT_WARN;
+    }
+    return base;
+}
+
+int32_t ui_capture_check_light(int32_t tap_status, bool frames_seen, bool signal_seen) {
+    if (((tap_status == UI_TAP_FAILED) || (frames_seen == false))) {
+        return UI_LIGHT_BAD;
+    }
+    if (signal_seen) {
+        return UI_LIGHT_OK;
+    }
+    return UI_LIGHT_WARN;
 }
 
 int32_t ui_blackhole_light(bool found) {
@@ -300,6 +351,10 @@ bool ui_wizard_show_on_launch(bool setup_completed, int32_t forced_step) {
     return ((forced_step >= 0) || (setup_completed == false));
 }
 
+bool ui_wizard_show_on_launch_in_mode(bool setup_completed, int32_t forced_step, bool test_mode) {
+    return ui_wizard_show_on_launch((setup_completed || test_mode), forced_step);
+}
+
 bool ui_wizard_completed_after_close(bool was_completed, bool finished) {
     return (was_completed || finished);
 }
@@ -349,6 +404,11 @@ void test_ui_run_and_buttons(void) {
     assert((ui_start_banner(0, false, false, true) == UI_BAN_NO_BLACKHOLE));
     assert((ui_start_banner(0, false, true, true) == UI_BAN_SPEAKERS));
     assert((ui_start_banner(0, true, true, false) == UI_BAN_NONE));
+    assert((ui_start_banner_after_start(0, 1, true, true, false) == UI_BAN_NO_PACKS));
+    assert((ui_start_banner_after_start(0, 2, false, false, true) == UI_BAN_NO_TRANSLATOR));
+    assert((ui_start_banner_after_start(1, 1, true, true, false) == UI_BAN_FAILED_PACKS));
+    assert((ui_start_banner_after_start(0, 0, false, false, true) == UI_BAN_NO_BLACKHOLE));
+    assert((ui_start_banner_after_start(0, 0, false, true, false) == UI_BAN_NONE));
     assert((ui_autosave_on_stop(1) == true));
     assert((ui_autosave_on_stop(0) == false));
     assert((ui_button_enabled(UI_BTN_START_STOP, UI_RUN_IDLE, 0, 0, true, false) == true));
@@ -401,6 +461,18 @@ void test_ui_lights_and_choices(void) {
     assert((ui_audio_light(UI_RUN_RUNNING, true, 9000, 1999) == UI_LIGHT_OK));
     assert((ui_audio_light(UI_RUN_RUNNING, true, 3999, -1) == UI_LIGHT_BUSY));
     assert((ui_audio_light(UI_RUN_RUNNING, true, 4000, 2000) == UI_LIGHT_BAD));
+    assert((ui_source_light(UI_RUN_IDLE, true, UI_TAP_FAILED, 0, 0, 0) == UI_LIGHT_UNKNOWN));
+    assert((ui_source_light(UI_RUN_RUNNING, true, UI_TAP_FAILED, 9000, 10, 10) == UI_LIGHT_BAD));
+    assert((ui_source_light(UI_RUN_RUNNING, true, UI_TAP_WAITING, 9000, 10, 10) == UI_LIGHT_BUSY));
+    assert((ui_source_light(UI_RUN_RUNNING, true, UI_TAP_CAPTURING, 8000, 10, -1) == UI_LIGHT_WARN));
+    assert((ui_source_light(UI_RUN_RUNNING, true, UI_TAP_CAPTURING, 7999, 10, -1) == UI_LIGHT_OK));
+    assert((ui_source_light(UI_RUN_RUNNING, true, UI_TAP_CAPTURING, 9000, 10, 10) == UI_LIGHT_OK));
+    assert((ui_source_light(UI_RUN_RUNNING, true, UI_TAP_NONE, 9000, 10, -1) == UI_LIGHT_OK));
+    assert((ui_source_light(UI_RUN_RUNNING, false, UI_TAP_FAILED, 9000, 10, -1) == UI_LIGHT_BAD));
+    assert((ui_capture_check_light(UI_TAP_FAILED, true, true) == UI_LIGHT_BAD));
+    assert((ui_capture_check_light(UI_TAP_CAPTURING, false, false) == UI_LIGHT_BAD));
+    assert((ui_capture_check_light(UI_TAP_CAPTURING, true, false) == UI_LIGHT_WARN));
+    assert((ui_capture_check_light(UI_TAP_CAPTURING, true, true) == UI_LIGHT_OK));
     assert((ui_blackhole_light(true) == UI_LIGHT_OK));
     assert((ui_blackhole_light(false) == UI_LIGHT_BAD));
     assert((ui_models_light(UI_RUN_IDLE, false, 0, 0) == UI_LIGHT_UNKNOWN));
@@ -457,6 +529,9 @@ void test_ui_wizard_and_overlay(void) {
     assert((ui_wizard_show_on_launch(false, -1) == true));
     assert((ui_wizard_show_on_launch(true, -1) == false));
     assert((ui_wizard_show_on_launch(true, 3) == true));
+    assert((ui_wizard_show_on_launch_in_mode(false, -1, true) == false));
+    assert((ui_wizard_show_on_launch_in_mode(false, -1, false) == true));
+    assert((ui_wizard_show_on_launch_in_mode(true, 2, true) == true));
     assert((ui_wizard_completed_after_close(false, true) == true));
     assert((ui_wizard_completed_after_close(false, false) == false));
     assert((ui_wizard_completed_after_close(true, false) == true));

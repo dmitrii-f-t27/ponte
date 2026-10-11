@@ -30,6 +30,10 @@
 #define VO_SYNTHESIS_TIMEOUT_MAX_MS 60000
 #define VO_SYNTHESIS_MS_PER_BYTE 50
 #define VO_SYNTHESIS_END_GRACE_MS 200
+#define VO_DEFAULT_UTTERANCE_RATE_MILLI 500
+#define VO_UTTERANCE_RATE_MILLI_PER_10_PERCENT 17
+#define VO_PERCENT_NORMAL 100
+#define VO_RATE_MILLI_MAX 1000
 #define VO_ROW_ELOQUENCE 0
 #define VO_ROW_LEGACY 1
 #define VO_ROW_COUNT 2
@@ -55,6 +59,7 @@ bool vo_contains_row(uint8_t id[static 1024], int64_t len, int64_t row);
 bool vo_is_novelty_voice(uint8_t id[static 1024], int64_t len);
 int64_t vo_voice_rank_key(int64_t quality_code, bool is_novelty, int64_t preferred_index);
 int64_t vo_synthesis_timeout_ms(int64_t text_bytes);
+int64_t vo_utterance_rate_milli(int64_t rate_percent, int64_t base_rate_milli);
 int64_t vo_fixture(int64_t index, uint8_t out[static 1024], int64_t at);
 
 /* -------------------------------------------------------
@@ -136,6 +141,17 @@ int64_t vo_synthesis_timeout_ms(int64_t text_bytes) {
     return t;
 }
 
+int64_t vo_utterance_rate_milli(int64_t rate_percent, int64_t base_rate_milli) {
+    int64_t rate = (base_rate_milli + (((rate_percent - VO_PERCENT_NORMAL) * VO_UTTERANCE_RATE_MILLI_PER_10_PERCENT) / 10));
+    if ((rate < 0)) {
+        rate = 0;
+    }
+    if ((rate > VO_RATE_MILLI_MAX)) {
+        rate = VO_RATE_MILLI_MAX;
+    }
+    return rate;
+}
+
 int64_t vo_fixture(int64_t index, uint8_t out[static 1024], int64_t at) {
     if ((((index < 0) || (index >= VO_FX_COUNT)) || (at < 0))) {
         return 0;
@@ -193,6 +209,14 @@ void test_vo_novelty_and_synthesis(void) {
     assert((vo_synthesis_timeout_ms(100) == 10000));
     assert((vo_synthesis_timeout_ms(10000) == 60000));
     assert((vo_synthesis_timeout_ms(-1000) == 5000));
+    assert((vo_utterance_rate_milli(100, 500) == 500));
+    assert((vo_utterance_rate_milli(110, 500) == 517));
+    assert((vo_utterance_rate_milli(120, 500) == 534));
+    assert((vo_utterance_rate_milli(130, 500) == 551));
+    assert((vo_utterance_rate_milli(95, 500) == 492));
+    assert((vo_utterance_rate_milli(91, 500) == 485));
+    assert((vo_utterance_rate_milli(-1000, 500) == 0));
+    assert((vo_utterance_rate_milli(10000, 500) == 1000));
 }
 
 

@@ -26,6 +26,8 @@
 #define UI_BAN_FAILED_OTHER 2
 #define UI_BAN_NO_BLACKHOLE 3
 #define UI_BAN_SPEAKERS 4
+#define UI_BAN_NO_PACKS 5
+#define UI_BAN_NO_TRANSLATOR 6
 #define UI_BTN_START_STOP 1
 #define UI_BTN_SOURCE 2
 #define UI_BTN_REPLAY_INCOMING 3
@@ -41,8 +43,16 @@
 #define UI_LIGHT_OK 1
 #define UI_LIGHT_BAD 2
 #define UI_LIGHT_BUSY 3
+#define UI_LIGHT_WARN 4
 #define UI_AUDIO_FRESH_MS 2000
 #define UI_AUDIO_WARMUP_MS 4000
+#define UI_TAP_NONE 0
+#define UI_TAP_WAITING 1
+#define UI_TAP_CAPTURING 2
+#define UI_TAP_FAILED 3
+#define UI_TAP_IDLE 4
+#define UI_SILENCE_SUSPECT_MS 8000
+#define UI_CAPTURE_CHECK_MS 3000
 #define UI_LAT_NONE 0
 #define UI_LAT_GOOD 1
 #define UI_LAT_SLOW 2
@@ -81,9 +91,12 @@
 int32_t ui_toggle_run(int32_t run_state);
 int32_t ui_run_state_after_start(int32_t lanes_started);
 int32_t ui_start_banner(int32_t lanes_failed, bool packs_missing, bool has_blackhole, bool speaker_output);
+int32_t ui_start_banner_after_start(int32_t lanes_failed, int32_t translators_failed, bool packs_missing, bool has_blackhole, bool speaker_output);
 bool ui_autosave_on_stop(int32_t lines);
 bool ui_button_enabled(int32_t button, int32_t run_state, int32_t incoming_lines, int32_t outgoing_lines, bool has_blackhole, bool busy);
 int32_t ui_audio_light(int32_t run_state, bool lane_active, int64_t ms_since_start, int64_t ms_since_buffer);
+int32_t ui_source_light(int32_t run_state, bool lane_active, int32_t tap_status, int64_t ms_since_start, int64_t ms_since_buffer, int64_t ms_since_signal);
+int32_t ui_capture_check_light(int32_t tap_status, bool frames_seen, bool signal_seen);
 int32_t ui_blackhole_light(bool found);
 int32_t ui_models_light(int32_t run_state, bool ever_started, int32_t lanes_started, int32_t lanes_failed);
 int32_t ui_latency_color(int64_t ms);
@@ -93,6 +106,7 @@ int32_t ui_wizard_next(int32_t step);
 int32_t ui_wizard_previous(int32_t step);
 int32_t ui_wizard_step_mark(int32_t step, bool mic_granted, bool speech_granted, int32_t models_ready, int32_t packs_ready, bool blackhole_found, bool test_phrase_ok);
 bool ui_wizard_show_on_launch(bool setup_completed, int32_t forced_step);
+bool ui_wizard_show_on_launch_in_mode(bool setup_completed, int32_t forced_step, bool test_mode);
 bool ui_wizard_completed_after_close(bool was_completed, bool finished);
 int32_t ui_translation_font_size(int32_t stored);
 int32_t ui_overlay_line_count(int32_t available, int32_t panel_height, int32_t font_size);
