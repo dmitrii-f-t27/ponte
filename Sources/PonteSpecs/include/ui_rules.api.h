@@ -85,6 +85,73 @@
 #define UI_LINE_HEIGHT_NUMERATOR 13
 #define UI_LINE_HEIGHT_DENOMINATOR 10
 #define UI_LINE_HEIGHT_EXTRA 8
+#define UI_ROW_SOURCE_SYSTEM 0
+#define UI_ROW_SOURCE_APP_PREFIX 1
+#define UI_ROW_YES 2
+#define UI_ROW_TRUE 3
+#define UI_ROW_ONE 4
+#define UI_ROW_COUNT 5
+static const uint8_t UI_ROW_TEXT[18] = { 115, 121, 115, 116, 101, 109, 97, 112, 112, 58, 121, 101, 115, 116, 114, 117, 101, 49 };
+static const uint32_t UI_ROW_OFFSETS[5] = { 0, 6, 10, 13, 17 };
+static const uint32_t UI_ROW_LENGTHS[5] = { 6, 4, 3, 4, 1 };
+#define UI_DEFAULT_TRANSLATOR 0
+#define UI_DEFAULT_SPEAK_RUSSIAN 0
+#define UI_DEFAULT_OVERLAY_VISIBLE 0
+#define UI_POLL_INTERVAL_MS 500
+#define UI_CATALOG_EVERY_TICKS 6
+#define UI_CATALOG_TICK 5
+#define UI_COPIED_FEEDBACK_MS 2000
+#define UI_SB_NONE 0
+#define UI_SB_MARK 1
+#define UI_SB_SHOW 2
+#define UI_HELP_IDLE 0
+#define UI_HELP_WAITING 1
+#define UI_HELP_FAILED 2
+#define UI_HELP_FILE 3
+#define UI_HELP_SILENCE 4
+#define UI_HELP_FLOWING 5
+#define UI_TITLE_SYSTEM 0
+#define UI_TITLE_RUNNING 1
+#define UI_TITLE_LABEL 2
+#define UI_TITLE_ID 3
+#define UI_BK_NONE 0
+#define UI_BK_ERROR 1
+#define UI_BK_WARNING 2
+#define UI_BK_INFO 3
+#define UI_TEB_NONE 0
+#define UI_TEB_PACKS 1
+#define UI_TEB_WARNING 2
+#define UI_DEV_SAVED 0
+#define UI_DEV_AUTO 1
+#define UI_OUT_NONE 0
+#define UI_OUT_PAUSED 1
+#define UI_OUT_SPEAKING 2
+#define UI_OUT_NO_BLACKHOLE 3
+#define UI_COL_FOUND 0
+#define UI_COL_SEARCH 1
+#define UI_TN_NONE 0
+#define UI_TN_NO_KEY 1
+#define UI_TN_NO_KEY_FALLBACK 2
+#define UI_PERM_UNKNOWN 0
+#define UI_PERM_GRANTED 1
+#define UI_PERM_DENIED 2
+#define UI_PERM_NOT_ASKED 3
+#define UI_RAW_AUTHORIZED 3
+#define UI_RAW_NOT_DETERMINED 0
+#define UI_RAW_DENIED_A 1
+#define UI_RAW_DENIED_B 2
+#define UI_PA_NONE 0
+#define UI_PA_REQUEST 1
+#define UI_PA_OPEN_SETTINGS 2
+#define UI_AVAIL_INSTALLED 0
+#define UI_AVAIL_SUPPORTED 1
+#define UI_AVAIL_UNSUPPORTED 2
+#define UI_AVAIL_UNKNOWN 3
+#define UI_LINE_TRANSLATED 0
+#define UI_LINE_FAILED 1
+#define UI_LINE_PENDING 2
+#define UI_WORD_MAX 64
+#define UI_KEY_MAX 4096
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -110,5 +177,37 @@ bool ui_wizard_show_on_launch_in_mode(bool setup_completed, int32_t forced_step,
 bool ui_wizard_completed_after_close(bool was_completed, bool finished);
 int32_t ui_translation_font_size(int32_t stored);
 int32_t ui_overlay_line_count(int32_t available, int32_t panel_height, int32_t font_size);
+int32_t ui_models_light_all(int32_t run_state, bool ever_started, int32_t lanes_started, int32_t lanes_failed, int32_t translators_failed);
+bool ui_shows_level(int32_t light);
+int32_t ui_silence_banner(int32_t source_light, bool already_warned, bool error_shown);
+bool ui_poll_refreshes_catalogs(int64_t tick);
+int32_t ui_source_help(int32_t run_state, int32_t tap_status, int32_t source_light);
+int32_t ui_source_title(bool is_system, bool has_running_name, bool has_label);
+bool ui_has_call_output(bool has_blackhole, bool has_sink);
+int32_t ui_banner_kind(int32_t banner);
+int32_t ui_banner_step(int32_t banner);
+int32_t ui_translation_error_banner(bool missing_packs, bool packs_banner_shown, bool same_text_shown);
+int32_t ui_device_choice(bool has_setting, bool found);
+bool ui_probes_claude(int32_t preferred);
+bool ui_transcript_has_end(int32_t run_state);
+bool ui_test_phrase_possible(bool into_call, bool has_blackhole);
+int32_t ui_outgoing_status(bool paused, bool speaking, bool running, bool has_blackhole);
+int32_t ui_call_output_label(bool has_blackhole, bool has_setting);
+int32_t ui_translator_note(int32_t preferred, bool claude_available);
+int32_t ui_permission_state(int64_t raw);
+int32_t ui_permission_action(int32_t state);
+int32_t ui_permission_light(int32_t state);
+bool ui_capture_needs_settings(int32_t light);
+int32_t ui_accessibility_light(bool granted);
+int32_t ui_pack_light(int32_t status);
+bool ui_pack_refreshable(int32_t light);
+bool ui_pack_download_enabled(int32_t light);
+int32_t ui_line_state(bool has_translation, bool has_error);
+bool ui_is_test_mode(bool has_incoming_file, bool has_outgoing_file, bool has_sink, bool has_transcript_dir);
+bool ui_equals_row(uint8_t text[static 64], int64_t len, int64_t row);
+bool ui_is_yes(uint8_t text[static 64], int64_t len);
+int64_t ui_source_key_app_prefix(uint8_t text[static 4096], int64_t len);
+int64_t ui_row_bytes(int64_t row, uint8_t out[static 64]);
+bool ui_quit_waits(int32_t run_state);
 /* Function bodies: see the full header. */
 #endif

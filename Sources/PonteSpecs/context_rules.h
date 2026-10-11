@@ -51,6 +51,33 @@ static const uint8_t CX_ANTHROPIC_VERSION[10] = { 50, 48, 50, 51, 45, 48, 54, 45
 #define CX_CLAUDE_EFFORT_CODE 0
 #define CX_CLAUDE_REQUEST_TIMEOUT_MS 20000
 #define CX_TEXT_OUT_MAX 64
+#define CX_ROW_EFFORT_LOW 0
+#define CX_ROW_EFFORT_MEDIUM 1
+#define CX_ROW_EFFORT_HIGH 2
+#define CX_ROW_COUNT 3
+static const uint8_t CX_ROW_TEXT[13] = { 108, 111, 119, 109, 101, 100, 105, 117, 109, 104, 105, 103, 104 };
+static const uint32_t CX_ROW_OFFSETS[3] = { 0, 3, 9 };
+static const uint32_t CX_ROW_LENGTHS[3] = { 3, 6, 4 };
+#define CX_HTTP_OK_FIRST 200
+#define CX_HTTP_OK_END 300
+#define CX_EFFORT_LOWEST 0
+#define CX_EFFORT_HIGHEST 2
+#define CX_KIND_OTHER 0
+#define CX_KIND_TIMEOUT 1
+#define CX_KIND_ASSETS_MISSING 2
+#define CX_KIND_UNSUPPORTED 3
+#define CX_KIND_CLOUD_REQUEST 4
+#define CX_KIND_KEY_MISSING 5
+#define CX_KIND_REFUSED 6
+#define CX_KIND_EMPTY 7
+#define CX_KIND_URL 8
+#define CX_AVAIL_INSTALLED 0
+#define CX_AVAIL_SUPPORTED 1
+#define CX_AVAIL_UNSUPPORTED 2
+#define CX_AVAIL_UNKNOWN 3
+#define CX_PACK_READY 0
+#define CX_PACK_MISSING 1
+#define CX_PACK_UNAVAILABLE 2
 
 /* -------------------------------------------------------
    Function prototypes
@@ -64,6 +91,15 @@ int64_t cx_error_code(int64_t http_status);
 int64_t cx_retry_action(int64_t error_code, int64_t attempt, int64_t fallback);
 uint32_t cx_claude_model_id(uint8_t out[static 64]);
 uint32_t cx_anthropic_version(uint8_t out[static 64]);
+uint32_t cx_effort_name(int64_t code, uint8_t out[static 64]);
+bool cx_http_success(int64_t status);
+int64_t cx_preferred_engine(bool prefer_claude);
+bool cx_rethrows_claude_error(bool apple_failed, bool has_apple);
+bool cx_empty_translation(bool result_empty, bool input_empty);
+bool cx_forgets_apple_ready(int64_t engine, int64_t error_code);
+int64_t cx_error_code_for_kind(int64_t kind, int64_t http_status);
+bool cx_has_timeout(int64_t ms);
+int64_t cx_pack_result(int64_t status);
 
 /* -------------------------------------------------------
    Function implementations
@@ -165,6 +201,90 @@ uint32_t cx_anthropic_version(uint8_t out[static 64]) {
         i = (i + 1);
     }
     return CX_ANTHROPIC_VERSION_LEN;
+}
+
+uint32_t cx_effort_name(int64_t code, uint8_t out[static 64]) {
+    int64_t c = code;
+    if ((c < CX_EFFORT_LOWEST)) {
+        c = CX_EFFORT_LOWEST;
+    }
+    if ((c > CX_EFFORT_HIGHEST)) {
+        c = CX_EFFORT_HIGHEST;
+    }
+    int64_t row = (CX_ROW_EFFORT_LOW + c);
+    int64_t off = CX_ROW_OFFSETS[row];
+    uint32_t n = CX_ROW_LENGTHS[row];
+    uint32_t i = 0;
+    while ((i < n)) {
+        out[i] = CX_ROW_TEXT[(off + i)];
+        i = (i + 1);
+    }
+    return n;
+}
+
+bool cx_http_success(int64_t status) {
+    return ((status >= CX_HTTP_OK_FIRST) && (status < CX_HTTP_OK_END));
+}
+
+int64_t cx_preferred_engine(bool prefer_claude) {
+    if (prefer_claude) {
+        return CX_ENGINE_CLAUDE;
+    }
+    return CX_ENGINE_APPLE;
+}
+
+bool cx_rethrows_claude_error(bool apple_failed, bool has_apple) {
+    return ((apple_failed == false) && (has_apple == false));
+}
+
+bool cx_empty_translation(bool result_empty, bool input_empty) {
+    return (result_empty && (input_empty == false));
+}
+
+bool cx_forgets_apple_ready(int64_t engine, int64_t error_code) {
+    return ((engine == CX_ENGINE_APPLE) && (error_code == CX_ERROR_ASSETS_MISSING));
+}
+
+int64_t cx_error_code_for_kind(int64_t kind, int64_t http_status) {
+    if ((kind == CX_KIND_TIMEOUT)) {
+        return CX_ERROR_TIMEOUT;
+    }
+    if ((kind == CX_KIND_ASSETS_MISSING)) {
+        return CX_ERROR_ASSETS_MISSING;
+    }
+    if ((kind == CX_KIND_UNSUPPORTED)) {
+        return CX_ERROR_UNSUPPORTED;
+    }
+    if ((kind == CX_KIND_CLOUD_REQUEST)) {
+        return cx_error_code(http_status);
+    }
+    if ((kind == CX_KIND_KEY_MISSING)) {
+        return CX_ERROR_REJECTED;
+    }
+    if ((kind == CX_KIND_REFUSED)) {
+        return CX_ERROR_REFUSED;
+    }
+    if ((kind == CX_KIND_EMPTY)) {
+        return CX_ERROR_EMPTY;
+    }
+    if ((kind == CX_KIND_URL)) {
+        return CX_ERROR_NETWORK;
+    }
+    return CX_ERROR_OTHER;
+}
+
+bool cx_has_timeout(int64_t ms) {
+    return (ms > 0);
+}
+
+int64_t cx_pack_result(int64_t status) {
+    if ((status == CX_AVAIL_INSTALLED)) {
+        return CX_PACK_READY;
+    }
+    if ((status == CX_AVAIL_SUPPORTED)) {
+        return CX_PACK_MISSING;
+    }
+    return CX_PACK_UNAVAILABLE;
 }
 
 /* -------------------------------------------------------
@@ -287,6 +407,45 @@ void test_cx_claude_request(void) {
     assert((CX_CLAUDE_REQUEST_TIMEOUT_MS == 20000));
 }
 
+void test_cx_moved_rules(void) {
+    uint8_t out[64] = { [0 ... (64) - 1] = 0 };
+    assert((cx_effort_name(0, out) == 3));
+    assert((out[0] == 108));
+    assert((cx_effort_name(1, out) == 6));
+    assert((cx_effort_name(2, out) == 4));
+    assert((cx_effort_name(-5, out) == 3));
+    assert((cx_effort_name(9, out) == 4));
+    assert((out[0] == 104));
+    assert((cx_http_success(200) == true));
+    assert((cx_http_success(299) == true));
+    assert((cx_http_success(300) == false));
+    assert((cx_http_success(199) == false));
+    assert((cx_preferred_engine(true) == CX_ENGINE_CLAUDE));
+    assert((cx_preferred_engine(false) == CX_ENGINE_APPLE));
+    assert((cx_rethrows_claude_error(false, false) == true));
+    assert((cx_rethrows_claude_error(false, true) == false));
+    assert((cx_rethrows_claude_error(true, false) == false));
+    assert((cx_empty_translation(true, false) == true));
+    assert((cx_empty_translation(true, true) == false));
+    assert((cx_empty_translation(false, false) == false));
+    assert((cx_forgets_apple_ready(CX_ENGINE_APPLE, CX_ERROR_ASSETS_MISSING) == true));
+    assert((cx_forgets_apple_ready(CX_ENGINE_CLAUDE, CX_ERROR_ASSETS_MISSING) == false));
+    assert((cx_forgets_apple_ready(CX_ENGINE_APPLE, CX_ERROR_TIMEOUT) == false));
+    assert((cx_error_code_for_kind(CX_KIND_TIMEOUT, 0) == CX_ERROR_TIMEOUT));
+    assert((cx_error_code_for_kind(CX_KIND_CLOUD_REQUEST, 529) == CX_ERROR_OVERLOADED));
+    assert((cx_error_code_for_kind(CX_KIND_CLOUD_REQUEST, 0) == CX_ERROR_NETWORK));
+    assert((cx_error_code_for_kind(CX_KIND_KEY_MISSING, 0) == CX_ERROR_REJECTED));
+    assert((cx_error_code_for_kind(CX_KIND_URL, 0) == CX_ERROR_NETWORK));
+    assert((cx_error_code_for_kind(CX_KIND_OTHER, 0) == CX_ERROR_OTHER));
+    assert((cx_error_code_for_kind(99, 0) == CX_ERROR_OTHER));
+    assert((cx_has_timeout(1) == true));
+    assert((cx_has_timeout(0) == false));
+    assert((cx_pack_result(CX_AVAIL_INSTALLED) == CX_PACK_READY));
+    assert((cx_pack_result(CX_AVAIL_SUPPORTED) == CX_PACK_MISSING));
+    assert((cx_pack_result(CX_AVAIL_UNSUPPORTED) == CX_PACK_UNAVAILABLE));
+    assert((cx_pack_result(CX_AVAIL_UNKNOWN) == CX_PACK_UNAVAILABLE));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -298,7 +457,8 @@ int main(void) {
     test_cx_context_rules();
     test_cx_engine_rules();
     test_cx_claude_request();
-    printf("All %d tests passed.\n", 3);
+    test_cx_moved_rules();
+    printf("All %d tests passed.\n", 4);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

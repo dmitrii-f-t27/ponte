@@ -26,6 +26,7 @@ DEVICE_WORDS = [
     ("HEADPHONE", "headphone"),
     ("TWO_CH", "2ch"),
     ("APP_SUFFIX", ".app"),
+    ("PID_PREFIX", "pid."),                  # fallback owner ID of a process without a bundle ID
 ]
 # knownCallAppBundleIDs / knownCallAppLabels (AudioRules), sorted by bundle ID.
 CALL_APPS = [
@@ -98,6 +99,18 @@ VOICE_WORDS = [
     ("ELOQUENCE", ".eloquence."),
     ("LEGACY", ".speech.synthesis.voice."),
 ]
+# VoiceRanking.preferredNames: the preferred voice names per language, best first.
+PREFERRED_VOICES_PT = ["Luciana", "Felipe", "Fernanda"]
+PREFERRED_VOICES_RU = ["Milena", "Yuri", "Katya"]
+
+# --- context_rules.t27 ---------------------------------------------------------------------------------
+# ClaudeRequestBuilder.effort: the effort names by code.
+CONTEXT_WORDS = [("EFFORT_LOW", "low"), ("EFFORT_MEDIUM", "medium"), ("EFFORT_HIGH", "high")]
+
+# --- ui_rules.t27 --------------------------------------------------------------------------------------
+# Source keys stored in the settings ("system" | "app:<bundleID>") and the words a launch flag accepts as yes.
+UI_WORDS = [("SOURCE_SYSTEM", "system"), ("SOURCE_APP_PREFIX", "app:"), ("YES", "yes"), ("TRUE", "true"), ("ONE", "1")]
+
 VOICE_FIXTURES = [
     ("EDDY", "com.apple.eloquence.pt-BR.Eddy"), ("BELLS", "com.apple.speech.synthesis.voice.Bells"),
     ("LUCIANA", "com.apple.voice.compact.pt-BR.Luciana"), ("EMPTY", ""),
@@ -212,10 +225,21 @@ def main():
     device += table("DV_FX", "Texts for the tests", DEVICE_FIXTURES, [])
     write_block("device_rules.t27", device)
     write_block("segment_rules.t27", table("SG_FX", "Texts for the tests", SEGMENT_FIXTURES, []))
-    voice = table("VO_ROW", "Identifier parts of novelty voices", VOICE_WORDS, [])
+    voice_rows = list(VOICE_WORDS)
+    first_pt = len(voice_rows)
+    voice_rows += [(f"PREFERRED_PT_{i}", n) for i, n in enumerate(PREFERRED_VOICES_PT)]
+    first_ru = len(voice_rows)
+    voice_rows += [(f"PREFERRED_RU_{i}", n) for i, n in enumerate(PREFERRED_VOICES_RU)]
+    voice_constants = [f"pub const VO_ROW_FIRST_PREFERRED_PT : i64 = {first_pt};",
+                       f"pub const VO_ROW_FIRST_PREFERRED_RU : i64 = {first_ru};",
+                       f"pub const VO_PREFERRED_PT_COUNT : i64 = {len(PREFERRED_VOICES_PT)};",
+                       f"pub const VO_PREFERRED_RU_COUNT : i64 = {len(PREFERRED_VOICES_RU)};"]
+    voice = table("VO_ROW", "Identifier parts of novelty voices, then the preferred voice names", voice_rows, voice_constants)
     voice += table("VO_FX", "Texts for the tests", VOICE_FIXTURES, [])
     write_block("voice_rules.t27", voice)
     write_block("transcript_rules.t27", table("TR_FX", "Texts for the tests", TRANSCRIPT_FIXTURES, []))
+    write_block("context_rules.t27", table("CX_ROW", "Claude effort names by code", CONTEXT_WORDS, []))
+    write_block("ui_rules.t27", table("UI_ROW", "Source keys and yes words", UI_WORDS, []))
     print(f"tables: {len(rows)} device rows, {len(DEVICE_FIXTURES) + len(SEGMENT_FIXTURES) + len(VOICE_FIXTURES) + len(TRANSCRIPT_FIXTURES)} fixtures")
 
 

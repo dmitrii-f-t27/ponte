@@ -230,6 +230,22 @@ pub fn tr_markdown_escape(input: [4096]u8, len: i64, out: [4096]u8) -> i64 {
     return o;
 }
 
+; --- Rules moved here from TranscriptExporter (2026-10-11) ---------------------------------------------------------
+; The first attempt at a file name (no "-N"); each existing file moves to the next attempt.
+pub const TR_FIRST_ATTEMPT : i32 = 1;
+
+; escaped(): a character of `char_bytes` bytes still fits the escape input after `bytes` bytes.
+pub fn tr_fits_escape_input(bytes: i64, char_bytes: i64) -> bool {
+    return bytes + char_bytes <= TR_MD_ESCAPE_MAX_INPUT;
+}
+
+; The transcript lists lines by time; lines of the same time keep their order.
+pub fn tr_line_before(at_a: f64, index_a: i64, at_b: f64, index_b: i64) -> bool {
+    if (at_a < at_b) { return true; }
+    if (at_a == at_b) { return index_a < index_b; }
+    return false;
+}
+
 ; --- Texts for the tests ------------------------------------------------------------------------------------------
 ; Copies text fixture `index` to out and returns its length (0 for an unknown index).
 pub fn tr_fixture(index: i64, out: [4096]u8) -> i64 {
@@ -337,4 +353,16 @@ test tr_escape_rules {
         b = b + 1;
     }
     assert bad == 0;
+}
+
+test tr_moved_rules {
+    assert tr_fits_escape_input(2046, 2) == true;
+    assert tr_fits_escape_input(2047, 2) == false;
+    assert tr_fits_escape_input(0, 0) == true;
+    assert tr_line_before(1.0, 5, 2.0, 0) == true;
+    assert tr_line_before(2.0, 0, 1.0, 5) == false;
+    assert tr_line_before(1.0, 0, 1.0, 1) == true;
+    assert tr_line_before(1.0, 1, 1.0, 0) == false;
+    assert tr_line_before(1.0, 1, 1.0, 1) == false;
+    assert TR_FIRST_ATTEMPT == 1;
 }

@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <math.h>
 #include <assert.h>
 #define t27_assert(c, m) do { if (!(c)) { __builtin_trap(); } } while (0)
 #define assert_eq(a, b) do { if ((a) != (b)) { __builtin_trap(); } } while (0)
@@ -76,6 +77,38 @@
 #define SG_EN_DASH 147
 #define SG_CONTINUATION_MASK 192
 #define SG_CONTINUATION 128
+#define SG_LANG_PT_BR 0
+#define SG_LANG_RU 1
+#define SG_MODULE_SPEECH 0
+#define SG_MODULE_DICTATION 1
+#define SG_FAST_RESULTS_DEFAULT 1
+#define SG_OWN_CUTS_DEFAULT 1
+#define SG_MS_PER_SECOND 1000.0
+#define SG_LEVEL_SCALE 100000.0
+#define SG_NO_CUT_MS 9223372036854775807
+#define SG_CONTENT_VOICE_MARGIN_SECONDS 0.05
+#define SG_ARRIVALS_MAX 2400
+#define SG_ARRIVALS_KEEP_SECONDS 120.0
+#define SG_ARRIVAL_TOLERANCE_SECONDS 0.0005
+#define SG_TIMINGS_KEPT 200
+#define SG_VOICE_SEGMENTS_KEPT 256
+#define SG_ACTIVITY_KEEP 0
+#define SG_ACTIVITY_SILENCE_STARTS 1
+#define SG_ACTIVITY_VOICE_STARTS 2
+#define SG_ACTIVITY_SILENCE_ENDS 3
+#define SG_ACTIVITY_SILENCE_ENDS_VOICE_STARTS 4
+#define SG_ACTIVITY_SEGMENT_CLOSES 5
+#define SG_EVENT_NONE 0
+#define SG_EVENT_FINAL 1
+#define SG_EVENT_DISCARD 2
+#define SG_CONVERSION_SLACK_FRAMES 256
+#define SG_FLUSH_FRAMES 4096
+#define SG_INPUT_HAVE_DATA 0
+#define SG_INPUT_NO_DATA_NOW 1
+#define SG_INPUT_END_OF_STREAM 2
+#define SG_INT16_FULL_SCALE 32768.0
+#define SG_INT32_FULL_SCALE 2147483648.0
+#define SG_RMS_BLOCK 4096
 #define SG_FX_BOM_DIA 0
 #define SG_FX_OUVE 1
 #define SG_FX_DOBRYI 2
@@ -130,6 +163,44 @@ bool sg_has_speech_content(uint8_t text[static 8192], int64_t len);
 int64_t sg_phrase_action(uint8_t text[static 8192], int64_t len, int64_t voice_ms);
 bool sg_followed_by_space(uint8_t text[static 8192], int64_t n, int64_t end);
 int64_t sg_cut_byte_index(uint8_t text[static 8192], int64_t len, int64_t max_bytes, int64_t min_bytes);
+double sg_max_d(double a, double b);
+double sg_min_d(double a, double b);
+bool sg_is_finite(double x);
+int64_t sg_millis(double seconds);
+int64_t sg_level_from_rms(float rms);
+int64_t sg_meter_window_frames(double sample_rate);
+int64_t sg_stall_silence_frames(double sample_rate);
+bool sg_trims_arrivals(int64_t count);
+bool sg_keeps_arrival(double audio_end, double end);
+bool sg_arrival_covers(double audio_end, double t);
+double sg_measure_start(double phrase_start, bool has_voice, double voice_start);
+double sg_measure_pause(double now, double start, bool has_silence, double silence);
+double sg_measure_speech(double now, double start, bool has_silence, double silence);
+int64_t sg_finalize_flags(bool has_volatile_text, double last_voice_end, double phrase_start, bool finishing, bool cuts_enabled);
+int64_t sg_last_cut_ago_ms(double now, bool has_last_cut, double last_cut);
+double sg_cut_time(double now, int64_t action, int64_t pause_ms);
+bool sg_stall_cut(bool finishing, bool cuts_enabled, bool has_volatile_text, bool has_append, int64_t ms_since_append, bool has_last_cut, int64_t ms_fed_since_cut);
+bool sg_cut_in_phrase(bool has_last_cut, double last_cut, double phrase_start);
+int64_t sg_final_event(bool keep, bool partial_shown);
+bool sg_partial_event(bool keep, bool changed);
+double sg_advance_phrase_start(double phrase_start, double t);
+double sg_timing_start(bool has_tokens, double first_start, double phrase_start);
+double sg_timing_end(bool has_tokens, double last_start, double last_end, double range_end, double audio_start, double last_voice_end);
+bool sg_trims_timings(int64_t count);
+bool sg_range_measurable(double start, double end);
+bool sg_timed_word(double start, double end, int64_t word_bytes);
+int64_t sg_transcriber_kind(int64_t language);
+int64_t sg_activity_step(bool voice, bool has_silence, double silence_start, bool has_voice, double start);
+int64_t sg_segments_to_drop(int64_t count);
+double sg_open_segment_end(double voice_start, bool has_silence, double silence_start, double last_end);
+double sg_overlap_seconds(double lower, double upper, double range_lower, double range_upper);
+int64_t sg_conversion_capacity(int64_t frames, double from_rate, double to_rate);
+int64_t sg_converter_input(bool fed, bool final);
+int64_t sg_window_count(int64_t from, bool has_count, int64_t count, int64_t frame_length);
+float sg_int16_to_float(int16_t v);
+float sg_int32_to_float(int32_t v);
+float sg_sum_squares_f32(float samples[static 4096], int64_t count, float sum);
+float sg_rms_f32(float sum, int64_t count);
 int64_t sg_fixture(int64_t index, uint8_t out[static 8192], int64_t at);
 /* Function bodies: see the full header. */
 #endif

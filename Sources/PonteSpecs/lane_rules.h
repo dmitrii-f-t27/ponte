@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <math.h>
 #include <assert.h>
 #define t27_assert(c, m) do { if (!(c)) { __builtin_trap(); } } while (0)
 #define assert_eq(a, b) do { if ((a) != (b)) { __builtin_trap(); } } while (0)
@@ -99,6 +100,26 @@
 #define LN_PTT_SCOPE_NONE 0
 #define LN_PTT_SCOPE_WINDOW 1
 #define LN_PTT_SCOPE_GLOBAL 2
+#define LN_DIR_INCOMING 0
+#define LN_DIR_OUTGOING 1
+#define LN_DEFAULT_MODE 0
+#define LN_DEFAULT_PTT_KEY 0
+#define LN_STOP_SEGMENT_WAIT_MS 3000
+#define LN_STOP_TRANSLATE_WAIT_MS 8000
+#define LN_MS_PER_SECOND 1000.0
+#define LN_SEG_DROP 0
+#define LN_SEG_FORWARD 1
+#define LN_SEG_BUFFER 2
+#define LN_SEGC_NONE 0
+#define LN_SEGC_FINISH 1
+#define LN_SEGC_MARK 2
+#define LN_SOURCE_LIVE 0
+#define LN_SOURCE_FILE 1
+#define LN_OUT_SINK 0
+#define LN_OUT_DEVICE 1
+#define LN_OUT_NONE 2
+#define LN_MIC_REQUEST_FIRST 1
+#define LN_SINK_PACE_SECONDS 0.05
 
 /* -------------------------------------------------------
    Function prototypes
@@ -123,6 +144,32 @@ int64_t ln_latency_ms(int64_t end_ms, int64_t ready_ms);
 int32_t ln_context_overflow(int32_t count);
 bool ln_ptt_key_down(int32_t key, uint64_t flags);
 int32_t ln_ptt_scope(bool running, int32_t mode, bool accessibility_granted);
+int64_t ln_millis(double seconds);
+bool ln_echo_marks_time(bool was_speaking, bool now_speaking);
+bool ln_gate_running(int32_t state);
+bool ln_gate_can_start(int32_t state);
+int32_t ln_phrase_end_choice_known(bool has_timed_end, int64_t ms_since_timed_end, bool has_partial, int64_t ms_since_partial);
+int32_t ln_phrase_flags(bool empty_text, bool speak_requested, bool generation_current, bool speech_enabled, bool paused, bool has_synth, bool has_player, bool has_audio);
+bool ln_needs_speech_workers(bool has_synth, bool has_player);
+int32_t ln_backlog_after_speech(int32_t backlog, bool counted);
+int32_t ln_speech_waiting(int32_t backlog, bool counted);
+bool ln_reports_translation_error(bool cancelled);
+bool ln_play_end_reports(int32_t action, bool generation_current);
+bool ln_intake_forwards(bool has_segment, bool echo_blocks);
+int32_t ln_segment_append(bool started, bool closed);
+int32_t ln_segment_close(bool started, bool closed);
+int32_t ln_source_kind(bool has_test_file);
+bool ln_requests_mic_permission(bool mic_is_live, int64_t mic_decision);
+int32_t ln_call_output(bool has_sink, bool has_blackhole);
+int32_t ln_lane_mode(int32_t direction, int32_t outgoing_mode);
+bool ln_lane_speaks(int32_t direction, bool speak_russian);
+bool ln_lane_voice_pause(int32_t direction);
+bool ln_lane_echo_guarded(int32_t direction);
+bool ln_lane_echo_source(int32_t direction);
+bool ln_glossary_source_is_pt(int32_t direction);
+bool ln_ptt_local(int32_t scope);
+bool ln_ptt_global(int32_t scope);
+double ln_sink_pace_step(double left);
 
 /* -------------------------------------------------------
    Function implementations
@@ -348,6 +395,189 @@ int32_t ln_ptt_scope(bool running, int32_t mode, bool accessibility_granted) {
     return LN_PTT_SCOPE_WINDOW;
 }
 
+int64_t ln_millis(double seconds) {
+    return ((int64_t)(round((seconds * LN_MS_PER_SECOND))));
+}
+
+bool ln_echo_marks_time(bool was_speaking, bool now_speaking) {
+    return (was_speaking || now_speaking);
+}
+
+bool ln_gate_running(int32_t state) {
+    return ((state == LN_GATE_OPEN) || (state == LN_GATE_CLOSED));
+}
+
+bool ln_gate_can_start(int32_t state) {
+    return (state == LN_GATE_STOPPED);
+}
+
+int32_t ln_phrase_end_choice_known(bool has_timed_end, int64_t ms_since_timed_end, bool has_partial, int64_t ms_since_partial) {
+    int64_t timed = -1;
+    if (has_timed_end) {
+        timed = 0;
+        if ((ms_since_timed_end >= 0)) {
+            timed = ms_since_timed_end;
+        }
+    }
+    int64_t partial = -1;
+    if (has_partial) {
+        partial = -1;
+        if ((ms_since_partial >= -1)) {
+            partial = ms_since_partial;
+        }
+    }
+    return ln_phrase_end_choice(timed, partial);
+}
+
+int32_t ln_phrase_flags(bool empty_text, bool speak_requested, bool generation_current, bool speech_enabled, bool paused, bool has_synth, bool has_player, bool has_audio) {
+    int32_t f = 0;
+    if (empty_text) {
+        f = (f | LN_PF_EMPTY_TEXT);
+    }
+    if (speak_requested) {
+        f = (f | LN_PF_SPEAK_REQUESTED);
+    }
+    if (has_audio) {
+        f = (f | LN_PF_HAS_AUDIO);
+    }
+    if (generation_current) {
+        f = (f | LN_PF_GENERATION_CURRENT);
+    }
+    if (speech_enabled) {
+        f = (f | LN_PF_SPEECH_ENABLED);
+    }
+    if (paused) {
+        f = (f | LN_PF_PAUSED);
+    }
+    if (has_synth) {
+        f = (f | LN_PF_HAS_SYNTH);
+    }
+    if (has_player) {
+        f = (f | LN_PF_HAS_PLAYER);
+    }
+    return f;
+}
+
+bool ln_needs_speech_workers(bool has_synth, bool has_player) {
+    return (has_synth || has_player);
+}
+
+int32_t ln_backlog_after_speech(int32_t backlog, bool counted) {
+    if (counted) {
+        int32_t left = (backlog - 1);
+        if ((left >= 0)) {
+            return left;
+        }
+        return 0;
+    }
+    return backlog;
+}
+
+int32_t ln_speech_waiting(int32_t backlog, bool counted) {
+    if (counted) {
+        return (backlog - 1);
+    }
+    return backlog;
+}
+
+bool ln_reports_translation_error(bool cancelled) {
+    return (cancelled == false);
+}
+
+bool ln_play_end_reports(int32_t action, bool generation_current) {
+    return ((action == LN_PACT_FINISH) && generation_current);
+}
+
+bool ln_intake_forwards(bool has_segment, bool echo_blocks) {
+    return (has_segment && (echo_blocks == false));
+}
+
+int32_t ln_segment_append(bool started, bool closed) {
+    if (closed) {
+        return LN_SEG_DROP;
+    }
+    if (started) {
+        return LN_SEG_FORWARD;
+    }
+    return LN_SEG_BUFFER;
+}
+
+int32_t ln_segment_close(bool started, bool closed) {
+    if (closed) {
+        return LN_SEGC_NONE;
+    }
+    if (started) {
+        return LN_SEGC_FINISH;
+    }
+    return LN_SEGC_MARK;
+}
+
+int32_t ln_source_kind(bool has_test_file) {
+    if (has_test_file) {
+        return LN_SOURCE_FILE;
+    }
+    return LN_SOURCE_LIVE;
+}
+
+bool ln_requests_mic_permission(bool mic_is_live, int64_t mic_decision) {
+    return (mic_is_live && (mic_decision == LN_MIC_REQUEST_FIRST));
+}
+
+int32_t ln_call_output(bool has_sink, bool has_blackhole) {
+    if (has_sink) {
+        return LN_OUT_SINK;
+    }
+    if (has_blackhole) {
+        return LN_OUT_DEVICE;
+    }
+    return LN_OUT_NONE;
+}
+
+int32_t ln_lane_mode(int32_t direction, int32_t outgoing_mode) {
+    if ((direction == LN_DIR_INCOMING)) {
+        return LN_MODE_CONTINUOUS;
+    }
+    return outgoing_mode;
+}
+
+bool ln_lane_speaks(int32_t direction, bool speak_russian) {
+    if ((direction == LN_DIR_INCOMING)) {
+        return speak_russian;
+    }
+    return true;
+}
+
+bool ln_lane_voice_pause(int32_t direction) {
+    return (direction == LN_DIR_OUTGOING);
+}
+
+bool ln_lane_echo_guarded(int32_t direction) {
+    return (direction == LN_DIR_OUTGOING);
+}
+
+bool ln_lane_echo_source(int32_t direction) {
+    return (direction == LN_DIR_INCOMING);
+}
+
+bool ln_glossary_source_is_pt(int32_t direction) {
+    return (direction == LN_DIR_INCOMING);
+}
+
+bool ln_ptt_local(int32_t scope) {
+    return (scope != LN_PTT_SCOPE_NONE);
+}
+
+bool ln_ptt_global(int32_t scope) {
+    return (scope == LN_PTT_SCOPE_GLOBAL);
+}
+
+double ln_sink_pace_step(double left) {
+    if ((LN_SINK_PACE_SECONDS < left)) {
+        return LN_SINK_PACE_SECONDS;
+    }
+    return left;
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
@@ -529,6 +759,70 @@ void test_ln_speech_control_rules(void) {
     assert((ln_ptt_scope(true, LN_MODE_PUSH_TO_TALK, true) == LN_PTT_SCOPE_GLOBAL));
 }
 
+void test_ln_moved_rules(void) {
+    assert((ln_millis(0.0015) == 2));
+    assert((ln_millis(1.25) == 1250));
+    assert((ln_echo_marks_time(true, false) == true));
+    assert((ln_echo_marks_time(false, false) == false));
+    assert((ln_gate_running(LN_GATE_OPEN) == true));
+    assert((ln_gate_running(LN_GATE_CLOSED) == true));
+    assert((ln_gate_running(LN_GATE_STARTING) == false));
+    assert((ln_gate_can_start(LN_GATE_STOPPED) == true));
+    assert((ln_gate_can_start(LN_GATE_OPEN) == false));
+    assert((ln_phrase_end_choice_known(true, -50, false, 0) == LN_END_TRANSCRIBER));
+    assert((ln_phrase_end_choice_known(false, 0, true, -5) == LN_END_NOW));
+    assert((ln_phrase_end_choice_known(false, 0, true, 0) == LN_END_LAST_PARTIAL));
+    assert((ln_phrase_end_choice_known(false, 0, false, 0) == LN_END_NOW));
+    assert((ln_phrase_flags(true, true, true, true, true, true, true, true) == 255));
+    assert((ln_phrase_flags(false, false, true, false, false, false, false, false) == LN_PF_GENERATION_CURRENT));
+    assert((ln_phrase_flags(false, false, false, false, false, false, false, false) == 0));
+    assert((ln_needs_speech_workers(false, true) == true));
+    assert((ln_needs_speech_workers(false, false) == false));
+    assert((ln_backlog_after_speech(3, true) == 2));
+    assert((ln_backlog_after_speech(0, true) == 0));
+    assert((ln_backlog_after_speech(3, false) == 3));
+    assert((ln_speech_waiting(3, true) == 2));
+    assert((ln_speech_waiting(3, false) == 3));
+    assert((ln_reports_translation_error(true) == false));
+    assert((ln_play_end_reports(LN_PACT_FINISH, true) == true));
+    assert((ln_play_end_reports(LN_PACT_FINISH, false) == false));
+    assert((ln_play_end_reports(LN_PACT_NONE, true) == false));
+    assert((ln_intake_forwards(true, false) == true));
+    assert((ln_intake_forwards(true, true) == false));
+    assert((ln_intake_forwards(false, false) == false));
+    assert((ln_segment_append(true, true) == LN_SEG_DROP));
+    assert((ln_segment_append(true, false) == LN_SEG_FORWARD));
+    assert((ln_segment_append(false, false) == LN_SEG_BUFFER));
+    assert((ln_segment_close(true, true) == LN_SEGC_NONE));
+    assert((ln_segment_close(true, false) == LN_SEGC_FINISH));
+    assert((ln_segment_close(false, false) == LN_SEGC_MARK));
+    assert((ln_source_kind(true) == LN_SOURCE_FILE));
+    assert((ln_source_kind(false) == LN_SOURCE_LIVE));
+    assert((ln_requests_mic_permission(true, 1) == true));
+    assert((ln_requests_mic_permission(false, 1) == false));
+    assert((ln_requests_mic_permission(true, 0) == false));
+    assert((ln_call_output(true, true) == LN_OUT_SINK));
+    assert((ln_call_output(false, true) == LN_OUT_DEVICE));
+    assert((ln_call_output(false, false) == LN_OUT_NONE));
+    assert((ln_lane_mode(LN_DIR_INCOMING, LN_MODE_PUSH_TO_TALK) == LN_MODE_CONTINUOUS));
+    assert((ln_lane_mode(LN_DIR_OUTGOING, LN_MODE_PUSH_TO_TALK) == LN_MODE_PUSH_TO_TALK));
+    assert((ln_lane_speaks(LN_DIR_INCOMING, false) == false));
+    assert((ln_lane_speaks(LN_DIR_OUTGOING, false) == true));
+    assert((ln_lane_voice_pause(LN_DIR_OUTGOING) == true));
+    assert((ln_lane_echo_guarded(LN_DIR_INCOMING) == false));
+    assert((ln_lane_echo_source(LN_DIR_INCOMING) == true));
+    assert((ln_glossary_source_is_pt(LN_DIR_INCOMING) == true));
+    assert((ln_glossary_source_is_pt(LN_DIR_OUTGOING) == false));
+    assert((ln_ptt_local(LN_PTT_SCOPE_WINDOW) == true));
+    assert((ln_ptt_local(LN_PTT_SCOPE_NONE) == false));
+    assert((ln_ptt_global(LN_PTT_SCOPE_GLOBAL) == true));
+    assert((ln_ptt_global(LN_PTT_SCOPE_WINDOW) == false));
+    assert((ln_sink_pace_step(1.0) == 0.05));
+    assert((ln_sink_pace_step(0.02) == 0.02));
+    assert((LN_DEFAULT_MODE == LN_MODE_CONTINUOUS));
+    assert((LN_DEFAULT_PTT_KEY == LN_PTT_RIGHT_OPTION));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -540,7 +834,8 @@ int main(void) {
     test_ln_gate_rules();
     test_ln_phrase_rules();
     test_ln_speech_control_rules();
-    printf("All %d tests passed.\n", 3);
+    test_ln_moved_rules();
+    printf("All %d tests passed.\n", 4);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

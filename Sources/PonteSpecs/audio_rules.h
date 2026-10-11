@@ -53,6 +53,21 @@
 #define AU_AV_AUTHORIZED 3
 #define AU_METER_ATTACK 0.5
 #define AU_METER_RELEASE 0.1
+#define AU_FORMAT_OTHER 0
+#define AU_FORMAT_FLOAT32 1
+#define AU_FORMAT_FLOAT64 2
+#define AU_FORMAT_INT16 3
+#define AU_FORMAT_INT32 4
+#define AU_INPUT_HAVE_DATA 0
+#define AU_INPUT_NO_DATA_NOW 1
+#define AU_INPUT_END_OF_STREAM 2
+#define AU_FLOAT_BYTES 4
+#define AU_NO_FRAMES 9223372036854775807
+#define AU_BUFFER_LIST_MAX 64
+#define AU_METER_LEVEL_FLOOR 0.00001
+#define AU_METER_RANGE_DB 60.0
+#define AU_PRINTABLE_FIRST 32
+#define AU_PRINTABLE_END 127
 
 /* -------------------------------------------------------
    Function prototypes
@@ -98,6 +113,20 @@ int64_t au_conversion_path(bool same_format, bool same_rate);
 bool au_is_usable_tap_format(bool is_linear_pcm, bool is_float, int64_t bits_per_channel, double sample_rate);
 int64_t au_tap_action(bool attached, int64_t desired_count, bool same_set, bool is_global, bool force);
 int64_t au_mic_start_decision(int64_t authorization_status);
+bool au_has_signal(float peak, float rms);
+bool au_tap_lists_processes(bool is_global);
+bool au_flushes_converter(int64_t index, int64_t count, bool next_format_differs);
+bool au_uses_buffer(bool has_data, int64_t channels);
+int64_t au_buffer_list_frames(int64_t byte_sizes[static 64], int64_t channels[static 64], int64_t count, int64_t max_frames);
+int64_t au_buffer_list_channels(int64_t channels[static 64], int64_t count);
+int64_t au_mono_blocks(bool interleaved, int64_t channels);
+int64_t au_mono_per_block(bool interleaved, int64_t channels);
+bool au_mono_supported(int64_t format);
+bool au_is_mono_float32(int64_t format, int64_t channels);
+bool au_is_plain_mono(int64_t format, int64_t channels, bool interleaved);
+int64_t au_converter_input(bool supplied, bool final);
+bool au_fourcc_printable(uint32_t code);
+float au_meter_fraction(float level);
 
 /* -------------------------------------------------------
    Function implementations
@@ -488,6 +517,116 @@ int64_t au_mic_start_decision(int64_t authorization_status) {
     return AU_MIC_DENIED;
 }
 
+bool au_has_signal(float peak, float rms) {
+    return (au_level_code(peak, rms) != AU_LEVEL_DIGITAL_SILENCE);
+}
+
+bool au_tap_lists_processes(bool is_global) {
+    return (is_global == false);
+}
+
+bool au_flushes_converter(int64_t index, int64_t count, bool next_format_differs) {
+    return ((index == (count - 1)) || next_format_differs);
+}
+
+bool au_uses_buffer(bool has_data, int64_t channels) {
+    return (has_data && (channels > 0));
+}
+
+int64_t au_buffer_list_frames(int64_t byte_sizes[static 64], int64_t channels[static 64], int64_t count, int64_t max_frames) {
+    int64_t n = au_fit(count, AU_BUFFER_LIST_MAX);
+    int64_t frames = AU_NO_FRAMES;
+    int64_t total = 0;
+    int64_t i = 0;
+    while ((i < n)) {
+        int64_t f = au_frames_in_buffer(byte_sizes[i], channels[i], AU_FLOAT_BYTES);
+        if ((f < frames)) {
+            frames = f;
+        }
+        total = (total + channels[i]);
+        i = (i + 1);
+    }
+    if (((total > 0) && (frames != AU_NO_FRAMES))) {
+        if ((max_frames < frames)) {
+            return max_frames;
+        }
+        return frames;
+    }
+    return 0;
+}
+
+int64_t au_buffer_list_channels(int64_t channels[static 64], int64_t count) {
+    int64_t n = au_fit(count, AU_BUFFER_LIST_MAX);
+    int64_t total = 0;
+    int64_t i = 0;
+    while ((i < n)) {
+        total = (total + channels[i]);
+        i = (i + 1);
+    }
+    return total;
+}
+
+int64_t au_mono_blocks(bool interleaved, int64_t channels) {
+    if (interleaved) {
+        return 1;
+    }
+    return channels;
+}
+
+int64_t au_mono_per_block(bool interleaved, int64_t channels) {
+    if (interleaved) {
+        return channels;
+    }
+    return 1;
+}
+
+bool au_mono_supported(int64_t format) {
+    return (((format == AU_FORMAT_FLOAT32) || (format == AU_FORMAT_INT16)) || (format == AU_FORMAT_INT32));
+}
+
+bool au_is_mono_float32(int64_t format, int64_t channels) {
+    return ((format == AU_FORMAT_FLOAT32) && (channels == 1));
+}
+
+bool au_is_plain_mono(int64_t format, int64_t channels, bool interleaved) {
+    return (au_is_mono_float32(format, channels) && (interleaved == false));
+}
+
+int64_t au_converter_input(bool supplied, bool final) {
+    if (supplied) {
+        if (final) {
+            return AU_INPUT_END_OF_STREAM;
+        }
+        return AU_INPUT_NO_DATA_NOW;
+    }
+    return AU_INPUT_HAVE_DATA;
+}
+
+bool au_fourcc_printable(uint32_t code) {
+    uint32_t shift = 0;
+    while ((shift < 32)) {
+        uint32_t b = ((code >> shift) & 255);
+        if (((b < AU_PRINTABLE_FIRST) || (b >= AU_PRINTABLE_END))) {
+            return false;
+        }
+        shift = (shift + 8);
+    }
+    return true;
+}
+
+float au_meter_fraction(float level) {
+    float floor_level = AU_METER_LEVEL_FLOOR;
+    float range = AU_METER_RANGE_DB;
+    float l = au_max_f(level, floor_level);
+    float lg = log10f(l);
+    float db = (20.0 * lg);
+    float shifted = (db + range);
+    float fraction = (shifted / range);
+    float zero = 0.0;
+    float one = 1.0;
+    return au_min_f(one, au_max_f(zero, fraction));
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
@@ -796,6 +935,69 @@ void test_au_tap_and_mic(void) {
     assert((au_mic_start_decision(99) == AU_MIC_DENIED));
 }
 
+void test_au_moved_rules(void) {
+    assert((au_has_signal(0.0, 0.0) == false));
+    assert((au_has_signal(0.5, 0.0) == true));
+    assert((au_has_signal(0.0005, 0.0005) == true));
+    assert((au_tap_lists_processes(false) == true));
+    assert((au_tap_lists_processes(true) == false));
+    assert((au_flushes_converter(2, 3, false) == true));
+    assert((au_flushes_converter(1, 3, false) == false));
+    assert((au_flushes_converter(1, 3, true) == true));
+    assert((au_uses_buffer(true, 2) == true));
+    assert((au_uses_buffer(true, 0) == false));
+    assert((au_uses_buffer(false, 2) == false));
+    int64_t sizes[64] = { [0 ... (64) - 1] = 0 };
+    int64_t chans[64] = { [0 ... (64) - 1] = 0 };
+    sizes[0] = 4096;
+    chans[0] = 2;
+    sizes[1] = 2048;
+    chans[1] = 1;
+    assert((au_buffer_list_frames(sizes, chans, 2, 10000) == 512));
+    assert((au_buffer_list_frames(sizes, chans, 2, 100) == 100));
+    assert((au_buffer_list_frames(sizes, chans, 0, 100) == 0));
+    assert((au_buffer_list_channels(chans, 2) == 3));
+    assert((au_mono_blocks(true, 6) == 1));
+    assert((au_mono_blocks(false, 6) == 6));
+    assert((au_mono_per_block(true, 6) == 6));
+    assert((au_mono_per_block(false, 6) == 1));
+    assert((au_mono_supported(AU_FORMAT_FLOAT32) == true));
+    assert((au_mono_supported(AU_FORMAT_INT16) == true));
+    assert((au_mono_supported(AU_FORMAT_INT32) == true));
+    assert((au_mono_supported(AU_FORMAT_FLOAT64) == false));
+    assert((au_mono_supported(AU_FORMAT_OTHER) == false));
+    assert((au_is_plain_mono(AU_FORMAT_FLOAT32, 1, false) == true));
+    assert((au_is_plain_mono(AU_FORMAT_FLOAT32, 1, true) == false));
+    assert((au_is_plain_mono(AU_FORMAT_FLOAT32, 2, false) == false));
+    assert((au_is_plain_mono(AU_FORMAT_INT16, 1, false) == false));
+    assert((au_converter_input(false, true) == AU_INPUT_HAVE_DATA));
+    assert((au_converter_input(true, false) == AU_INPUT_NO_DATA_NOW));
+    assert((au_converter_input(true, true) == AU_INPUT_END_OF_STREAM));
+    assert((au_fourcc_printable(0x626C746E) == true));
+    assert((au_fourcc_printable(0x70636920) == true));
+    assert((au_fourcc_printable(0) == false));
+    assert((au_fourcc_printable(0x7F414141) == false));
+    assert((au_meter_fraction(1.0) == 1.0));
+    assert((au_meter_fraction(0.0) == 0.0));
+    assert((au_meter_fraction(0.001) == 0.0));
+    assert((au_meter_fraction(0.1) > 0.66));
+    assert((au_meter_fraction(0.1) < 0.67));
+    assert((au_meter_fraction(4.0) == 1.0));
+    float level = 0.0000001;
+    float previous = 0.0;
+    uint32_t bad = 0;
+    while ((level < 3.0)) {
+        float f = au_meter_fraction(level);
+        if ((((f < 0.0) || (f > 1.0)) || (f < previous))) {
+            bad = (bad + 1);
+        }
+        previous = f;
+        float grow = 1.05;
+        level = (level * grow);
+    }
+    assert((bad == 0));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -808,7 +1010,8 @@ int main(void) {
     test_au_gain_and_levels();
     test_au_rates_chunks_pacing();
     test_au_tap_and_mic();
-    printf("All %d tests passed.\n", 4);
+    test_au_moved_rules();
+    printf("All %d tests passed.\n", 5);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

@@ -47,6 +47,33 @@ static const uint8_t CX_ANTHROPIC_VERSION[10] = { 50, 48, 50, 51, 45, 48, 54, 45
 #define CX_CLAUDE_EFFORT_CODE 0
 #define CX_CLAUDE_REQUEST_TIMEOUT_MS 20000
 #define CX_TEXT_OUT_MAX 64
+#define CX_ROW_EFFORT_LOW 0
+#define CX_ROW_EFFORT_MEDIUM 1
+#define CX_ROW_EFFORT_HIGH 2
+#define CX_ROW_COUNT 3
+static const uint8_t CX_ROW_TEXT[13] = { 108, 111, 119, 109, 101, 100, 105, 117, 109, 104, 105, 103, 104 };
+static const uint32_t CX_ROW_OFFSETS[3] = { 0, 3, 9 };
+static const uint32_t CX_ROW_LENGTHS[3] = { 3, 6, 4 };
+#define CX_HTTP_OK_FIRST 200
+#define CX_HTTP_OK_END 300
+#define CX_EFFORT_LOWEST 0
+#define CX_EFFORT_HIGHEST 2
+#define CX_KIND_OTHER 0
+#define CX_KIND_TIMEOUT 1
+#define CX_KIND_ASSETS_MISSING 2
+#define CX_KIND_UNSUPPORTED 3
+#define CX_KIND_CLOUD_REQUEST 4
+#define CX_KIND_KEY_MISSING 5
+#define CX_KIND_REFUSED 6
+#define CX_KIND_EMPTY 7
+#define CX_KIND_URL 8
+#define CX_AVAIL_INSTALLED 0
+#define CX_AVAIL_SUPPORTED 1
+#define CX_AVAIL_UNSUPPORTED 2
+#define CX_AVAIL_UNKNOWN 3
+#define CX_PACK_READY 0
+#define CX_PACK_MISSING 1
+#define CX_PACK_UNAVAILABLE 2
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -58,5 +85,14 @@ int64_t cx_error_code(int64_t http_status);
 int64_t cx_retry_action(int64_t error_code, int64_t attempt, int64_t fallback);
 uint32_t cx_claude_model_id(uint8_t out[static 64]);
 uint32_t cx_anthropic_version(uint8_t out[static 64]);
+uint32_t cx_effort_name(int64_t code, uint8_t out[static 64]);
+bool cx_http_success(int64_t status);
+int64_t cx_preferred_engine(bool prefer_claude);
+bool cx_rethrows_claude_error(bool apple_failed, bool has_apple);
+bool cx_empty_translation(bool result_empty, bool input_empty);
+bool cx_forgets_apple_ready(int64_t engine, int64_t error_code);
+int64_t cx_error_code_for_kind(int64_t kind, int64_t http_status);
+bool cx_has_timeout(int64_t ms);
+int64_t cx_pack_result(int64_t status);
 /* Function bodies: see the full header. */
 #endif

@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <math.h>
 #include <assert.h>
 #define t27_assert(c, m) do { if (!(c)) { __builtin_trap(); } } while (0)
 #define assert_eq(a, b) do { if ((a) != (b)) { __builtin_trap(); } } while (0)
@@ -30,12 +31,22 @@
 #define VO_UTTERANCE_RATE_MILLI_PER_10_PERCENT 17
 #define VO_PERCENT_NORMAL 100
 #define VO_RATE_MILLI_MAX 1000
+#define VO_ROW_FIRST_PREFERRED_PT 2
+#define VO_ROW_FIRST_PREFERRED_RU 5
+#define VO_PREFERRED_PT_COUNT 3
+#define VO_PREFERRED_RU_COUNT 3
 #define VO_ROW_ELOQUENCE 0
 #define VO_ROW_LEGACY 1
-#define VO_ROW_COUNT 2
-static const uint8_t VO_ROW_TEXT[35] = { 46, 101, 108, 111, 113, 117, 101, 110, 99, 101, 46, 46, 115, 112, 101, 101, 99, 104, 46, 115, 121, 110, 116, 104, 101, 115, 105, 115, 46, 118, 111, 105, 99, 101, 46 };
-static const uint32_t VO_ROW_OFFSETS[2] = { 0, 11 };
-static const uint32_t VO_ROW_LENGTHS[2] = { 11, 24 };
+#define VO_ROW_PREFERRED_PT_0 2
+#define VO_ROW_PREFERRED_PT_1 3
+#define VO_ROW_PREFERRED_PT_2 4
+#define VO_ROW_PREFERRED_RU_0 5
+#define VO_ROW_PREFERRED_RU_1 6
+#define VO_ROW_PREFERRED_RU_2 7
+#define VO_ROW_COUNT 8
+static const uint8_t VO_ROW_TEXT[71] = { 46, 101, 108, 111, 113, 117, 101, 110, 99, 101, 46, 46, 115, 112, 101, 101, 99, 104, 46, 115, 121, 110, 116, 104, 101, 115, 105, 115, 46, 118, 111, 105, 99, 101, 46, 76, 117, 99, 105, 97, 110, 97, 70, 101, 108, 105, 112, 101, 70, 101, 114, 110, 97, 110, 100, 97, 77, 105, 108, 101, 110, 97, 89, 117, 114, 105, 75, 97, 116, 121, 97 };
+static const uint32_t VO_ROW_OFFSETS[8] = { 0, 11, 35, 42, 48, 56, 62, 66 };
+static const uint32_t VO_ROW_LENGTHS[8] = { 11, 24, 7, 6, 8, 6, 4, 5 };
 #define VO_FX_EDDY 0
 #define VO_FX_BELLS 1
 #define VO_FX_LUCIANA 2
@@ -44,6 +55,12 @@ static const uint32_t VO_ROW_LENGTHS[2] = { 11, 24 };
 static const uint8_t VO_FX_TEXT[105] = { 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 101, 108, 111, 113, 117, 101, 110, 99, 101, 46, 112, 116, 45, 66, 82, 46, 69, 100, 100, 121, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 115, 112, 101, 101, 99, 104, 46, 115, 121, 110, 116, 104, 101, 115, 105, 115, 46, 118, 111, 105, 99, 101, 46, 66, 101, 108, 108, 115, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 118, 111, 105, 99, 101, 46, 99, 111, 109, 112, 97, 99, 116, 46, 112, 116, 45, 66, 82, 46, 76, 117, 99, 105, 97, 110, 97 };
 static const uint32_t VO_FX_OFFSETS[4] = { 0, 30, 68, 105 };
 static const uint32_t VO_FX_LENGTHS[4] = { 30, 38, 37, 0 };
+#define VO_LANG_PT_BR 0
+#define VO_LANG_RU 1
+#define VO_SOURCE_SAVED 0
+#define VO_SOURCE_BEST 1
+#define VO_SOURCE_LANGUAGE 2
+#define VO_MILLI 1000.0
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -54,6 +71,13 @@ bool vo_is_novelty_voice(uint8_t id[static 1024], int64_t len);
 int64_t vo_voice_rank_key(int64_t quality_code, bool is_novelty, int64_t preferred_index);
 int64_t vo_synthesis_timeout_ms(int64_t text_bytes);
 int64_t vo_utterance_rate_milli(int64_t rate_percent, int64_t base_rate_milli);
+int64_t vo_preferred_count(int64_t language);
+int64_t vo_preferred_name(int64_t language, int64_t index, uint8_t out[static 1024]);
+bool vo_voice_before(int64_t key_a, int64_t key_b, int64_t name_order, int64_t id_order);
+int64_t vo_voice_source(bool has_saved, bool has_best);
+bool vo_sets_rate(bool has_rate, int64_t rate_percent);
+int64_t vo_base_rate_milli(bool has_rate, float rate);
+float vo_utterance_rate(int64_t milli);
 int64_t vo_fixture(int64_t index, uint8_t out[static 1024], int64_t at);
 /* Function bodies: see the full header. */
 #endif

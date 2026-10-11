@@ -456,6 +456,143 @@ pub fn au_mic_start_decision(authorization_status: i64) -> i64 {
     return AU_MIC_DENIED;
 }
 
+; --- Rules moved here from the rest of PonteAudio and the app (2026-10-11) ------------------------------------
+
+; AVAudioCommonFormat raw values (PCM.mono, PCM.samples).
+pub const AU_FORMAT_OTHER : i64 = 0;
+pub const AU_FORMAT_FLOAT32 : i64 = 1;
+pub const AU_FORMAT_FLOAT64 : i64 = 2;
+pub const AU_FORMAT_INT16 : i64 = 3;
+pub const AU_FORMAT_INT32 : i64 = 4;
+; AVAudioConverterInputStatus raw values (PCM.Converter).
+pub const AU_INPUT_HAVE_DATA : i64 = 0;
+pub const AU_INPUT_NO_DATA_NOW : i64 = 1;
+pub const AU_INPUT_END_OF_STREAM : i64 = 2;
+; Bytes of one Float32 sample; "no frames yet" while combining buffers (Int.max).
+pub const AU_FLOAT_BYTES : i64 = 4;
+pub const AU_NO_FRAMES : i64 = 9223372036854775807;
+; au_buffer_list_* take at most this many buffers of an AudioBufferList.
+pub const AU_BUFFER_LIST_MAX : i64 = 64;
+; The level meter (Components.LevelMeter) shows -60...0 dBFS; levels below 1e-5 read as 1e-5.
+pub const AU_METER_LEVEL_FLOOR : f32 = 0.00001;
+pub const AU_METER_RANGE_DB : f32 = 60.0;
+; FourCC bytes shown as text: printable ASCII 32...126.
+pub const AU_PRINTABLE_FIRST : u32 = 32;
+pub const AU_PRINTABLE_END : u32 = 127;
+
+; A buffer with any non-zero sample: its level code is not digital silence (lanes, the wizard meter).
+pub fn au_has_signal(peak: f32, rms: f32) -> bool {
+    return au_level_code(peak, rms) != AU_LEVEL_DIGITAL_SILENCE;
+}
+
+; A tap of one app lists its processes (mixdown of them); the global tap lists the processes it excludes,
+; and reports no captured PIDs.
+pub fn au_tap_lists_processes(is_global: bool) -> bool {
+    return is_global == false;
+}
+
+; The resampler flushes at the last buffer of a play call, or before a buffer of another format.
+pub fn au_flushes_converter(index: i64, count: i64, next_format_differs: bool) -> bool {
+    return index == count - 1 or next_format_differs;
+}
+
+; A buffer of an AudioBufferList takes part in the downmix: it has data and channels.
+pub fn au_uses_buffer(has_data: bool, channels: i64) -> bool {
+    return has_data and channels > 0;
+}
+
+; Frames of the downmix of the buffers that take part: the shortest buffer, at most max_frames; 0 when
+; there are no channels.
+pub fn au_buffer_list_frames(byte_sizes: [64]i64, channels: [64]i64, count: i64, max_frames: i64) -> i64 {
+    var n: i64 = au_fit(count, AU_BUFFER_LIST_MAX);
+    var frames: i64 = AU_NO_FRAMES;
+    var total: i64 = 0;
+    var i: i64 = 0;
+    while (i < n) {
+        var f: i64 = au_frames_in_buffer(byte_sizes[i], channels[i], AU_FLOAT_BYTES);
+        if (f < frames) { frames = f; }
+        total = total + channels[i];
+        i = i + 1;
+    }
+    if (total > 0 and frames != AU_NO_FRAMES) {
+        if (max_frames < frames) { return max_frames; }
+        return frames;
+    }
+    return 0;
+}
+
+; All channels of the buffers that take part (the downmix averages over them).
+pub fn au_buffer_list_channels(channels: [64]i64, count: i64) -> i64 {
+    var n: i64 = au_fit(count, AU_BUFFER_LIST_MAX);
+    var total: i64 = 0;
+    var i: i64 = 0;
+    while (i < n) {
+        total = total + channels[i];
+        i = i + 1;
+    }
+    return total;
+}
+
+; PCM.mono: interleaved data is one block of all channels; planar data is one block per channel.
+pub fn au_mono_blocks(interleaved: bool, channels: i64) -> i64 {
+    if (interleaved) { return 1; }
+    return channels;
+}
+
+pub fn au_mono_per_block(interleaved: bool, channels: i64) -> i64 {
+    if (interleaved) { return channels; }
+    return 1;
+}
+
+; PCM.mono reads Float32, Int16 and Int32 samples.
+pub fn au_mono_supported(format: i64) -> bool {
+    return format == AU_FORMAT_FLOAT32 or format == AU_FORMAT_INT16 or format == AU_FORMAT_INT32;
+}
+
+; PCM.isMonoFloat32: Float32 with one channel.
+pub fn au_is_mono_float32(format: i64, channels: i64) -> bool {
+    return format == AU_FORMAT_FLOAT32 and channels == 1;
+}
+
+; PCM.samples reads a deinterleaved mono Float32 buffer as it is, anything else through the downmix.
+pub fn au_is_plain_mono(format: i64, channels: i64, interleaved: bool) -> bool {
+    return au_is_mono_float32(format, channels) and interleaved == false;
+}
+
+; PCM.Converter input: the buffer once, then "no data now", or "end of stream" when flushing.
+pub fn au_converter_input(supplied: bool, final: bool) -> i64 {
+    if (supplied) {
+        if (final) { return AU_INPUT_END_OF_STREAM; }
+        return AU_INPUT_NO_DATA_NOW;
+    }
+    return AU_INPUT_HAVE_DATA;
+}
+
+; HAL.fourCC: a code is shown as four characters when every byte is printable ASCII.
+pub fn au_fourcc_printable(code: u32) -> bool {
+    var shift: u32 = 0;
+    while (shift < 32) {
+        var b: u32 = (code >> shift) & 255;
+        if (b < AU_PRINTABLE_FIRST or b >= AU_PRINTABLE_END) { return false; }
+        shift = shift + 8;
+    }
+    return true;
+}
+
+; Components.LevelMeter: the bar's fill, min(1, max(0, (20 * log10(max(level, 1e-5)) + 60) / 60)), in Float.
+pub fn au_meter_fraction(level: f32) -> f32 {
+    var floor_level: f32 = AU_METER_LEVEL_FLOOR;
+    var range: f32 = AU_METER_RANGE_DB;
+    var l: f32 = au_max_f(level, floor_level);
+    var lg: f32 = log10f(l);
+    var db: f32 = 20.0 * lg;
+    var shifted: f32 = db + range;
+    var fraction: f32 = shifted / range;
+    var zero: f32 = 0.0;
+    var one: f32 = 1.0;
+    return au_min_f(one, au_max_f(zero, fraction));
+}
+
 test au_conversion_and_downmix {
     // sampleConversion
     assert au_int16_to_float(16384) == 0.5;
@@ -768,4 +905,66 @@ test au_tap_and_mic {
     assert au_mic_start_decision(1) == AU_MIC_DENIED;
     assert au_mic_start_decision(2) == AU_MIC_DENIED;
     assert au_mic_start_decision(99) == AU_MIC_DENIED;
+}
+
+test au_moved_rules {
+    assert au_has_signal(0.0, 0.0) == false;
+    assert au_has_signal(0.5, 0.0) == true;
+    assert au_has_signal(0.0005, 0.0005) == true;
+    assert au_tap_lists_processes(false) == true;
+    assert au_tap_lists_processes(true) == false;
+    assert au_flushes_converter(2, 3, false) == true;
+    assert au_flushes_converter(1, 3, false) == false;
+    assert au_flushes_converter(1, 3, true) == true;
+    assert au_uses_buffer(true, 2) == true;
+    assert au_uses_buffer(true, 0) == false;
+    assert au_uses_buffer(false, 2) == false;
+    var sizes: [64]i64 = [0; 64];
+    var chans: [64]i64 = [0; 64];
+    sizes[0] = 4096;
+    chans[0] = 2;
+    sizes[1] = 2048;
+    chans[1] = 1;
+    assert au_buffer_list_frames(sizes, chans, 2, 10000) == 512;
+    assert au_buffer_list_frames(sizes, chans, 2, 100) == 100;
+    assert au_buffer_list_frames(sizes, chans, 0, 100) == 0;
+    assert au_buffer_list_channels(chans, 2) == 3;
+    assert au_mono_blocks(true, 6) == 1;
+    assert au_mono_blocks(false, 6) == 6;
+    assert au_mono_per_block(true, 6) == 6;
+    assert au_mono_per_block(false, 6) == 1;
+    assert au_mono_supported(AU_FORMAT_FLOAT32) == true;
+    assert au_mono_supported(AU_FORMAT_INT16) == true;
+    assert au_mono_supported(AU_FORMAT_INT32) == true;
+    assert au_mono_supported(AU_FORMAT_FLOAT64) == false;
+    assert au_mono_supported(AU_FORMAT_OTHER) == false;
+    assert au_is_plain_mono(AU_FORMAT_FLOAT32, 1, false) == true;
+    assert au_is_plain_mono(AU_FORMAT_FLOAT32, 1, true) == false;
+    assert au_is_plain_mono(AU_FORMAT_FLOAT32, 2, false) == false;
+    assert au_is_plain_mono(AU_FORMAT_INT16, 1, false) == false;
+    assert au_converter_input(false, true) == AU_INPUT_HAVE_DATA;
+    assert au_converter_input(true, false) == AU_INPUT_NO_DATA_NOW;
+    assert au_converter_input(true, true) == AU_INPUT_END_OF_STREAM;
+    assert au_fourcc_printable(0x626C746E) == true;
+    assert au_fourcc_printable(0x70636920) == true;
+    assert au_fourcc_printable(0) == false;
+    assert au_fourcc_printable(0x7F414141) == false;
+    assert au_meter_fraction(1.0) == 1.0;
+    assert au_meter_fraction(0.0) == 0.0;
+    assert au_meter_fraction(0.001) == 0.0;
+    assert au_meter_fraction(0.1) > 0.66;
+    assert au_meter_fraction(0.1) < 0.67;
+    assert au_meter_fraction(4.0) == 1.0;
+    // The fill never leaves 0...1 and never falls as the level rises.
+    var level: f32 = 0.0000001;
+    var previous: f32 = 0.0;
+    var bad: u32 = 0;
+    while (level < 3.0) {
+        var f: f32 = au_meter_fraction(level);
+        if (f < 0.0 or f > 1.0 or f < previous) { bad = bad + 1; }
+        previous = f;
+        var grow: f32 = 1.05;
+        level = level * grow;
+    }
+    assert bad == 0;
 }

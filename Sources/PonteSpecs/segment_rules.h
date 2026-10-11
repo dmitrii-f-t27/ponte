@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <math.h>
 #include <assert.h>
 #define t27_assert(c, m) do { if (!(c)) { __builtin_trap(); } } while (0)
 #define assert_eq(a, b) do { if ((a) != (b)) { __builtin_trap(); } } while (0)
@@ -80,6 +81,38 @@
 #define SG_EN_DASH 147
 #define SG_CONTINUATION_MASK 192
 #define SG_CONTINUATION 128
+#define SG_LANG_PT_BR 0
+#define SG_LANG_RU 1
+#define SG_MODULE_SPEECH 0
+#define SG_MODULE_DICTATION 1
+#define SG_FAST_RESULTS_DEFAULT 1
+#define SG_OWN_CUTS_DEFAULT 1
+#define SG_MS_PER_SECOND 1000.0
+#define SG_LEVEL_SCALE 100000.0
+#define SG_NO_CUT_MS 9223372036854775807
+#define SG_CONTENT_VOICE_MARGIN_SECONDS 0.05
+#define SG_ARRIVALS_MAX 2400
+#define SG_ARRIVALS_KEEP_SECONDS 120.0
+#define SG_ARRIVAL_TOLERANCE_SECONDS 0.0005
+#define SG_TIMINGS_KEPT 200
+#define SG_VOICE_SEGMENTS_KEPT 256
+#define SG_ACTIVITY_KEEP 0
+#define SG_ACTIVITY_SILENCE_STARTS 1
+#define SG_ACTIVITY_VOICE_STARTS 2
+#define SG_ACTIVITY_SILENCE_ENDS 3
+#define SG_ACTIVITY_SILENCE_ENDS_VOICE_STARTS 4
+#define SG_ACTIVITY_SEGMENT_CLOSES 5
+#define SG_EVENT_NONE 0
+#define SG_EVENT_FINAL 1
+#define SG_EVENT_DISCARD 2
+#define SG_CONVERSION_SLACK_FRAMES 256
+#define SG_FLUSH_FRAMES 4096
+#define SG_INPUT_HAVE_DATA 0
+#define SG_INPUT_NO_DATA_NOW 1
+#define SG_INPUT_END_OF_STREAM 2
+#define SG_INT16_FULL_SCALE 32768.0
+#define SG_INT32_FULL_SCALE 2147483648.0
+#define SG_RMS_BLOCK 4096
 #define SG_FX_BOM_DIA 0
 #define SG_FX_OUVE 1
 #define SG_FX_DOBRYI 2
@@ -136,6 +169,44 @@ bool sg_has_speech_content(uint8_t text[static 8192], int64_t len);
 int64_t sg_phrase_action(uint8_t text[static 8192], int64_t len, int64_t voice_ms);
 bool sg_followed_by_space(uint8_t text[static 8192], int64_t n, int64_t end);
 int64_t sg_cut_byte_index(uint8_t text[static 8192], int64_t len, int64_t max_bytes, int64_t min_bytes);
+double sg_max_d(double a, double b);
+double sg_min_d(double a, double b);
+bool sg_is_finite(double x);
+int64_t sg_millis(double seconds);
+int64_t sg_level_from_rms(float rms);
+int64_t sg_meter_window_frames(double sample_rate);
+int64_t sg_stall_silence_frames(double sample_rate);
+bool sg_trims_arrivals(int64_t count);
+bool sg_keeps_arrival(double audio_end, double end);
+bool sg_arrival_covers(double audio_end, double t);
+double sg_measure_start(double phrase_start, bool has_voice, double voice_start);
+double sg_measure_pause(double now, double start, bool has_silence, double silence);
+double sg_measure_speech(double now, double start, bool has_silence, double silence);
+int64_t sg_finalize_flags(bool has_volatile_text, double last_voice_end, double phrase_start, bool finishing, bool cuts_enabled);
+int64_t sg_last_cut_ago_ms(double now, bool has_last_cut, double last_cut);
+double sg_cut_time(double now, int64_t action, int64_t pause_ms);
+bool sg_stall_cut(bool finishing, bool cuts_enabled, bool has_volatile_text, bool has_append, int64_t ms_since_append, bool has_last_cut, int64_t ms_fed_since_cut);
+bool sg_cut_in_phrase(bool has_last_cut, double last_cut, double phrase_start);
+int64_t sg_final_event(bool keep, bool partial_shown);
+bool sg_partial_event(bool keep, bool changed);
+double sg_advance_phrase_start(double phrase_start, double t);
+double sg_timing_start(bool has_tokens, double first_start, double phrase_start);
+double sg_timing_end(bool has_tokens, double last_start, double last_end, double range_end, double audio_start, double last_voice_end);
+bool sg_trims_timings(int64_t count);
+bool sg_range_measurable(double start, double end);
+bool sg_timed_word(double start, double end, int64_t word_bytes);
+int64_t sg_transcriber_kind(int64_t language);
+int64_t sg_activity_step(bool voice, bool has_silence, double silence_start, bool has_voice, double start);
+int64_t sg_segments_to_drop(int64_t count);
+double sg_open_segment_end(double voice_start, bool has_silence, double silence_start, double last_end);
+double sg_overlap_seconds(double lower, double upper, double range_lower, double range_upper);
+int64_t sg_conversion_capacity(int64_t frames, double from_rate, double to_rate);
+int64_t sg_converter_input(bool fed, bool final);
+int64_t sg_window_count(int64_t from, bool has_count, int64_t count, int64_t frame_length);
+float sg_int16_to_float(int16_t v);
+float sg_int32_to_float(int32_t v);
+float sg_sum_squares_f32(float samples[static 4096], int64_t count, float sum);
+float sg_rms_f32(float sum, int64_t count);
 int64_t sg_fixture(int64_t index, uint8_t out[static 8192], int64_t at);
 
 /* -------------------------------------------------------
@@ -378,6 +449,295 @@ int64_t sg_cut_byte_index(uint8_t text[static 8192], int64_t len, int64_t max_by
     return max_bytes;
 }
 
+double sg_max_d(double a, double b) {
+    if ((b >= a)) {
+        return b;
+    }
+    return a;
+}
+
+double sg_min_d(double a, double b) {
+    if ((b < a)) {
+        return b;
+    }
+    return a;
+}
+
+bool sg_is_finite(double x) {
+    return ((x - x) == 0.0);
+}
+
+int64_t sg_millis(double seconds) {
+    return ((int64_t)(round((seconds * SG_MS_PER_SECOND))));
+}
+
+int64_t sg_level_from_rms(float rms) {
+    double r = rms;
+    return ((int64_t)(round((r * SG_LEVEL_SCALE))));
+}
+
+int64_t sg_meter_window_frames(double sample_rate) {
+    int64_t w = ((((int64_t)(sample_rate)) * SG_METER_WINDOW_MS) / 1000);
+    if ((w >= 1)) {
+        return w;
+    }
+    return 1;
+}
+
+int64_t sg_stall_silence_frames(double sample_rate) {
+    int64_t w = ((((int64_t)(sample_rate)) * SG_STALL_FLUSH_SILENCE_MS) / 1000);
+    if ((w >= 1)) {
+        return w;
+    }
+    return 1;
+}
+
+bool sg_trims_arrivals(int64_t count) {
+    return (count > SG_ARRIVALS_MAX);
+}
+
+bool sg_keeps_arrival(double audio_end, double end) {
+    return (audio_end > (end - SG_ARRIVALS_KEEP_SECONDS));
+}
+
+bool sg_arrival_covers(double audio_end, double t) {
+    return (audio_end >= (t - SG_ARRIVAL_TOLERANCE_SECONDS));
+}
+
+double sg_measure_start(double phrase_start, bool has_voice, double voice_start) {
+    double v = phrase_start;
+    if (has_voice) {
+        v = voice_start;
+    }
+    return sg_max_d(phrase_start, v);
+}
+
+double sg_measure_pause(double now, double start, bool has_silence, double silence) {
+    if ((has_silence && (silence > start))) {
+        return (now - silence);
+    }
+    return 0.0;
+}
+
+double sg_measure_speech(double now, double start, bool has_silence, double silence) {
+    if (has_silence) {
+        if ((silence > start)) {
+            return (silence - start);
+        }
+        return 0.0;
+    }
+    return (now - start);
+}
+
+int64_t sg_finalize_flags(bool has_volatile_text, double last_voice_end, double phrase_start, bool finishing, bool cuts_enabled) {
+    int64_t flags = 0;
+    if ((has_volatile_text || (last_voice_end > (phrase_start + SG_CONTENT_VOICE_MARGIN_SECONDS)))) {
+        flags = (flags | SG_FLAG_HAS_CONTENT);
+    }
+    if (finishing) {
+        flags = (flags | SG_FLAG_FINISHING);
+    }
+    if ((cuts_enabled == false)) {
+        flags = (flags | SG_FLAG_CUTS_DISABLED);
+    }
+    return flags;
+}
+
+int64_t sg_last_cut_ago_ms(double now, bool has_last_cut, double last_cut) {
+    if (has_last_cut) {
+        return sg_millis((now - last_cut));
+    }
+    return SG_NO_CUT_MS;
+}
+
+double sg_cut_time(double now, int64_t action, int64_t pause_ms) {
+    double back = sg_cut_backoff_ms(action, pause_ms);
+    return (now - (back / SG_MS_PER_SECOND));
+}
+
+bool sg_stall_cut(bool finishing, bool cuts_enabled, bool has_volatile_text, bool has_append, int64_t ms_since_append, bool has_last_cut, int64_t ms_fed_since_cut) {
+    if ((((finishing || (cuts_enabled == false)) || (has_volatile_text == false)) || (has_append == false))) {
+        return false;
+    }
+    if ((ms_since_append > SG_STALL_TIMEOUT_MS)) {
+        if ((has_last_cut && (ms_fed_since_cut <= SG_MIN_CUT_SPACING_MS))) {
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+bool sg_cut_in_phrase(bool has_last_cut, double last_cut, double phrase_start) {
+    return (has_last_cut && (last_cut > phrase_start));
+}
+
+int64_t sg_final_event(bool keep, bool partial_shown) {
+    if (keep) {
+        return SG_EVENT_FINAL;
+    }
+    if (partial_shown) {
+        return SG_EVENT_DISCARD;
+    }
+    return SG_EVENT_NONE;
+}
+
+bool sg_partial_event(bool keep, bool changed) {
+    return (keep && changed);
+}
+
+double sg_advance_phrase_start(double phrase_start, double t) {
+    if (sg_is_finite(t)) {
+        return sg_max_d(phrase_start, t);
+    }
+    return phrase_start;
+}
+
+double sg_timing_start(bool has_tokens, double first_start, double phrase_start) {
+    if (has_tokens) {
+        return first_start;
+    }
+    return phrase_start;
+}
+
+double sg_timing_end(bool has_tokens, double last_start, double last_end, double range_end, double audio_start, double last_voice_end) {
+    double audio_end = range_end;
+    double last_word_start = audio_start;
+    if (has_tokens) {
+        audio_end = last_end;
+        last_word_start = last_start;
+    }
+    if (((audio_end > last_voice_end) && (last_voice_end > last_word_start))) {
+        return last_voice_end;
+    }
+    return audio_end;
+}
+
+bool sg_trims_timings(int64_t count) {
+    return (count > SG_TIMINGS_KEPT);
+}
+
+bool sg_range_measurable(double start, double end) {
+    return ((sg_is_finite(start) && sg_is_finite(end)) && (end > start));
+}
+
+bool sg_timed_word(double start, double end, int64_t word_bytes) {
+    return ((sg_is_finite(start) && sg_is_finite(end)) && (word_bytes > 0));
+}
+
+int64_t sg_transcriber_kind(int64_t language) {
+    if ((language == SG_LANG_RU)) {
+        return SG_MODULE_DICTATION;
+    }
+    return SG_MODULE_SPEECH;
+}
+
+int64_t sg_activity_step(bool voice, bool has_silence, double silence_start, bool has_voice, double start) {
+    if (voice) {
+        if (has_silence) {
+            if ((has_voice && (sg_millis((start - silence_start)) >= SG_MIN_RECORDED_PAUSE_MS))) {
+                return SG_ACTIVITY_SEGMENT_CLOSES;
+            }
+            if (has_voice) {
+                return SG_ACTIVITY_SILENCE_ENDS;
+            }
+            return SG_ACTIVITY_SILENCE_ENDS_VOICE_STARTS;
+        }
+        if (has_voice) {
+            return SG_ACTIVITY_KEEP;
+        }
+        return SG_ACTIVITY_VOICE_STARTS;
+    }
+    if (has_silence) {
+        return SG_ACTIVITY_KEEP;
+    }
+    return SG_ACTIVITY_SILENCE_STARTS;
+}
+
+int64_t sg_segments_to_drop(int64_t count) {
+    if ((count > SG_VOICE_SEGMENTS_KEPT)) {
+        return (count - SG_VOICE_SEGMENTS_KEPT);
+    }
+    return 0;
+}
+
+double sg_open_segment_end(double voice_start, bool has_silence, double silence_start, double last_end) {
+    double e = last_end;
+    if (has_silence) {
+        e = silence_start;
+    }
+    return sg_max_d(voice_start, e);
+}
+
+double sg_overlap_seconds(double lower, double upper, double range_lower, double range_upper) {
+    double d = (sg_min_d(upper, range_upper) - sg_max_d(lower, range_lower));
+    return sg_max_d(0.0, d);
+}
+
+int64_t sg_conversion_capacity(int64_t frames, double from_rate, double to_rate) {
+    double ratio = (to_rate / from_rate);
+    double f = frames;
+    double scaled = (f * ratio);
+    return (((int64_t)(ceil(scaled))) + SG_CONVERSION_SLACK_FRAMES);
+}
+
+int64_t sg_converter_input(bool fed, bool final) {
+    if (fed) {
+        if (final) {
+            return SG_INPUT_END_OF_STREAM;
+        }
+        return SG_INPUT_NO_DATA_NOW;
+    }
+    return SG_INPUT_HAVE_DATA;
+}
+
+int64_t sg_window_count(int64_t from, bool has_count, int64_t count, int64_t frame_length) {
+    int64_t want = frame_length;
+    if (has_count) {
+        want = count;
+    }
+    int64_t n = want;
+    if (((frame_length - from) < n)) {
+        n = (frame_length - from);
+    }
+    if (((n > 0) && (from >= 0))) {
+        return n;
+    }
+    return 0;
+}
+
+float sg_int16_to_float(int16_t v) {
+    float f = v;
+    return (f / SG_INT16_FULL_SCALE);
+}
+
+float sg_int32_to_float(int32_t v) {
+    float f = v;
+    return (f / SG_INT32_FULL_SCALE);
+}
+
+float sg_sum_squares_f32(float samples[static 4096], int64_t count, float sum) {
+    int64_t n = count;
+    if ((n > SG_RMS_BLOCK)) {
+        n = SG_RMS_BLOCK;
+    }
+    float total = sum;
+    int64_t i = 0;
+    while ((i < n)) {
+        float v = samples[i];
+        float sq = (v * v);
+        total = (total + sq);
+        i = (i + 1);
+    }
+    return total;
+}
+
+float sg_rms_f32(float sum, int64_t count) {
+    float n = count;
+    float mean = (sum / n);
+    return sqrt(mean);
+}
+
 int64_t sg_fixture(int64_t index, uint8_t out[static 8192], int64_t at) {
     if ((((index < 0) || (index >= SG_FX_COUNT)) || (at < 0))) {
         return 0;
@@ -569,6 +929,114 @@ void test_sg_cut_rules(void) {
     assert((bad == 0));
 }
 
+void test_sg_moved_rules(void) {
+    assert((sg_millis(1.0) == 1000));
+    assert((sg_millis(0.0005) == 1));
+    assert((sg_millis(-0.0005) == -1));
+    assert((sg_millis(0.0004) == 0));
+    assert((sg_level_from_rms(0.01) == 1000));
+    assert((sg_level_from_rms(0.0) == 0));
+    assert((sg_meter_window_frames(48000.0) == 960));
+    assert((sg_meter_window_frames(16000.9) == 320));
+    assert((sg_meter_window_frames(10.0) == 1));
+    assert((sg_stall_silence_frames(48000.0) == 24000));
+    assert((sg_stall_silence_frames(1.0) == 1));
+    assert((sg_trims_arrivals(2401) == true));
+    assert((sg_trims_arrivals(2400) == false));
+    assert((sg_keeps_arrival(100.5, 220.0) == true));
+    assert((sg_keeps_arrival(100.0, 220.0) == false));
+    assert((sg_arrival_covers(1.0, 1.0005) == true));
+    assert((sg_arrival_covers(1.0, 1.001) == false));
+    assert((sg_measure_start(5.0, true, 6.0) == 6.0));
+    assert((sg_measure_start(5.0, true, 4.0) == 5.0));
+    assert((sg_measure_start(5.0, false, 9.0) == 5.0));
+    assert((sg_measure_pause(10.0, 5.0, true, 9.0) == 1.0));
+    assert((sg_measure_pause(10.0, 5.0, true, 4.0) == 0.0));
+    assert((sg_measure_pause(10.0, 5.0, false, 9.0) == 0.0));
+    assert((sg_measure_speech(10.0, 5.0, true, 9.0) == 4.0));
+    assert((sg_measure_speech(10.0, 5.0, true, 4.0) == 0.0));
+    assert((sg_measure_speech(10.0, 5.0, false, 9.0) == 5.0));
+    assert((sg_finalize_flags(true, 0.0, 0.0, false, true) == SG_FLAG_HAS_CONTENT));
+    assert((sg_finalize_flags(false, 1.06, 1.0, false, true) == SG_FLAG_HAS_CONTENT));
+    assert((sg_finalize_flags(false, 1.05, 1.0, true, false) == (SG_FLAG_FINISHING + SG_FLAG_CUTS_DISABLED)));
+    assert((sg_last_cut_ago_ms(3.0, true, 2.5) == 500));
+    assert((sg_last_cut_ago_ms(3.0, false, 2.5) == SG_NO_CUT_MS));
+    assert((sg_cut_time(10.0, SG_ACTION_END_OF_PHRASE, 650) == 9.5));
+    assert((sg_cut_time(10.0, SG_ACTION_MONOLOGUE_FORCED, 0) == 10.0));
+    assert((sg_stall_cut(false, true, true, true, 1001, false, 0) == true));
+    assert((sg_stall_cut(false, true, true, true, 1000, false, 0) == false));
+    assert((sg_stall_cut(false, true, true, true, 1001, true, 100) == false));
+    assert((sg_stall_cut(false, true, true, true, 1001, true, 101) == true));
+    assert((sg_stall_cut(true, true, true, true, 5000, false, 0) == false));
+    assert((sg_stall_cut(false, false, true, true, 5000, false, 0) == false));
+    assert((sg_stall_cut(false, true, false, true, 5000, false, 0) == false));
+    assert((sg_stall_cut(false, true, true, false, 5000, false, 0) == false));
+    assert((sg_cut_in_phrase(true, 2.0, 1.0) == true));
+    assert((sg_cut_in_phrase(true, 1.0, 1.0) == false));
+    assert((sg_cut_in_phrase(false, 2.0, 1.0) == false));
+    assert((sg_final_event(true, false) == SG_EVENT_FINAL));
+    assert((sg_final_event(false, true) == SG_EVENT_DISCARD));
+    assert((sg_final_event(false, false) == SG_EVENT_NONE));
+    assert((sg_partial_event(true, true) == true));
+    assert((sg_partial_event(true, false) == false));
+    assert((sg_advance_phrase_start(1.0, 2.0) == 2.0));
+    assert((sg_advance_phrase_start(3.0, 2.0) == 3.0));
+    double inf = (1.0e308 * 10.0);
+    assert((sg_advance_phrase_start(3.0, inf) == 3.0));
+    assert((sg_is_finite(inf) == false));
+    assert((sg_is_finite((inf - inf)) == false));
+    assert((sg_is_finite(-2.5) == true));
+    assert((sg_timing_start(true, 1.5, 1.0) == 1.5));
+    assert((sg_timing_start(false, 1.5, 1.0) == 1.0));
+    assert((sg_timing_end(true, 2.0, 3.0, 4.0, 1.0, 2.5) == 2.5));
+    assert((sg_timing_end(true, 2.0, 3.0, 4.0, 1.0, 1.5) == 3.0));
+    assert((sg_timing_end(false, 2.0, 3.0, 4.0, 1.0, 1.5) == 1.5));
+    assert((sg_timing_end(false, 2.0, 3.0, 4.0, 1.0, 9.0) == 4.0));
+    assert((sg_trims_timings(201) == true));
+    assert((sg_trims_timings(200) == false));
+    assert((sg_range_measurable(1.0, 2.0) == true));
+    assert((sg_range_measurable(2.0, 2.0) == false));
+    assert((sg_range_measurable(1.0, inf) == false));
+    assert((sg_timed_word(1.0, 2.0, 3) == true));
+    assert((sg_timed_word(1.0, 2.0, 0) == false));
+    assert((sg_timed_word(inf, 2.0, 3) == false));
+    assert((sg_transcriber_kind(SG_LANG_PT_BR) == SG_MODULE_SPEECH));
+    assert((sg_transcriber_kind(SG_LANG_RU) == SG_MODULE_DICTATION));
+    assert((sg_activity_step(true, true, 1.0, true, 1.06) == SG_ACTIVITY_SEGMENT_CLOSES));
+    assert((sg_activity_step(true, true, 1.0, true, 1.04) == SG_ACTIVITY_SILENCE_ENDS));
+    assert((sg_activity_step(true, true, 1.0, false, 1.5) == SG_ACTIVITY_SILENCE_ENDS_VOICE_STARTS));
+    assert((sg_activity_step(true, false, 0.0, true, 1.5) == SG_ACTIVITY_KEEP));
+    assert((sg_activity_step(true, false, 0.0, false, 1.5) == SG_ACTIVITY_VOICE_STARTS));
+    assert((sg_activity_step(false, true, 1.0, true, 1.5) == SG_ACTIVITY_KEEP));
+    assert((sg_activity_step(false, false, 0.0, true, 1.5) == SG_ACTIVITY_SILENCE_STARTS));
+    assert((sg_segments_to_drop(257) == 1));
+    assert((sg_segments_to_drop(256) == 0));
+    assert((sg_open_segment_end(1.0, true, 2.0, 3.0) == 2.0));
+    assert((sg_open_segment_end(1.0, false, 2.0, 3.0) == 3.0));
+    assert((sg_open_segment_end(4.0, true, 2.0, 3.0) == 4.0));
+    assert((sg_overlap_seconds(1.0, 3.0, 2.0, 5.0) == 1.0));
+    assert((sg_overlap_seconds(1.0, 3.0, 4.0, 5.0) == 0.0));
+    assert((sg_overlap_seconds(1.0, 3.0, 0.0, 5.0) == 2.0));
+    assert((sg_conversion_capacity(100, 48000.0, 16000.0) == (34 + 256)));
+    assert((sg_conversion_capacity(441, 44100.0, 48000.0) == (481 + 256)));
+    assert((sg_converter_input(false, false) == SG_INPUT_HAVE_DATA));
+    assert((sg_converter_input(true, false) == SG_INPUT_NO_DATA_NOW));
+    assert((sg_converter_input(true, true) == SG_INPUT_END_OF_STREAM));
+    assert((sg_window_count(0, true, 960, 4096) == 960));
+    assert((sg_window_count(4000, true, 960, 4096) == 96));
+    assert((sg_window_count(0, false, 0, 512) == 512));
+    assert((sg_window_count(-1, true, 10, 100) == 0));
+    assert((sg_window_count(100, true, 10, 100) == 0));
+    assert((sg_int16_to_float(16384) == 0.5));
+    assert((sg_int32_to_float(-2147483648) == -1.0));
+    float block[4096] = { [0 ... (4096) - 1] = 0.0 };
+    block[0] = 3.0;
+    block[1] = 4.0;
+    assert((sg_sum_squares_f32(block, 2, 0.0) == 25.0));
+    assert((sg_sum_squares_f32(block, 2, 1.0) == 26.0));
+    assert((sg_rms_f32(25.0, 4) == 2.5));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -581,7 +1049,8 @@ int main(void) {
     test_sg_finalize_rules();
     test_sg_text_rules();
     test_sg_cut_rules();
-    printf("All %d tests passed.\n", 4);
+    test_sg_moved_rules();
+    printf("All %d tests passed.\n", 5);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

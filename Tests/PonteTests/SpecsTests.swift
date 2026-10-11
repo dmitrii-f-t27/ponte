@@ -402,3 +402,35 @@ private struct Samples {
         #expect(tr_is_markdown_special(UInt8(ascii: "~")) && !tr_is_markdown_special(UInt8(ascii: "a")))
     }
 }
+
+// MARK: - Codes shared between specs and with the system
+
+@Suite("cross-spec codes") struct CrossSpecCodeTests {
+    /// Codes one spec produces and another reads must be the same numbers; system raw values must match.
+    @Test func sharedCodes() {
+        // The app passes AudioRules.micStartDecision (audio_rules) to ln_requests_mic_permission (lane_rules).
+        #expect(LN_MIC_REQUEST_FIRST == AU_MIC_REQUEST_FIRST)
+        // AppleTranslator.availabilityCode (context_rules) feeds ui_pack_light (ui_rules).
+        #expect([UI_AVAIL_INSTALLED, UI_AVAIL_SUPPORTED, UI_AVAIL_UNSUPPORTED, UI_AVAIL_UNKNOWN].map(Int64.init)
+                == [CX_AVAIL_INSTALLED, CX_AVAIL_SUPPORTED, CX_AVAIL_UNSUPPORTED, CX_AVAIL_UNKNOWN].map(Int64.init))
+        // SpeechRules.langCode feeds both segment_rules and voice_rules.
+        #expect([VO_LANG_PT_BR, VO_LANG_RU] == [SG_LANG_PT_BR, SG_LANG_RU])
+        // AVAudioConverterInputStatus for both converters.
+        #expect([AU_INPUT_HAVE_DATA, AU_INPUT_NO_DATA_NOW, AU_INPUT_END_OF_STREAM].map(Int.init)
+                == [AVAudioConverterInputStatus.haveData, .noDataNow, .endOfStream].map(\.rawValue))
+        #expect([SG_INPUT_HAVE_DATA, SG_INPUT_NO_DATA_NOW, SG_INPUT_END_OF_STREAM].map(Int.init)
+                == [AVAudioConverterInputStatus.haveData, .noDataNow, .endOfStream].map(\.rawValue))
+        // AVAudioCommonFormat.
+        #expect([AU_FORMAT_OTHER, AU_FORMAT_FLOAT32, AU_FORMAT_FLOAT64, AU_FORMAT_INT16, AU_FORMAT_INT32].map(UInt.init)
+                == [AVAudioCommonFormat.otherFormat, .pcmFormatFloat32, .pcmFormatFloat64, .pcmFormatInt16, .pcmFormatInt32].map(\.rawValue))
+        // AVAuthorizationStatus raw values ui_permission_state reads.
+        #expect(ui_permission_state(Int64(AVAuthorizationStatus.authorized.rawValue)) == UI_PERM_GRANTED)
+        #expect(ui_permission_state(Int64(AVAuthorizationStatus.denied.rawValue)) == UI_PERM_DENIED)
+        #expect(ui_permission_state(Int64(AVAuthorizationStatus.restricted.rawValue)) == UI_PERM_DENIED)
+        #expect(ui_permission_state(Int64(AVAuthorizationStatus.notDetermined.rawValue)) == UI_PERM_NOT_ASKED)
+        // Directions: the lane codes the app maps Direction to.
+        #expect(ln_lane_mode(LN_DIR_INCOMING, LN_MODE_PUSH_TO_TALK) == LN_MODE_CONTINUOUS)
+        #expect(ln_lane_mode(LN_DIR_OUTGOING, LN_MODE_PUSH_TO_TALK) == LN_MODE_PUSH_TO_TALK)
+        #expect(ln_glossary_source_is_pt(LN_DIR_INCOMING) && !ln_glossary_source_is_pt(LN_DIR_OUTGOING))
+    }
+}

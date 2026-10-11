@@ -49,6 +49,21 @@
 #define AU_AV_AUTHORIZED 3
 #define AU_METER_ATTACK 0.5
 #define AU_METER_RELEASE 0.1
+#define AU_FORMAT_OTHER 0
+#define AU_FORMAT_FLOAT32 1
+#define AU_FORMAT_FLOAT64 2
+#define AU_FORMAT_INT16 3
+#define AU_FORMAT_INT32 4
+#define AU_INPUT_HAVE_DATA 0
+#define AU_INPUT_NO_DATA_NOW 1
+#define AU_INPUT_END_OF_STREAM 2
+#define AU_FLOAT_BYTES 4
+#define AU_NO_FRAMES 9223372036854775807
+#define AU_BUFFER_LIST_MAX 64
+#define AU_METER_LEVEL_FLOOR 0.00001
+#define AU_METER_RANGE_DB 60.0
+#define AU_PRINTABLE_FIRST 32
+#define AU_PRINTABLE_END 127
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -92,5 +107,19 @@ int64_t au_conversion_path(bool same_format, bool same_rate);
 bool au_is_usable_tap_format(bool is_linear_pcm, bool is_float, int64_t bits_per_channel, double sample_rate);
 int64_t au_tap_action(bool attached, int64_t desired_count, bool same_set, bool is_global, bool force);
 int64_t au_mic_start_decision(int64_t authorization_status);
+bool au_has_signal(float peak, float rms);
+bool au_tap_lists_processes(bool is_global);
+bool au_flushes_converter(int64_t index, int64_t count, bool next_format_differs);
+bool au_uses_buffer(bool has_data, int64_t channels);
+int64_t au_buffer_list_frames(int64_t byte_sizes[static 64], int64_t channels[static 64], int64_t count, int64_t max_frames);
+int64_t au_buffer_list_channels(int64_t channels[static 64], int64_t count);
+int64_t au_mono_blocks(bool interleaved, int64_t channels);
+int64_t au_mono_per_block(bool interleaved, int64_t channels);
+bool au_mono_supported(int64_t format);
+bool au_is_mono_float32(int64_t format, int64_t channels);
+bool au_is_plain_mono(int64_t format, int64_t channels, bool interleaved);
+int64_t au_converter_input(bool supplied, bool final);
+bool au_fourcc_printable(uint32_t code);
+float au_meter_fraction(float level);
 /* Function bodies: see the full header. */
 #endif

@@ -89,6 +89,73 @@
 #define UI_LINE_HEIGHT_NUMERATOR 13
 #define UI_LINE_HEIGHT_DENOMINATOR 10
 #define UI_LINE_HEIGHT_EXTRA 8
+#define UI_ROW_SOURCE_SYSTEM 0
+#define UI_ROW_SOURCE_APP_PREFIX 1
+#define UI_ROW_YES 2
+#define UI_ROW_TRUE 3
+#define UI_ROW_ONE 4
+#define UI_ROW_COUNT 5
+static const uint8_t UI_ROW_TEXT[18] = { 115, 121, 115, 116, 101, 109, 97, 112, 112, 58, 121, 101, 115, 116, 114, 117, 101, 49 };
+static const uint32_t UI_ROW_OFFSETS[5] = { 0, 6, 10, 13, 17 };
+static const uint32_t UI_ROW_LENGTHS[5] = { 6, 4, 3, 4, 1 };
+#define UI_DEFAULT_TRANSLATOR 0
+#define UI_DEFAULT_SPEAK_RUSSIAN 0
+#define UI_DEFAULT_OVERLAY_VISIBLE 0
+#define UI_POLL_INTERVAL_MS 500
+#define UI_CATALOG_EVERY_TICKS 6
+#define UI_CATALOG_TICK 5
+#define UI_COPIED_FEEDBACK_MS 2000
+#define UI_SB_NONE 0
+#define UI_SB_MARK 1
+#define UI_SB_SHOW 2
+#define UI_HELP_IDLE 0
+#define UI_HELP_WAITING 1
+#define UI_HELP_FAILED 2
+#define UI_HELP_FILE 3
+#define UI_HELP_SILENCE 4
+#define UI_HELP_FLOWING 5
+#define UI_TITLE_SYSTEM 0
+#define UI_TITLE_RUNNING 1
+#define UI_TITLE_LABEL 2
+#define UI_TITLE_ID 3
+#define UI_BK_NONE 0
+#define UI_BK_ERROR 1
+#define UI_BK_WARNING 2
+#define UI_BK_INFO 3
+#define UI_TEB_NONE 0
+#define UI_TEB_PACKS 1
+#define UI_TEB_WARNING 2
+#define UI_DEV_SAVED 0
+#define UI_DEV_AUTO 1
+#define UI_OUT_NONE 0
+#define UI_OUT_PAUSED 1
+#define UI_OUT_SPEAKING 2
+#define UI_OUT_NO_BLACKHOLE 3
+#define UI_COL_FOUND 0
+#define UI_COL_SEARCH 1
+#define UI_TN_NONE 0
+#define UI_TN_NO_KEY 1
+#define UI_TN_NO_KEY_FALLBACK 2
+#define UI_PERM_UNKNOWN 0
+#define UI_PERM_GRANTED 1
+#define UI_PERM_DENIED 2
+#define UI_PERM_NOT_ASKED 3
+#define UI_RAW_AUTHORIZED 3
+#define UI_RAW_NOT_DETERMINED 0
+#define UI_RAW_DENIED_A 1
+#define UI_RAW_DENIED_B 2
+#define UI_PA_NONE 0
+#define UI_PA_REQUEST 1
+#define UI_PA_OPEN_SETTINGS 2
+#define UI_AVAIL_INSTALLED 0
+#define UI_AVAIL_SUPPORTED 1
+#define UI_AVAIL_UNSUPPORTED 2
+#define UI_AVAIL_UNKNOWN 3
+#define UI_LINE_TRANSLATED 0
+#define UI_LINE_FAILED 1
+#define UI_LINE_PENDING 2
+#define UI_WORD_MAX 64
+#define UI_KEY_MAX 4096
 
 /* -------------------------------------------------------
    Function prototypes
@@ -116,6 +183,38 @@ bool ui_wizard_show_on_launch_in_mode(bool setup_completed, int32_t forced_step,
 bool ui_wizard_completed_after_close(bool was_completed, bool finished);
 int32_t ui_translation_font_size(int32_t stored);
 int32_t ui_overlay_line_count(int32_t available, int32_t panel_height, int32_t font_size);
+int32_t ui_models_light_all(int32_t run_state, bool ever_started, int32_t lanes_started, int32_t lanes_failed, int32_t translators_failed);
+bool ui_shows_level(int32_t light);
+int32_t ui_silence_banner(int32_t source_light, bool already_warned, bool error_shown);
+bool ui_poll_refreshes_catalogs(int64_t tick);
+int32_t ui_source_help(int32_t run_state, int32_t tap_status, int32_t source_light);
+int32_t ui_source_title(bool is_system, bool has_running_name, bool has_label);
+bool ui_has_call_output(bool has_blackhole, bool has_sink);
+int32_t ui_banner_kind(int32_t banner);
+int32_t ui_banner_step(int32_t banner);
+int32_t ui_translation_error_banner(bool missing_packs, bool packs_banner_shown, bool same_text_shown);
+int32_t ui_device_choice(bool has_setting, bool found);
+bool ui_probes_claude(int32_t preferred);
+bool ui_transcript_has_end(int32_t run_state);
+bool ui_test_phrase_possible(bool into_call, bool has_blackhole);
+int32_t ui_outgoing_status(bool paused, bool speaking, bool running, bool has_blackhole);
+int32_t ui_call_output_label(bool has_blackhole, bool has_setting);
+int32_t ui_translator_note(int32_t preferred, bool claude_available);
+int32_t ui_permission_state(int64_t raw);
+int32_t ui_permission_action(int32_t state);
+int32_t ui_permission_light(int32_t state);
+bool ui_capture_needs_settings(int32_t light);
+int32_t ui_accessibility_light(bool granted);
+int32_t ui_pack_light(int32_t status);
+bool ui_pack_refreshable(int32_t light);
+bool ui_pack_download_enabled(int32_t light);
+int32_t ui_line_state(bool has_translation, bool has_error);
+bool ui_is_test_mode(bool has_incoming_file, bool has_outgoing_file, bool has_sink, bool has_transcript_dir);
+bool ui_equals_row(uint8_t text[static 64], int64_t len, int64_t row);
+bool ui_is_yes(uint8_t text[static 64], int64_t len);
+int64_t ui_source_key_app_prefix(uint8_t text[static 4096], int64_t len);
+int64_t ui_row_bytes(int64_t row, uint8_t out[static 64]);
+bool ui_quit_waits(int32_t run_state);
 
 /* -------------------------------------------------------
    Function implementations
@@ -388,6 +487,279 @@ int32_t ui_overlay_line_count(int32_t available, int32_t panel_height, int32_t f
     return available;
 }
 
+int32_t ui_models_light_all(int32_t run_state, bool ever_started, int32_t lanes_started, int32_t lanes_failed, int32_t translators_failed) {
+    return ui_models_light(run_state, ever_started, lanes_started, (lanes_failed + translators_failed));
+}
+
+bool ui_shows_level(int32_t light) {
+    return (light == UI_LIGHT_OK);
+}
+
+int32_t ui_silence_banner(int32_t source_light, bool already_warned, bool error_shown) {
+    if (((source_light == UI_LIGHT_WARN) && (already_warned == false))) {
+        if (error_shown) {
+            return UI_SB_MARK;
+        }
+        return UI_SB_SHOW;
+    }
+    return UI_SB_NONE;
+}
+
+bool ui_poll_refreshes_catalogs(int64_t tick) {
+    return ((tick % UI_CATALOG_EVERY_TICKS) == UI_CATALOG_TICK);
+}
+
+int32_t ui_source_help(int32_t run_state, int32_t tap_status, int32_t source_light) {
+    if ((run_state != UI_RUN_RUNNING)) {
+        return UI_HELP_IDLE;
+    }
+    if ((tap_status == UI_TAP_WAITING)) {
+        return UI_HELP_WAITING;
+    }
+    if ((tap_status == UI_TAP_FAILED)) {
+        return UI_HELP_FAILED;
+    }
+    if ((tap_status == UI_TAP_NONE)) {
+        return UI_HELP_FILE;
+    }
+    if ((source_light == UI_LIGHT_WARN)) {
+        return UI_HELP_SILENCE;
+    }
+    return UI_HELP_FLOWING;
+}
+
+int32_t ui_source_title(bool is_system, bool has_running_name, bool has_label) {
+    if (is_system) {
+        return UI_TITLE_SYSTEM;
+    }
+    if (has_running_name) {
+        return UI_TITLE_RUNNING;
+    }
+    if (has_label) {
+        return UI_TITLE_LABEL;
+    }
+    return UI_TITLE_ID;
+}
+
+bool ui_has_call_output(bool has_blackhole, bool has_sink) {
+    return (has_blackhole || has_sink);
+}
+
+int32_t ui_banner_kind(int32_t banner) {
+    if (((((banner == UI_BAN_FAILED_PACKS) || (banner == UI_BAN_FAILED_OTHER)) || (banner == UI_BAN_NO_PACKS)) || (banner == UI_BAN_NO_TRANSLATOR))) {
+        return UI_BK_ERROR;
+    }
+    if (((banner == UI_BAN_NO_BLACKHOLE) || (banner == UI_BAN_SPEAKERS))) {
+        return UI_BK_WARNING;
+    }
+    return UI_BK_NONE;
+}
+
+int32_t ui_banner_step(int32_t banner) {
+    if ((((banner == UI_BAN_FAILED_PACKS) || (banner == UI_BAN_NO_PACKS)) || (banner == UI_BAN_NO_TRANSLATOR))) {
+        return UI_WZ_PACKS;
+    }
+    if ((banner == UI_BAN_FAILED_OTHER)) {
+        return UI_WZ_PERMISSIONS;
+    }
+    if ((banner == UI_BAN_NO_BLACKHOLE)) {
+        return UI_WZ_BLACKHOLE;
+    }
+    return UI_WZ_NONE;
+}
+
+int32_t ui_translation_error_banner(bool missing_packs, bool packs_banner_shown, bool same_text_shown) {
+    if (missing_packs) {
+        if (packs_banner_shown) {
+            return UI_TEB_NONE;
+        }
+        return UI_TEB_PACKS;
+    }
+    if (same_text_shown) {
+        return UI_TEB_NONE;
+    }
+    return UI_TEB_WARNING;
+}
+
+int32_t ui_device_choice(bool has_setting, bool found) {
+    if ((has_setting && found)) {
+        return UI_DEV_SAVED;
+    }
+    return UI_DEV_AUTO;
+}
+
+bool ui_probes_claude(int32_t preferred) {
+    return (preferred == UI_TR_CLAUDE);
+}
+
+bool ui_transcript_has_end(int32_t run_state) {
+    return (run_state != UI_RUN_RUNNING);
+}
+
+bool ui_test_phrase_possible(bool into_call, bool has_blackhole) {
+    return ((into_call == false) || has_blackhole);
+}
+
+int32_t ui_outgoing_status(bool paused, bool speaking, bool running, bool has_blackhole) {
+    if (paused) {
+        return UI_OUT_PAUSED;
+    }
+    if (speaking) {
+        return UI_OUT_SPEAKING;
+    }
+    if ((running && (has_blackhole == false))) {
+        return UI_OUT_NO_BLACKHOLE;
+    }
+    return UI_OUT_NONE;
+}
+
+int32_t ui_call_output_label(bool has_blackhole, bool has_setting) {
+    if ((has_blackhole && (has_setting == false))) {
+        return UI_COL_FOUND;
+    }
+    return UI_COL_SEARCH;
+}
+
+int32_t ui_translator_note(int32_t preferred, bool claude_available) {
+    if (claude_available) {
+        return UI_TN_NONE;
+    }
+    if ((preferred == UI_TR_CLAUDE)) {
+        return UI_TN_NO_KEY_FALLBACK;
+    }
+    return UI_TN_NO_KEY;
+}
+
+int32_t ui_permission_state(int64_t raw) {
+    if ((raw == UI_RAW_AUTHORIZED)) {
+        return UI_PERM_GRANTED;
+    }
+    if (((raw == UI_RAW_DENIED_A) || (raw == UI_RAW_DENIED_B))) {
+        return UI_PERM_DENIED;
+    }
+    if ((raw == UI_RAW_NOT_DETERMINED)) {
+        return UI_PERM_NOT_ASKED;
+    }
+    return UI_PERM_UNKNOWN;
+}
+
+int32_t ui_permission_action(int32_t state) {
+    if ((state == UI_PERM_DENIED)) {
+        return UI_PA_OPEN_SETTINGS;
+    }
+    if ((state != UI_PERM_GRANTED)) {
+        return UI_PA_REQUEST;
+    }
+    return UI_PA_NONE;
+}
+
+int32_t ui_permission_light(int32_t state) {
+    if ((state == UI_PERM_GRANTED)) {
+        return UI_LIGHT_OK;
+    }
+    if ((state == UI_PERM_DENIED)) {
+        return UI_LIGHT_BAD;
+    }
+    return UI_LIGHT_UNKNOWN;
+}
+
+bool ui_capture_needs_settings(int32_t light) {
+    return ((light == UI_LIGHT_BAD) || (light == UI_LIGHT_WARN));
+}
+
+int32_t ui_accessibility_light(bool granted) {
+    if (granted) {
+        return UI_LIGHT_OK;
+    }
+    return UI_LIGHT_UNKNOWN;
+}
+
+int32_t ui_pack_light(int32_t status) {
+    if ((status == UI_AVAIL_INSTALLED)) {
+        return UI_LIGHT_OK;
+    }
+    if ((status == UI_AVAIL_UNSUPPORTED)) {
+        return UI_LIGHT_BAD;
+    }
+    return UI_LIGHT_UNKNOWN;
+}
+
+bool ui_pack_refreshable(int32_t light) {
+    return (light != UI_LIGHT_BUSY);
+}
+
+bool ui_pack_download_enabled(int32_t light) {
+    return (((light == UI_LIGHT_BUSY) || (light == UI_LIGHT_OK)) == false);
+}
+
+int32_t ui_line_state(bool has_translation, bool has_error) {
+    if (has_translation) {
+        return UI_LINE_TRANSLATED;
+    }
+    if (has_error) {
+        return UI_LINE_FAILED;
+    }
+    return UI_LINE_PENDING;
+}
+
+bool ui_is_test_mode(bool has_incoming_file, bool has_outgoing_file, bool has_sink, bool has_transcript_dir) {
+    return (((has_incoming_file || has_outgoing_file) || has_sink) || has_transcript_dir);
+}
+
+bool ui_equals_row(uint8_t text[static 64], int64_t len, int64_t row) {
+    int64_t n = UI_ROW_LENGTHS[row];
+    if ((len != n)) {
+        return false;
+    }
+    int64_t off = UI_ROW_OFFSETS[row];
+    int64_t i = 0;
+    while ((i < n)) {
+        if ((text[i] != UI_ROW_TEXT[(off + i)])) {
+            return false;
+        }
+        i = (i + 1);
+    }
+    return true;
+}
+
+bool ui_is_yes(uint8_t text[static 64], int64_t len) {
+    return ((ui_equals_row(text, len, UI_ROW_YES) || ui_equals_row(text, len, UI_ROW_TRUE)) || ui_equals_row(text, len, UI_ROW_ONE));
+}
+
+int64_t ui_source_key_app_prefix(uint8_t text[static 4096], int64_t len) {
+    int64_t off = UI_ROW_OFFSETS[UI_ROW_SOURCE_APP_PREFIX];
+    int64_t n = UI_ROW_LENGTHS[UI_ROW_SOURCE_APP_PREFIX];
+    if ((len < n)) {
+        return -1;
+    }
+    int64_t i = 0;
+    while ((i < n)) {
+        if ((text[i] != UI_ROW_TEXT[(off + i)])) {
+            return -1;
+        }
+        i = (i + 1);
+    }
+    return n;
+}
+
+int64_t ui_row_bytes(int64_t row, uint8_t out[static 64]) {
+    if (((row < 0) || (row >= UI_ROW_COUNT))) {
+        return 0;
+    }
+    int64_t off = UI_ROW_OFFSETS[row];
+    int64_t n = UI_ROW_LENGTHS[row];
+    int64_t i = 0;
+    while ((i < n)) {
+        out[i] = UI_ROW_TEXT[(off + i)];
+        i = (i + 1);
+    }
+    return n;
+}
+
+bool ui_quit_waits(int32_t run_state) {
+    return (run_state == UI_RUN_RUNNING);
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
@@ -559,6 +931,115 @@ void test_ui_wizard_and_overlay(void) {
     assert((ui_overlay_line_count(5, 1000, 16) == 2));
 }
 
+void test_ui_moved_rules(void) {
+    assert((ui_models_light_all(UI_RUN_RUNNING, true, 2, 0, 1) == UI_LIGHT_BAD));
+    assert((ui_models_light_all(UI_RUN_RUNNING, true, 2, 0, 0) == UI_LIGHT_OK));
+    assert((ui_shows_level(UI_LIGHT_OK) == true));
+    assert((ui_shows_level(UI_LIGHT_WARN) == false));
+    assert((ui_silence_banner(UI_LIGHT_WARN, false, false) == UI_SB_SHOW));
+    assert((ui_silence_banner(UI_LIGHT_WARN, false, true) == UI_SB_MARK));
+    assert((ui_silence_banner(UI_LIGHT_WARN, true, false) == UI_SB_NONE));
+    assert((ui_silence_banner(UI_LIGHT_OK, false, false) == UI_SB_NONE));
+    assert((ui_poll_refreshes_catalogs(5) == true));
+    assert((ui_poll_refreshes_catalogs(11) == true));
+    assert((ui_poll_refreshes_catalogs(6) == false));
+    assert((ui_source_help(UI_RUN_IDLE, UI_TAP_WAITING, UI_LIGHT_OK) == UI_HELP_IDLE));
+    assert((ui_source_help(UI_RUN_RUNNING, UI_TAP_WAITING, UI_LIGHT_BUSY) == UI_HELP_WAITING));
+    assert((ui_source_help(UI_RUN_RUNNING, UI_TAP_FAILED, UI_LIGHT_BAD) == UI_HELP_FAILED));
+    assert((ui_source_help(UI_RUN_RUNNING, UI_TAP_NONE, UI_LIGHT_OK) == UI_HELP_FILE));
+    assert((ui_source_help(UI_RUN_RUNNING, UI_TAP_CAPTURING, UI_LIGHT_WARN) == UI_HELP_SILENCE));
+    assert((ui_source_help(UI_RUN_RUNNING, UI_TAP_CAPTURING, UI_LIGHT_OK) == UI_HELP_FLOWING));
+    assert((ui_source_title(true, true, true) == UI_TITLE_SYSTEM));
+    assert((ui_source_title(false, true, true) == UI_TITLE_RUNNING));
+    assert((ui_source_title(false, false, true) == UI_TITLE_LABEL));
+    assert((ui_source_title(false, false, false) == UI_TITLE_ID));
+    assert((ui_has_call_output(false, true) == true));
+    assert((ui_has_call_output(false, false) == false));
+    assert((ui_banner_kind(UI_BAN_NO_PACKS) == UI_BK_ERROR));
+    assert((ui_banner_kind(UI_BAN_SPEAKERS) == UI_BK_WARNING));
+    assert((ui_banner_kind(UI_BAN_NONE) == UI_BK_NONE));
+    assert((ui_banner_step(UI_BAN_NO_TRANSLATOR) == UI_WZ_PACKS));
+    assert((ui_banner_step(UI_BAN_FAILED_OTHER) == UI_WZ_PERMISSIONS));
+    assert((ui_banner_step(UI_BAN_NO_BLACKHOLE) == UI_WZ_BLACKHOLE));
+    assert((ui_banner_step(UI_BAN_SPEAKERS) == UI_WZ_NONE));
+    assert((ui_translation_error_banner(true, false, false) == UI_TEB_PACKS));
+    assert((ui_translation_error_banner(true, true, false) == UI_TEB_NONE));
+    assert((ui_translation_error_banner(false, false, false) == UI_TEB_WARNING));
+    assert((ui_translation_error_banner(false, false, true) == UI_TEB_NONE));
+    assert((ui_device_choice(true, true) == UI_DEV_SAVED));
+    assert((ui_device_choice(true, false) == UI_DEV_AUTO));
+    assert((ui_device_choice(false, true) == UI_DEV_AUTO));
+    assert((ui_probes_claude(UI_TR_CLAUDE) == true));
+    assert((ui_probes_claude(UI_TR_APPLE) == false));
+    assert((ui_transcript_has_end(UI_RUN_RUNNING) == false));
+    assert((ui_transcript_has_end(UI_RUN_IDLE) == true));
+    assert((ui_test_phrase_possible(true, false) == false));
+    assert((ui_test_phrase_possible(false, false) == true));
+    assert((ui_outgoing_status(true, true, true, false) == UI_OUT_PAUSED));
+    assert((ui_outgoing_status(false, true, true, false) == UI_OUT_SPEAKING));
+    assert((ui_outgoing_status(false, false, true, false) == UI_OUT_NO_BLACKHOLE));
+    assert((ui_outgoing_status(false, false, false, false) == UI_OUT_NONE));
+    assert((ui_call_output_label(true, false) == UI_COL_FOUND));
+    assert((ui_call_output_label(true, true) == UI_COL_SEARCH));
+    assert((ui_translator_note(UI_TR_CLAUDE, false) == UI_TN_NO_KEY_FALLBACK));
+    assert((ui_translator_note(UI_TR_APPLE, false) == UI_TN_NO_KEY));
+    assert((ui_translator_note(UI_TR_CLAUDE, true) == UI_TN_NONE));
+    assert((ui_permission_state(3) == UI_PERM_GRANTED));
+    assert((ui_permission_state(1) == UI_PERM_DENIED));
+    assert((ui_permission_state(2) == UI_PERM_DENIED));
+    assert((ui_permission_state(0) == UI_PERM_NOT_ASKED));
+    assert((ui_permission_state(7) == UI_PERM_UNKNOWN));
+    assert((ui_permission_action(UI_PERM_DENIED) == UI_PA_OPEN_SETTINGS));
+    assert((ui_permission_action(UI_PERM_NOT_ASKED) == UI_PA_REQUEST));
+    assert((ui_permission_action(UI_PERM_UNKNOWN) == UI_PA_REQUEST));
+    assert((ui_permission_action(UI_PERM_GRANTED) == UI_PA_NONE));
+    assert((ui_permission_light(UI_PERM_GRANTED) == UI_LIGHT_OK));
+    assert((ui_permission_light(UI_PERM_DENIED) == UI_LIGHT_BAD));
+    assert((ui_permission_light(UI_PERM_NOT_ASKED) == UI_LIGHT_UNKNOWN));
+    assert((ui_capture_needs_settings(UI_LIGHT_WARN) == true));
+    assert((ui_capture_needs_settings(UI_LIGHT_OK) == false));
+    assert((ui_accessibility_light(true) == UI_LIGHT_OK));
+    assert((ui_accessibility_light(false) == UI_LIGHT_UNKNOWN));
+    assert((ui_pack_light(UI_AVAIL_INSTALLED) == UI_LIGHT_OK));
+    assert((ui_pack_light(UI_AVAIL_SUPPORTED) == UI_LIGHT_UNKNOWN));
+    assert((ui_pack_light(UI_AVAIL_UNSUPPORTED) == UI_LIGHT_BAD));
+    assert((ui_pack_light(UI_AVAIL_UNKNOWN) == UI_LIGHT_UNKNOWN));
+    assert((ui_pack_refreshable(UI_LIGHT_BUSY) == false));
+    assert((ui_pack_refreshable(UI_LIGHT_OK) == true));
+    assert((ui_pack_download_enabled(UI_LIGHT_OK) == false));
+    assert((ui_pack_download_enabled(UI_LIGHT_BUSY) == false));
+    assert((ui_pack_download_enabled(UI_LIGHT_BAD) == true));
+    assert((ui_line_state(true, true) == UI_LINE_TRANSLATED));
+    assert((ui_line_state(false, true) == UI_LINE_FAILED));
+    assert((ui_line_state(false, false) == UI_LINE_PENDING));
+    assert((ui_is_test_mode(false, false, false, true) == true));
+    assert((ui_is_test_mode(false, false, false, false) == false));
+    uint8_t word[64] = { [0 ... (64) - 1] = 0 };
+    word[0] = 121;
+    word[1] = 101;
+    word[2] = 115;
+    assert((ui_is_yes(word, 3) == true));
+    assert((ui_is_yes(word, 2) == false));
+    word[0] = 49;
+    assert((ui_is_yes(word, 1) == true));
+    assert((ui_row_bytes(UI_ROW_SOURCE_SYSTEM, word) == 6));
+    assert((word[0] == 115));
+    uint8_t key[4096] = { [0 ... (4096) - 1] = 0 };
+    key[0] = 97;
+    key[1] = 112;
+    key[2] = 112;
+    key[3] = 58;
+    key[4] = 120;
+    assert((ui_source_key_app_prefix(key, 5) == 4));
+    assert((ui_source_key_app_prefix(key, 4) == 4));
+    assert((ui_source_key_app_prefix(key, 3) == -1));
+    key[3] = 59;
+    assert((ui_source_key_app_prefix(key, 5) == -1));
+    assert((ui_quit_waits(UI_RUN_RUNNING) == true));
+    assert((ui_quit_waits(UI_RUN_STOPPING) == false));
+    assert((UI_DEFAULT_TRANSLATOR == UI_TR_APPLE));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -570,7 +1051,8 @@ int main(void) {
     test_ui_run_and_buttons();
     test_ui_lights_and_choices();
     test_ui_wizard_and_overlay();
-    printf("All %d tests passed.\n", 3);
+    test_ui_moved_rules();
+    printf("All %d tests passed.\n", 4);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

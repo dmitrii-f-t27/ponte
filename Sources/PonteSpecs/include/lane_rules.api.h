@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <math.h>
 #include <assert.h>
 #define t27_assert(c, m) do { if (!(c)) { __builtin_trap(); } } while (0)
 #define assert_eq(a, b) do { if ((a) != (b)) { __builtin_trap(); } } while (0)
@@ -95,6 +96,26 @@
 #define LN_PTT_SCOPE_NONE 0
 #define LN_PTT_SCOPE_WINDOW 1
 #define LN_PTT_SCOPE_GLOBAL 2
+#define LN_DIR_INCOMING 0
+#define LN_DIR_OUTGOING 1
+#define LN_DEFAULT_MODE 0
+#define LN_DEFAULT_PTT_KEY 0
+#define LN_STOP_SEGMENT_WAIT_MS 3000
+#define LN_STOP_TRANSLATE_WAIT_MS 8000
+#define LN_MS_PER_SECOND 1000.0
+#define LN_SEG_DROP 0
+#define LN_SEG_FORWARD 1
+#define LN_SEG_BUFFER 2
+#define LN_SEGC_NONE 0
+#define LN_SEGC_FINISH 1
+#define LN_SEGC_MARK 2
+#define LN_SOURCE_LIVE 0
+#define LN_SOURCE_FILE 1
+#define LN_OUT_SINK 0
+#define LN_OUT_DEVICE 1
+#define LN_OUT_NONE 2
+#define LN_MIC_REQUEST_FIRST 1
+#define LN_SINK_PACE_SECONDS 0.05
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -117,5 +138,31 @@ int64_t ln_latency_ms(int64_t end_ms, int64_t ready_ms);
 int32_t ln_context_overflow(int32_t count);
 bool ln_ptt_key_down(int32_t key, uint64_t flags);
 int32_t ln_ptt_scope(bool running, int32_t mode, bool accessibility_granted);
+int64_t ln_millis(double seconds);
+bool ln_echo_marks_time(bool was_speaking, bool now_speaking);
+bool ln_gate_running(int32_t state);
+bool ln_gate_can_start(int32_t state);
+int32_t ln_phrase_end_choice_known(bool has_timed_end, int64_t ms_since_timed_end, bool has_partial, int64_t ms_since_partial);
+int32_t ln_phrase_flags(bool empty_text, bool speak_requested, bool generation_current, bool speech_enabled, bool paused, bool has_synth, bool has_player, bool has_audio);
+bool ln_needs_speech_workers(bool has_synth, bool has_player);
+int32_t ln_backlog_after_speech(int32_t backlog, bool counted);
+int32_t ln_speech_waiting(int32_t backlog, bool counted);
+bool ln_reports_translation_error(bool cancelled);
+bool ln_play_end_reports(int32_t action, bool generation_current);
+bool ln_intake_forwards(bool has_segment, bool echo_blocks);
+int32_t ln_segment_append(bool started, bool closed);
+int32_t ln_segment_close(bool started, bool closed);
+int32_t ln_source_kind(bool has_test_file);
+bool ln_requests_mic_permission(bool mic_is_live, int64_t mic_decision);
+int32_t ln_call_output(bool has_sink, bool has_blackhole);
+int32_t ln_lane_mode(int32_t direction, int32_t outgoing_mode);
+bool ln_lane_speaks(int32_t direction, bool speak_russian);
+bool ln_lane_voice_pause(int32_t direction);
+bool ln_lane_echo_guarded(int32_t direction);
+bool ln_lane_echo_source(int32_t direction);
+bool ln_glossary_source_is_pt(int32_t direction);
+bool ln_ptt_local(int32_t scope);
+bool ln_ptt_global(int32_t scope);
+double ln_sink_pace_step(double left);
 /* Function bodies: see the full header. */
 #endif
