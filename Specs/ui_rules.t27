@@ -1,0 +1,408 @@
+// SPDX-License-Identifier: MIT
+; Specs/ui_rules.t27 -- Ponte: what the window shows and allows
+; Mirrors the interface parts of PonteApp/AppRules.swift one to one: run state, start banners, autosave,
+; which controls are enabled, status lights and the latency colour, the source menu sections, the
+; translator setting, the setup wizard, the text size and the subtitle overlay (same codes, constants
+; and order of checks; each function names the Swift function it mirrors). Codes are Int32, milliseconds
+; Int64. Swift keeps the views and their Russian texts. ASCII only.
+; Generated C: Sources/PonteSpecs/ui_rules.h (Specs/generate.sh).
+
+module PonteUiRules;
+
+; --- Run state (RUN_*, TOGGLE_*) ---------------------------------------------------------------------------
+pub const UI_RUN_IDLE : i32 = 0;
+pub const UI_RUN_STARTING : i32 = 1;
+pub const UI_RUN_RUNNING : i32 = 2;
+pub const UI_RUN_STOPPING : i32 = 3;
+pub const UI_TOGGLE_NONE : i32 = 0;
+pub const UI_TOGGLE_START : i32 = 1;
+pub const UI_TOGGLE_STOP : i32 = 2;
+
+; --- Start banners (BAN_*) ------------------------------------------------------------------------------------
+pub const UI_BAN_NONE : i32 = 0;
+; Error with "open the wizard" on the packs step.
+pub const UI_BAN_FAILED_PACKS : i32 = 1;
+; Error with "open the wizard" on permissions.
+pub const UI_BAN_FAILED_OTHER : i32 = 2;
+; Warning with "how to install".
+pub const UI_BAN_NO_BLACKHOLE : i32 = 3;
+; Warning: put on headphones.
+pub const UI_BAN_SPEAKERS : i32 = 4;
+
+; --- Buttons (BTN_*) --------------------------------------------------------------------------------------------
+pub const UI_BTN_START_STOP : i32 = 1;
+pub const UI_BTN_SOURCE : i32 = 2;
+pub const UI_BTN_REPLAY_INCOMING : i32 = 3;
+pub const UI_BTN_REPLAY_OUTGOING : i32 = 4;
+pub const UI_BTN_SAVE_TRANSCRIPT : i32 = 5;
+pub const UI_BTN_PAUSE_VOICE : i32 = 6;
+pub const UI_BTN_MODE : i32 = 7;
+pub const UI_BTN_TALK_PAD : i32 = 8;
+pub const UI_BTN_TEST_CALL : i32 = 9;
+pub const UI_BTN_TEST_HEADPHONES : i32 = 10;
+pub const UI_BTN_VOICE_TOGGLE : i32 = 11;
+
+; --- Status lights (LIGHT_*) ------------------------------------------------------------------------------------
+pub const UI_LIGHT_UNKNOWN : i32 = 0;
+pub const UI_LIGHT_OK : i32 = 1;
+pub const UI_LIGHT_BAD : i32 = 2;
+pub const UI_LIGHT_BUSY : i32 = 3;
+; AUDIO_FRESH_MS: a buffer this recent means audio flows. AUDIO_WARMUP_MS: grace period after start.
+pub const UI_AUDIO_FRESH_MS : i64 = 2000;
+pub const UI_AUDIO_WARMUP_MS : i64 = 4000;
+
+; --- Latency colour (LAT_*) -------------------------------------------------------------------------------------
+pub const UI_LAT_NONE : i32 = 0;
+; At most 2 s: the target from SPEC.md.
+pub const UI_LAT_GOOD : i32 = 1;
+pub const UI_LAT_SLOW : i32 = 2;
+pub const UI_LAT_BAD : i32 = 3;
+pub const UI_LAT_GOOD_MS : i64 = 2000;
+pub const UI_LAT_SLOW_MS : i64 = 4000;
+
+; --- Source menu sections (SRC_*) ---------------------------------------------------------------------------------
+pub const UI_SRC_CALLS : i32 = 0;
+pub const UI_SRC_PLAYING : i32 = 1;
+pub const UI_SRC_OTHER : i32 = 2;
+
+; --- Translator setting (TR_*; the speech engine codes in context_rules.t27 differ) -------------------------------
+pub const UI_TR_APPLE : i32 = 0;
+pub const UI_TR_CLAUDE : i32 = 1;
+
+; --- Setup wizard (WZ_*, MARK_*) -------------------------------------------------------------------------------------
+pub const UI_WZ_PERMISSIONS : i32 = 0;
+pub const UI_WZ_MODELS : i32 = 1;
+pub const UI_WZ_PACKS : i32 = 2;
+pub const UI_WZ_BLACKHOLE : i32 = 3;
+pub const UI_WZ_CALL_APPS : i32 = 4;
+pub const UI_WZ_DONE : i32 = 5;
+pub const UI_WZ_NONE : i32 = -1;
+pub const UI_MARK_NONE : i32 = 0;
+pub const UI_MARK_DONE : i32 = 1;
+pub const UI_MARK_WARN : i32 = 2;
+; Both transcription models, and both translation packs, must be ready.
+pub const UI_WZ_MODELS_NEEDED : i32 = 2;
+pub const UI_WZ_PACKS_NEEDED : i32 = 2;
+
+; --- Text size (FONT_*) ------------------------------------------------------------------------------------------------
+pub const UI_FONT_DEFAULT_PT : i32 = 24;
+pub const UI_FONT_MIN_PT : i32 = 16;
+pub const UI_FONT_MAX_PT : i32 = 40;
+; A stored size below this is unset.
+pub const UI_FONT_UNSET_BELOW : i32 = 14;
+
+; --- Subtitle overlay (OVERLAY_*) --------------------------------------------------------------------------------------
+pub const UI_OVERLAY_MAX_LINES : i32 = 2;
+pub const UI_OVERLAY_PADDING_PT : i32 = 32;
+; lineHeight = fontSize x 13 / 10 + 8.
+pub const UI_LINE_HEIGHT_NUMERATOR : i32 = 13;
+pub const UI_LINE_HEIGHT_DENOMINATOR : i32 = 10;
+pub const UI_LINE_HEIGHT_EXTRA : i32 = 8;
+
+; --- Run state, start, stop ---------------------------------------------------------------------------------------------
+; toggleRun: idle starts, running stops, anything else does nothing.
+pub fn ui_toggle_run(run_state: i32) -> i32 {
+    if (run_state == UI_RUN_IDLE) { return UI_TOGGLE_START; }
+    if (run_state == UI_RUN_RUNNING) { return UI_TOGGLE_STOP; }
+    return UI_TOGGLE_NONE;
+}
+
+; runStateAfterStart: Ponte runs if at least one lane started.
+pub fn ui_run_state_after_start(lanes_started: i32) -> i32 {
+    if (lanes_started > 0) { return UI_RUN_RUNNING; }
+    return UI_RUN_IDLE;
+}
+
+; startBanner
+pub fn ui_start_banner(lanes_failed: i32, packs_missing: bool, has_blackhole: bool, speaker_output: bool) -> i32 {
+    if (lanes_failed > 0) {
+        if (packs_missing) { return UI_BAN_FAILED_PACKS; }
+        return UI_BAN_FAILED_OTHER;
+    }
+    if (has_blackhole == false) { return UI_BAN_NO_BLACKHOLE; }
+    if (speaker_output) { return UI_BAN_SPEAKERS; }
+    return UI_BAN_NONE;
+}
+
+; autosaveOnStop
+pub fn ui_autosave_on_stop(lines: i32) -> bool {
+    return lines > 0;
+}
+
+; --- Which controls are enabled -------------------------------------------------------------------------------------------
+; buttonEnabled
+pub fn ui_button_enabled(button: i32, run_state: i32, incoming_lines: i32, outgoing_lines: i32, has_blackhole: bool, busy: bool) -> bool {
+    var running: bool = run_state == UI_RUN_RUNNING;
+    if (button == UI_BTN_START_STOP) { return run_state == UI_RUN_IDLE or running; }
+    if (button == UI_BTN_SOURCE) { return run_state == UI_RUN_IDLE; }
+    if (button == UI_BTN_REPLAY_INCOMING) { return running and incoming_lines > 0; }
+    if (button == UI_BTN_REPLAY_OUTGOING) { return running and outgoing_lines > 0; }
+    if (button == UI_BTN_SAVE_TRANSCRIPT) { return incoming_lines + outgoing_lines > 0; }
+    if (button == UI_BTN_PAUSE_VOICE or button == UI_BTN_MODE or button == UI_BTN_VOICE_TOGGLE) { return true; }
+    if (button == UI_BTN_TALK_PAD) { return running; }
+    if (button == UI_BTN_TEST_CALL) { return has_blackhole and busy == false; }
+    if (button == UI_BTN_TEST_HEADPHONES) { return busy == false; }
+    return false;
+}
+
+; --- Status lights and latency colour ----------------------------------------------------------------------------------------
+; audioLight: source audio or microphone. ms_since_buffer < 0: no buffer yet.
+pub fn ui_audio_light(run_state: i32, lane_active: bool, ms_since_start: i64, ms_since_buffer: i64) -> i32 {
+    if (run_state == UI_RUN_STARTING) { return UI_LIGHT_BUSY; }
+    if (run_state != UI_RUN_RUNNING) { return UI_LIGHT_UNKNOWN; }
+    if (lane_active == false) { return UI_LIGHT_BAD; }
+    if (ms_since_buffer >= 0 and ms_since_buffer < UI_AUDIO_FRESH_MS) { return UI_LIGHT_OK; }
+    if (ms_since_start < UI_AUDIO_WARMUP_MS) { return UI_LIGHT_BUSY; }
+    return UI_LIGHT_BAD;
+}
+
+; blackHoleLight
+pub fn ui_blackhole_light(found: bool) -> i32 {
+    if (found) { return UI_LIGHT_OK; }
+    return UI_LIGHT_BAD;
+}
+
+; modelsLight: transcribers and translator, from the last start attempt.
+pub fn ui_models_light(run_state: i32, ever_started: bool, lanes_started: i32, lanes_failed: i32) -> i32 {
+    if (run_state == UI_RUN_STARTING) { return UI_LIGHT_BUSY; }
+    if (ever_started == false) { return UI_LIGHT_UNKNOWN; }
+    if (lanes_failed > 0) { return UI_LIGHT_BAD; }
+    if (lanes_started > 0) { return UI_LIGHT_OK; }
+    return UI_LIGHT_UNKNOWN;
+}
+
+; latencyColor: ms < 0 means no phrase yet.
+pub fn ui_latency_color(ms: i64) -> i32 {
+    if (ms < 0) { return UI_LAT_NONE; }
+    if (ms <= UI_LAT_GOOD_MS) { return UI_LAT_GOOD; }
+    if (ms <= UI_LAT_SLOW_MS) { return UI_LAT_SLOW; }
+    return UI_LAT_BAD;
+}
+
+; --- Source menu and translator --------------------------------------------------------------------------------------------
+; sourceSection
+pub fn ui_source_section(is_known_call_app: bool, is_playing_audio: bool) -> i32 {
+    if (is_known_call_app) { return UI_SRC_CALLS; }
+    if (is_playing_audio) { return UI_SRC_PLAYING; }
+    return UI_SRC_OTHER;
+}
+
+; translatorChoice: Claude only when preferred and available.
+pub fn ui_translator_choice(preferred: i32, claude_available: bool) -> i32 {
+    if (preferred == UI_TR_CLAUDE and claude_available) { return UI_TR_CLAUDE; }
+    return UI_TR_APPLE;
+}
+
+; --- Setup wizard -------------------------------------------------------------------------------------------------------------
+; wizardNext: the next step, or NONE past the last (and for unknown steps).
+pub fn ui_wizard_next(step: i32) -> i32 {
+    if (step >= UI_WZ_PERMISSIONS and step < UI_WZ_DONE) { return step + 1; }
+    return UI_WZ_NONE;
+}
+
+; wizardPrevious
+pub fn ui_wizard_previous(step: i32) -> i32 {
+    if (step > UI_WZ_PERMISSIONS and step <= UI_WZ_DONE) { return step - 1; }
+    return UI_WZ_NONE;
+}
+
+; wizardStepMark: done, warning (BlackHole missing) or nothing, per step.
+pub fn ui_wizard_step_mark(step: i32, mic_granted: bool, speech_granted: bool, models_ready: i32, packs_ready: i32, blackhole_found: bool, test_phrase_ok: bool) -> i32 {
+    if (step == UI_WZ_PERMISSIONS) {
+        if (mic_granted and speech_granted) { return UI_MARK_DONE; }
+        return UI_MARK_NONE;
+    }
+    if (step == UI_WZ_MODELS) {
+        if (models_ready >= UI_WZ_MODELS_NEEDED) { return UI_MARK_DONE; }
+        return UI_MARK_NONE;
+    }
+    if (step == UI_WZ_PACKS) {
+        if (packs_ready >= UI_WZ_PACKS_NEEDED) { return UI_MARK_DONE; }
+        return UI_MARK_NONE;
+    }
+    if (step == UI_WZ_BLACKHOLE) {
+        if (blackhole_found) { return UI_MARK_DONE; }
+        return UI_MARK_WARN;
+    }
+    if (step == UI_WZ_CALL_APPS) {
+        if (test_phrase_ok) { return UI_MARK_DONE; }
+        return UI_MARK_NONE;
+    }
+    return UI_MARK_NONE;
+}
+
+; wizardShowOnLaunch: forced_step >= 0 when the wizard was asked for explicitly.
+pub fn ui_wizard_show_on_launch(setup_completed: bool, forced_step: i32) -> bool {
+    return forced_step >= 0 or setup_completed == false;
+}
+
+; wizardCompletedAfterClose: "close" keeps the old flag; "start working" (finished) completes setup.
+pub fn ui_wizard_completed_after_close(was_completed: bool, finished: bool) -> bool {
+    return was_completed or finished;
+}
+
+; --- Text size and overlay ------------------------------------------------------------------------------------------------------
+; translationFontSize: unset or below 14 gives the default; otherwise clamped to 16...40.
+pub fn ui_translation_font_size(stored: i32) -> i32 {
+    if (stored < UI_FONT_UNSET_BELOW) { return UI_FONT_DEFAULT_PT; }
+    var at_least: i32 = UI_FONT_MIN_PT;
+    if (stored >= UI_FONT_MIN_PT) { at_least = stored; }
+    if (at_least < UI_FONT_MAX_PT) { return at_least; }
+    return UI_FONT_MAX_PT;
+}
+
+; overlayLineCount: the last N incoming translations to show; 1 when the panel is too short for 2.
+pub fn ui_overlay_line_count(available: i32, panel_height: i32, font_size: i32) -> i32 {
+    if (available <= 0) { return 0; }
+    var line_height: i32 = font_size * UI_LINE_HEIGHT_NUMERATOR / UI_LINE_HEIGHT_DENOMINATOR + UI_LINE_HEIGHT_EXTRA;
+    var fits: i32 = 1;
+    if (panel_height - UI_OVERLAY_PADDING_PT >= UI_OVERLAY_MAX_LINES * line_height) { fits = UI_OVERLAY_MAX_LINES; }
+    if (fits < available) { return fits; }
+    return available;
+}
+
+test ui_run_and_buttons {
+    // rulesRunStateBannersAndButtons
+    assert ui_toggle_run(UI_RUN_IDLE) == UI_TOGGLE_START;
+    assert ui_toggle_run(UI_RUN_RUNNING) == UI_TOGGLE_STOP;
+    assert ui_toggle_run(UI_RUN_STARTING) == UI_TOGGLE_NONE;
+    assert ui_toggle_run(UI_RUN_STOPPING) == UI_TOGGLE_NONE;
+    assert ui_run_state_after_start(0) == UI_RUN_IDLE;
+    assert ui_run_state_after_start(1) == UI_RUN_RUNNING;
+    assert ui_start_banner(1, true, false, true) == UI_BAN_FAILED_PACKS;
+    assert ui_start_banner(2, false, true, false) == UI_BAN_FAILED_OTHER;
+    assert ui_start_banner(0, false, false, true) == UI_BAN_NO_BLACKHOLE;
+    assert ui_start_banner(0, false, true, true) == UI_BAN_SPEAKERS;
+    assert ui_start_banner(0, true, true, false) == UI_BAN_NONE;
+    assert ui_autosave_on_stop(1) == true;
+    assert ui_autosave_on_stop(0) == false;
+    assert ui_button_enabled(UI_BTN_START_STOP, UI_RUN_IDLE, 0, 0, true, false) == true;
+    assert ui_button_enabled(UI_BTN_START_STOP, UI_RUN_RUNNING, 0, 0, true, false) == true;
+    assert ui_button_enabled(UI_BTN_START_STOP, UI_RUN_STARTING, 0, 0, true, false) == false;
+    assert ui_button_enabled(UI_BTN_START_STOP, UI_RUN_STOPPING, 0, 0, true, false) == false;
+    assert ui_button_enabled(UI_BTN_SOURCE, UI_RUN_IDLE, 0, 0, true, false) == true;
+    assert ui_button_enabled(UI_BTN_SOURCE, UI_RUN_RUNNING, 0, 0, true, false) == false;
+    assert ui_button_enabled(UI_BTN_REPLAY_INCOMING, UI_RUN_RUNNING, 0, 0, true, false) == false;
+    assert ui_button_enabled(UI_BTN_REPLAY_INCOMING, UI_RUN_RUNNING, 1, 0, true, false) == true;
+    assert ui_button_enabled(UI_BTN_REPLAY_INCOMING, UI_RUN_IDLE, 1, 0, true, false) == false;
+    assert ui_button_enabled(UI_BTN_REPLAY_OUTGOING, UI_RUN_RUNNING, 0, 1, true, false) == true;
+    assert ui_button_enabled(UI_BTN_REPLAY_OUTGOING, UI_RUN_RUNNING, 1, 0, true, false) == false;
+    assert ui_button_enabled(UI_BTN_SAVE_TRANSCRIPT, UI_RUN_IDLE, 0, 1, true, false) == true;
+    assert ui_button_enabled(UI_BTN_SAVE_TRANSCRIPT, UI_RUN_RUNNING, 0, 0, true, false) == false;
+    assert ui_button_enabled(UI_BTN_PAUSE_VOICE, UI_RUN_IDLE, 0, 0, true, false) == true;
+    assert ui_button_enabled(UI_BTN_MODE, UI_RUN_STOPPING, 0, 0, true, false) == true;
+    assert ui_button_enabled(UI_BTN_VOICE_TOGGLE, UI_RUN_STARTING, 0, 0, true, false) == true;
+    assert ui_button_enabled(UI_BTN_TALK_PAD, UI_RUN_RUNNING, 0, 0, true, false) == true;
+    assert ui_button_enabled(UI_BTN_TALK_PAD, UI_RUN_IDLE, 0, 0, true, false) == false;
+    assert ui_button_enabled(UI_BTN_TEST_CALL, UI_RUN_IDLE, 0, 0, true, false) == true;
+    assert ui_button_enabled(UI_BTN_TEST_CALL, UI_RUN_IDLE, 0, 0, false, false) == false;
+    assert ui_button_enabled(UI_BTN_TEST_CALL, UI_RUN_IDLE, 0, 0, true, true) == false;
+    assert ui_button_enabled(UI_BTN_TEST_HEADPHONES, UI_RUN_IDLE, 0, 0, false, false) == true;
+    assert ui_button_enabled(UI_BTN_TEST_HEADPHONES, UI_RUN_IDLE, 0, 0, true, true) == false;
+    assert ui_button_enabled(0, UI_RUN_RUNNING, 0, 0, true, false) == false;
+    // Every button and run state: replay and the talk pad need a running Ponte.
+    var b: i32 = 0;
+    var bad: u32 = 0;
+    while (b <= 12) {
+        var r: i32 = 0;
+        while (r < 4) {
+            var on: bool = ui_button_enabled(b, r, 1, 1, true, false);
+            if ((b == UI_BTN_REPLAY_INCOMING or b == UI_BTN_REPLAY_OUTGOING or b == UI_BTN_TALK_PAD) and on and r != UI_RUN_RUNNING) { bad = bad + 1; }
+            if ((b < UI_BTN_START_STOP or b > UI_BTN_VOICE_TOGGLE) and on) { bad = bad + 1; }
+            r = r + 1;
+        }
+        b = b + 1;
+    }
+    assert bad == 0;
+}
+
+test ui_lights_and_choices {
+    // rulesLightsAndLatency
+    assert ui_audio_light(UI_RUN_IDLE, true, 0, 0) == UI_LIGHT_UNKNOWN;
+    assert ui_audio_light(UI_RUN_STARTING, false, 0, -1) == UI_LIGHT_BUSY;
+    assert ui_audio_light(UI_RUN_RUNNING, false, 0, -1) == UI_LIGHT_BAD;
+    assert ui_audio_light(UI_RUN_RUNNING, true, 9000, 1999) == UI_LIGHT_OK;
+    assert ui_audio_light(UI_RUN_RUNNING, true, 3999, -1) == UI_LIGHT_BUSY;
+    assert ui_audio_light(UI_RUN_RUNNING, true, 4000, 2000) == UI_LIGHT_BAD;
+    assert ui_blackhole_light(true) == UI_LIGHT_OK;
+    assert ui_blackhole_light(false) == UI_LIGHT_BAD;
+    assert ui_models_light(UI_RUN_IDLE, false, 0, 0) == UI_LIGHT_UNKNOWN;
+    assert ui_models_light(UI_RUN_STARTING, true, 0, 0) == UI_LIGHT_BUSY;
+    assert ui_models_light(UI_RUN_RUNNING, true, 2, 0) == UI_LIGHT_OK;
+    assert ui_models_light(UI_RUN_RUNNING, true, 1, 1) == UI_LIGHT_BAD;
+    assert ui_models_light(UI_RUN_IDLE, true, 2, 0) == UI_LIGHT_OK;
+    assert ui_latency_color(-1) == UI_LAT_NONE;
+    assert ui_latency_color(0) == UI_LAT_GOOD;
+    assert ui_latency_color(2000) == UI_LAT_GOOD;
+    assert ui_latency_color(2001) == UI_LAT_SLOW;
+    assert ui_latency_color(4000) == UI_LAT_SLOW;
+    assert ui_latency_color(4001) == UI_LAT_BAD;
+    // rulesSourceTranslatorPushToTalk (source and translator part)
+    assert ui_source_section(true, false) == UI_SRC_CALLS;
+    assert ui_source_section(false, true) == UI_SRC_PLAYING;
+    assert ui_source_section(false, false) == UI_SRC_OTHER;
+    assert ui_translator_choice(UI_TR_CLAUDE, true) == UI_TR_CLAUDE;
+    assert ui_translator_choice(UI_TR_CLAUDE, false) == UI_TR_APPLE;
+    assert ui_translator_choice(UI_TR_APPLE, true) == UI_TR_APPLE;
+    // The latency colour never improves as the latency grows.
+    var ms: i64 = 0;
+    var previous: i32 = UI_LAT_GOOD;
+    var bad: u32 = 0;
+    while (ms <= 10000) {
+        var c: i32 = ui_latency_color(ms);
+        if (c < previous) { bad = bad + 1; }
+        previous = c;
+        ms = ms + 7;
+    }
+    assert bad == 0;
+}
+
+test ui_wizard_and_overlay {
+    // rulesWizardAndOverlay
+    assert ui_wizard_next(0) == 1;
+    assert ui_wizard_next(4) == 5;
+    assert ui_wizard_next(5) == UI_WZ_NONE;
+    assert ui_wizard_next(-1) == UI_WZ_NONE;
+    assert ui_wizard_previous(0) == UI_WZ_NONE;
+    assert ui_wizard_previous(1) == 0;
+    assert ui_wizard_previous(5) == 4;
+    assert ui_wizard_previous(6) == UI_WZ_NONE;
+    assert ui_wizard_step_mark(UI_WZ_PERMISSIONS, true, true, 0, 0, false, false) == UI_MARK_DONE;
+    assert ui_wizard_step_mark(UI_WZ_PERMISSIONS, true, false, 0, 0, false, false) == UI_MARK_NONE;
+    assert ui_wizard_step_mark(UI_WZ_MODELS, false, false, 2, 0, false, false) == UI_MARK_DONE;
+    assert ui_wizard_step_mark(UI_WZ_MODELS, false, false, 1, 0, false, false) == UI_MARK_NONE;
+    assert ui_wizard_step_mark(UI_WZ_PACKS, false, false, 0, 2, false, false) == UI_MARK_DONE;
+    assert ui_wizard_step_mark(UI_WZ_PACKS, false, false, 0, 1, false, false) == UI_MARK_NONE;
+    assert ui_wizard_step_mark(UI_WZ_BLACKHOLE, false, false, 0, 0, true, false) == UI_MARK_DONE;
+    assert ui_wizard_step_mark(UI_WZ_BLACKHOLE, false, false, 0, 0, false, false) == UI_MARK_WARN;
+    assert ui_wizard_step_mark(UI_WZ_CALL_APPS, false, false, 0, 0, false, true) == UI_MARK_DONE;
+    assert ui_wizard_step_mark(UI_WZ_CALL_APPS, false, false, 0, 0, false, false) == UI_MARK_NONE;
+    assert ui_wizard_step_mark(UI_WZ_DONE, true, true, 2, 2, true, true) == UI_MARK_NONE;
+    assert ui_wizard_show_on_launch(false, -1) == true;
+    assert ui_wizard_show_on_launch(true, -1) == false;
+    assert ui_wizard_show_on_launch(true, 3) == true;
+    assert ui_wizard_completed_after_close(false, true) == true;
+    assert ui_wizard_completed_after_close(false, false) == false;
+    assert ui_wizard_completed_after_close(true, false) == true;
+    // next and previous walk the six steps both ways.
+    var s: i32 = 0;
+    var bad: u32 = 0;
+    while (s < UI_WZ_DONE) {
+        if (ui_wizard_previous(ui_wizard_next(s)) != s) { bad = bad + 1; }
+        s = s + 1;
+    }
+    assert bad == 0;
+    assert ui_translation_font_size(0) == 24;
+    assert ui_translation_font_size(13) == 24;
+    assert ui_translation_font_size(14) == 16;
+    assert ui_translation_font_size(16) == 16;
+    assert ui_translation_font_size(30) == 30;
+    assert ui_translation_font_size(40) == 40;
+    assert ui_translation_font_size(41) == 40;
+    assert ui_translation_font_size(99) == 40;
+    assert ui_overlay_line_count(0, 500, 24) == 0;
+    assert ui_overlay_line_count(5, 130, 24) == 2;
+    assert ui_overlay_line_count(1, 130, 24) == 1;
+    assert ui_overlay_line_count(5, 90, 40) == 1;
+    assert ui_overlay_line_count(5, 1000, 16) == 2;
+}
