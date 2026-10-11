@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>ru</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>ru</string>
+	</array>
+	<key>CFBundleDisplayName</key>
+	<string>Ponte</string>
+	<key>CFBundleExecutable</key>
+	<string>Ponte</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>app.ponte.translator</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Ponte</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Ponte слушает вашу русскую речь, чтобы перевести её на португальский и передать в звонок.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Ponte слышит собеседников из программы звонка (Zoom, браузер, Telegram, WhatsApp), чтобы показать русский перевод.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Ponte превращает речь в текст на этом Маке, чтобы перевести разговор.</string>
+</dict>
+</plist>
