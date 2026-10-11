@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: MIT
+; Specs/context_rules.t27 -- Ponte: translation context, the translator engine, retries, the Claude request
+; Mirrors the translation-context, translator-choice and Claude-request parts of
+; PonteSpeech/SpeechRules.swift one to one (same constants, codes and order of checks; each function
+; names the Swift function it mirrors). Times are integer milliseconds. ASCII only.
+; Generated C: Sources/PonteSpecs/context_rules.h (Specs/generate.sh).
+
+module PonteContextRules;
+
+; --- Translation context ------------------------------------------------------------------------------
+; contextMaxPhrases, contextMaxBytes: at most this many previous phrases, and this many bytes of them.
+pub const CX_CONTEXT_MAX_PHRASES : i64 = 4;
+pub const CX_CONTEXT_MAX_BYTES : i64 = 600;
+; cx_context_count reads at most this many lengths (the newest, oldest first); only 4 can be taken.
+pub const CX_CONTEXT_LIST_MAX : i64 = 8;
+
+; --- Engines (engineNone, engineApple, engineClaude) -----------------------------------------------------
+pub const CX_ENGINE_NONE : i64 = 0;
+pub const CX_ENGINE_APPLE : i64 = 1;
+pub const CX_ENGINE_CLAUDE : i64 = 2;
+
+; --- Translation errors (error*) -------------------------------------------------------------------------
+pub const CX_ERROR_TIMEOUT : i64 = 1;
+pub const CX_ERROR_NETWORK : i64 = 2;
+; HTTP 429 and 5xx.
+pub const CX_ERROR_OVERLOADED : i64 = 3;
+; Other HTTP 4xx: the key, the request.
+pub const CX_ERROR_REJECTED : i64 = 4;
+; The Apple language pack is not downloaded.
+pub const CX_ERROR_ASSETS_MISSING : i64 = 5;
+pub const CX_ERROR_UNSUPPORTED : i64 = 6;
+; Claude stop_reason "refusal".
+pub const CX_ERROR_REFUSED : i64 = 7;
+pub const CX_ERROR_EMPTY : i64 = 8;
+pub const CX_ERROR_OTHER : i64 = 9;
+; HTTP statuses errorCode tells apart.
+pub const CX_HTTP_NO_RESPONSE : i64 = 0;
+pub const CX_HTTP_TOO_MANY_REQUESTS : i64 = 429;
+pub const CX_HTTP_SERVER_ERROR : i64 = 500;
+pub const CX_HTTP_CLIENT_ERROR : i64 = 400;
+
+; --- Retries ---------------------------------------------------------------------------------------------
+; maxTranslationAttempts: attempts per phrase, all engines together.
+pub const CX_MAX_TRANSLATION_ATTEMPTS : i64 = 2;
+; retryAction results.
+pub const CX_RETRY_GIVE_UP : i64 = 0;
+pub const CX_RETRY_SAME : i64 = 1;
+pub const CX_RETRY_SWITCH : i64 = 2;
+; translationTimeoutMs: on-device translation takes about 0.1-0.3 s once warm.
+pub const CX_APPLE_TIMEOUT_MS : i64 = 3000;
+pub const CX_CLAUDE_TIMEOUT_MS : i64 = 5000;
+
+; --- Claude request shape ---------------------------------------------------------------------------------
+; claudeModelID: "claude-haiku-5-5".
+pub const CX_CLAUDE_MODEL_ID : [16]u8 = [99, 108, 97, 117, 100, 101, 45, 104, 97, 105, 107, 117, 45, 53, 45, 53];
+pub const CX_CLAUDE_MODEL_ID_LEN : u32 = 16;
+; anthropicVersion: "2023-06-01".
+pub const CX_ANTHROPIC_VERSION : [10]u8 = [50, 48, 50, 51, 45, 48, 54, 45, 48, 49];
+pub const CX_ANTHROPIC_VERSION_LEN : u32 = 10;
+; claudeMaxTokens: room for adaptive thinking plus a one-phrase answer.
+pub const CX_CLAUDE_MAX_TOKENS : i64 = 1024;
+; claudeEffortCode: 0 low, 1 medium, 2 high. Low keeps the latency down.
+pub const CX_CLAUDE_EFFORT_CODE : i64 = 0;
+; claudeRequestTimeoutMs: the URLRequest timeout; the per-attempt limit above is shorter.
+pub const CX_CLAUDE_REQUEST_TIMEOUT_MS : i64 = 20000;
+; Room in the out-buffers of the two byte strings.
+pub const CX_TEXT_OUT_MAX : u32 = 64;
+
+; --- Translation context ------------------------------------------------------------------------------------
+; contextCount: how many of the newest previous phrases go into the prompt. byte_lengths holds count
+; UTF-8 lengths, oldest first (at most CX_CONTEXT_LIST_MAX: pass the newest). From the newest back,
+; while fewer than 4 are taken and the next still fits in 600 bytes; stops at the first that does not.
+pub fn cx_context_count(byte_lengths: [8]i64, count: i64) -> i64 {
+    var n: i64 = count;
+    if (n > CX_CONTEXT_LIST_MAX) { n = CX_CONTEXT_LIST_MAX; }
+    var taken: i64 = 0;
+    var total: i64 = 0;
+    var i: i64 = n - 1;
+    while (i >= 0) {
+        var length: i64 = byte_lengths[i];
+        if (taken < CX_CONTEXT_MAX_PHRASES and total + length <= CX_CONTEXT_MAX_BYTES) {
+            total = total + length;
+            taken = taken + 1;
+            i = i - 1;
+        } else {
+            i = -1;
+        }
+    }
+    return taken;
+}
+
+; --- Translator choice and fallback ---------------------------------------------------------------------------
+; primaryEngine: Claude when preferred and available; else Apple when ready; else Claude when available.
+pub fn cx_primary_engine(preferred: i64, apple_ready: bool, claude_available: bool) -> i64 {
+    if (preferred == CX_ENGINE_CLAUDE and claude_available) { return CX_ENGINE_CLAUDE; }
+    if (apple_ready) { return CX_ENGINE_APPLE; }
+    if (claude_available) { return CX_ENGINE_CLAUDE; }
+    return CX_ENGINE_NONE;
+}
+
+; fallbackEngine: the other engine, if it can be used.
+pub fn cx_fallback_engine(failed: i64, apple_ready: bool, claude_available: bool) -> i64 {
+    if (failed == CX_ENGINE_CLAUDE and apple_ready) { return CX_ENGINE_APPLE; }
+    if (failed == CX_ENGINE_APPLE and claude_available) { return CX_ENGINE_CLAUDE; }
+    return CX_ENGINE_NONE;
+}
+
+; translationTimeoutMs: the per-attempt limit; 0 for no engine.
+pub fn cx_translation_timeout_ms(engine: i64) -> i64 {
+    if (engine == CX_ENGINE_APPLE) { return CX_APPLE_TIMEOUT_MS; }
+    if (engine == CX_ENGINE_CLAUDE) { return CX_CLAUDE_TIMEOUT_MS; }
+    return 0;
+}
+
+; errorCode: the error for an HTTP status from the Claude API (0 = no response).
+pub fn cx_error_code(http_status: i64) -> i64 {
+    if (http_status == CX_HTTP_NO_RESPONSE) { return CX_ERROR_NETWORK; }
+    if (http_status == CX_HTTP_TOO_MANY_REQUESTS or http_status >= CX_HTTP_SERVER_ERROR) { return CX_ERROR_OVERLOADED; }
+    if (http_status >= CX_HTTP_CLIENT_ERROR) { return CX_ERROR_REJECTED; }
+    return CX_ERROR_OTHER;
+}
+
+; retryAction: after a failed attempt (attempt is 0-based) give up when the attempts are spent; switch
+; when there is a fallback engine; else retry transient errors (timeout, network, overloaded, empty,
+; other) and give up on the rest.
+pub fn cx_retry_action(error_code: i64, attempt: i64, fallback: i64) -> i64 {
+    if (attempt + 1 < CX_MAX_TRANSLATION_ATTEMPTS) {
+        if (fallback != CX_ENGINE_NONE) { return CX_RETRY_SWITCH; }
+        if (error_code == CX_ERROR_TIMEOUT or error_code == CX_ERROR_NETWORK or error_code == CX_ERROR_OVERLOADED or error_code == CX_ERROR_EMPTY or error_code == CX_ERROR_OTHER) {
+            return CX_RETRY_SAME;
+        }
+        return CX_RETRY_GIVE_UP;
+    }
+    return CX_RETRY_GIVE_UP;
+}
+
+; --- Claude request shape ------------------------------------------------------------------------------------
+; claudeModelID: writes the model id bytes to out and returns their length.
+pub fn cx_claude_model_id(out: [64]u8) -> u32 {
+    var i: u32 = 0;
+    while (i < CX_CLAUDE_MODEL_ID_LEN) {
+        out[i] = CX_CLAUDE_MODEL_ID[i];
+        i = i + 1;
+    }
+    return CX_CLAUDE_MODEL_ID_LEN;
+}
+
+; anthropicVersion: writes the API version header bytes to out and returns their length.
+pub fn cx_anthropic_version(out: [64]u8) -> u32 {
+    var i: u32 = 0;
+    while (i < CX_ANTHROPIC_VERSION_LEN) {
+        out[i] = CX_ANTHROPIC_VERSION[i];
+        i = i + 1;
+    }
+    return CX_ANTHROPIC_VERSION_LEN;
+}
+
+test cx_context_rules {
+    var lengths: [8]i64 = [0; 8];
+    // countAndByteCap
+    assert cx_context_count(lengths, 0) == 0;
+    var i: i64 = 0;
+    while (i < 6) {
+        lengths[i] = 10;
+        i = i + 1;
+    }
+    assert cx_context_count(lengths, 6) == 4;
+    lengths[0] = 500;
+    lengths[1] = 50;
+    lengths[2] = 50;
+    assert cx_context_count(lengths, 3) == 3;
+    lengths[0] = 501;
+    assert cx_context_count(lengths, 3) == 2;
+    lengths[0] = 700;
+    assert cx_context_count(lengths, 1) == 0;
+    lengths[0] = 10;
+    lengths[1] = 700;
+    lengths[2] = 10;
+    assert cx_context_count(lengths, 3) == 1;
+    // Never more than 4 phrases or 600 bytes, for all lengths of a small grid.
+    var a: i64 = 0;
+    var bad: u32 = 0;
+    while (a <= 700) {
+        var b: i64 = 0;
+        while (b <= 700) {
+            lengths[0] = 100;
+            lengths[1] = a;
+            lengths[2] = b;
+            lengths[3] = 50;
+            lengths[4] = a;
+            var taken: i64 = cx_context_count(lengths, 5);
+            var sum: i64 = 0;
+            var k: i64 = 0;
+            while (k < taken) {
+                sum = sum + lengths[4 - k];
+                k = k + 1;
+            }
+            if (taken > 4 or sum > 600) { bad = bad + 1; }
+            b = b + 50;
+        }
+        a = a + 50;
+    }
+    assert bad == 0;
+}
+
+test cx_engine_rules {
+    // primaryAndFallback
+    assert cx_primary_engine(CX_ENGINE_APPLE, true, true) == CX_ENGINE_APPLE;
+    assert cx_primary_engine(CX_ENGINE_CLAUDE, true, true) == CX_ENGINE_CLAUDE;
+    assert cx_primary_engine(CX_ENGINE_CLAUDE, true, false) == CX_ENGINE_APPLE;
+    assert cx_primary_engine(CX_ENGINE_APPLE, false, true) == CX_ENGINE_CLAUDE;
+    assert cx_primary_engine(CX_ENGINE_APPLE, false, false) == CX_ENGINE_NONE;
+    assert cx_fallback_engine(CX_ENGINE_APPLE, true, true) == CX_ENGINE_CLAUDE;
+    assert cx_fallback_engine(CX_ENGINE_CLAUDE, true, true) == CX_ENGINE_APPLE;
+    assert cx_fallback_engine(CX_ENGINE_CLAUDE, false, true) == CX_ENGINE_NONE;
+    assert cx_fallback_engine(CX_ENGINE_APPLE, true, false) == CX_ENGINE_NONE;
+    // timeoutsAndHTTPErrors
+    assert cx_translation_timeout_ms(CX_ENGINE_APPLE) == 3000;
+    assert cx_translation_timeout_ms(CX_ENGINE_CLAUDE) == 5000;
+    assert cx_translation_timeout_ms(CX_ENGINE_NONE) == 0;
+    assert cx_error_code(0) == CX_ERROR_NETWORK;
+    assert cx_error_code(429) == CX_ERROR_OVERLOADED;
+    assert cx_error_code(529) == CX_ERROR_OVERLOADED;
+    assert cx_error_code(500) == CX_ERROR_OVERLOADED;
+    assert cx_error_code(401) == CX_ERROR_REJECTED;
+    assert cx_error_code(400) == CX_ERROR_REJECTED;
+    assert cx_error_code(200) == CX_ERROR_OTHER;
+    // retry
+    assert cx_retry_action(CX_ERROR_ASSETS_MISSING, 0, CX_ENGINE_CLAUDE) == CX_RETRY_SWITCH;
+    assert cx_retry_action(CX_ERROR_TIMEOUT, 0, CX_ENGINE_APPLE) == CX_RETRY_SWITCH;
+    assert cx_retry_action(CX_ERROR_TIMEOUT, 0, CX_ENGINE_NONE) == CX_RETRY_SAME;
+    assert cx_retry_action(CX_ERROR_OVERLOADED, 0, CX_ENGINE_NONE) == CX_RETRY_SAME;
+    assert cx_retry_action(CX_ERROR_REFUSED, 0, CX_ENGINE_NONE) == CX_RETRY_GIVE_UP;
+    assert cx_retry_action(CX_ERROR_ASSETS_MISSING, 0, CX_ENGINE_NONE) == CX_RETRY_GIVE_UP;
+    assert cx_retry_action(CX_ERROR_TIMEOUT, 1, CX_ENGINE_APPLE) == CX_RETRY_GIVE_UP;
+    // Every error and attempt: never past the attempt limit; transient errors retry exactly.
+    var e: i64 = 0;
+    var bad: u32 = 0;
+    while (e <= 10) {
+        var attempt: i64 = 0;
+        while (attempt < 4) {
+            var fb: i64 = 0;
+            while (fb <= 2) {
+                var r: i64 = cx_retry_action(e, attempt, fb);
+                if (attempt >= 1 and r != CX_RETRY_GIVE_UP) { bad = bad + 1; }
+                if (attempt == 0 and fb != 0 and r != CX_RETRY_SWITCH) { bad = bad + 1; }
+                if (attempt == 0 and fb == 0 and r == CX_RETRY_SWITCH) { bad = bad + 1; }
+                fb = fb + 1;
+            }
+            attempt = attempt + 1;
+        }
+        e = e + 1;
+    }
+    assert bad == 0;
+}
+
+test cx_claude_request {
+    var out: [64]u8 = [0; 64];
+    assert cx_claude_model_id(out) == 16;
+    assert out[0] == 99;
+    assert out[6] == 45;
+    assert out[15] == 53;
+    assert cx_anthropic_version(out) == 10;
+    assert out[0] == 50;
+    assert out[4] == 45;
+    assert out[9] == 49;
+    assert CX_CLAUDE_MAX_TOKENS == 1024;
+    assert CX_CLAUDE_EFFORT_CODE == 0;
+    assert CX_CLAUDE_REQUEST_TIMEOUT_MS == 20000;
+}
