@@ -30,7 +30,7 @@ T27C=/path/to/t27c Specs/generate.sh
 
 `Specs/T27C_PIN` names the compiler release, which is t27c v0.5.1. `Specs/README.md` maps each spec to the Swift that calls it.
 
-Swift keeps only what t27 cannot reach: SwiftUI views and their texts, Core Audio, AVFoundation, Speech, Translation, Keychain, URLSession, and concurrency.
+The Swift facades `AudioRules`, `SpeechRules` and `AppRules` only pass values to the generated C and back. Swift keeps only what t27 cannot reach: SwiftUI views and their texts, Core Audio, AVFoundation, Speech, Translation, Keychain, URLSession, Unicode text handling, the Claude prompt and JSON, and concurrency. `Specs/README.md` lists what stays in Swift and why.
 
 ## Requirements
 
@@ -66,11 +66,13 @@ This is a work in progress. These parts are verified on a Mac:
 - Excluding Ponte's own sound.
 - On-device recognition of pt-BR and ru-RU, 0.35–0.8 s after the speaker stops.
 - Speech synthesis.
-- The full app, built and signed, with 132 tests passing.
+- Every decision runs in the C generated from the t27 specs. The three Swift rules facades only pass values to it. The Swift they replaced is kept as a test oracle. 42 differential tests compare the two bit for bit over about 23.6 million inputs.
+- The full app, built and signed, with 176 tests passing and no build warnings.
+- An end-to-end run with test files, one phrase each way, from the end of the phrase to the translation on screen:
+  - Ru → Pt took 0.6 s.
+  - Pt → Ru took 0.4 s.
+  - The first run after a build took 1.5 s and 0.7 s.
 
-Next steps:
-
-1. Every Swift rules facade will call the generated C, with the old Swift kept only as a test oracle.
-2. A live call test.
+Next step: a live call test.
 
 Dmitrii Fedorov ([@dmitrii-f-t27](https://github.com/dmitrii-f-t27))
