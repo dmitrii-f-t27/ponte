@@ -1,3 +1,4 @@
+import CoreAudio
 import Foundation
 import PonteSpecs
 
@@ -513,6 +514,140 @@ public enum AudioRules {
         var t = DeviceText([haystack, needle])
         return dv_contains_ci(&t.bytes, t.off(0), t.len(0), t.off(1), t.len(1))
     }
+
+    // MARK: - Rules moved here from the rest of PonteAudio and the app
+
+    /// AVAudioCommonFormat raw values the PCM rules tell apart.
+    public static let formatOther = Int(AU_FORMAT_OTHER)
+    public static let formatFloat32 = Int(AU_FORMAT_FLOAT32)
+    public static let formatFloat64 = Int(AU_FORMAT_FLOAT64)
+    public static let formatInt16 = Int(AU_FORMAT_INT16)
+    public static let formatInt32 = Int(AU_FORMAT_INT32)
+    /// AVAudioConverterInputStatus raw values.
+    public static let inputHaveData = Int(AU_INPUT_HAVE_DATA)
+    public static let inputNoDataNow = Int(AU_INPUT_NO_DATA_NOW)
+    public static let inputEndOfStream = Int(AU_INPUT_END_OF_STREAM)
+
+    /// A buffer with any non-zero sample (lanes, the wizard's capture check).
+    public static func hasSignal(peak: Float, rms: Float) -> Bool { au_has_signal(peak, rms) }
+
+    /// A tap of one app lists (mixes down) its processes; the global tap excludes them and reports no PIDs.
+    public static func tapListsProcesses(isGlobal: Bool) -> Bool { au_tap_lists_processes(isGlobal) }
+
+    /// The resampler flushes at the last buffer of a play call or before a buffer of another format.
+    public static func flushesConverter(index: Int, count: Int, nextFormatDiffers: Bool) -> Bool {
+        au_flushes_converter(Int64(index), Int64(count), nextFormatDiffers)
+    }
+
+    /// A buffer of an AudioBufferList takes part in the downmix.
+    public static func usesBuffer(hasData: Bool, channels: Int) -> Bool { au_uses_buffer(hasData, Int64(channels)) }
+
+    /// Frames of the downmix of the buffers that take part (at most `AU_BUFFER_LIST_MAX` of them).
+    public static func bufferListFrames(byteSizes: [Int], channels: [Int], maxFrames: Int) -> Int {
+        var sizes = bufferList(byteSizes)
+        var counts = bufferList(channels)
+        return Int(au_buffer_list_frames(&sizes, &counts, Int64(min(byteSizes.count, channels.count)), Int64(maxFrames)))
+    }
+
+    /// All channels of the buffers that take part.
+    public static func bufferListChannels(_ channels: [Int]) -> Int {
+        var counts = bufferList(channels)
+        return Int(au_buffer_list_channels(&counts, Int64(channels.count)))
+    }
+
+    /// The downmix shape (frames, channels) of a raw AudioBufferList, read in place. Real-time safe: the
+    /// tables live on the stack and only the first `AU_BUFFER_LIST_MAX` buffers that take part count.
+    static func bufferListShape(_ buffers: UnsafeMutableAudioBufferListPointer, maxFrames: Int) -> (frames: Int, channels: Int) {
+        let capacity = Int(AU_BUFFER_LIST_MAX)
+        return withUnsafeTemporaryAllocation(of: Int64.self, capacity: capacity) { sizes in
+            withUnsafeTemporaryAllocation(of: Int64.self, capacity: capacity) { counts in
+                sizes.initialize(repeating: 0)
+                counts.initialize(repeating: 0)
+                var n = 0
+                for b in buffers where n < capacity && usesBuffer(hasData: b.mData != nil, channels: Int(b.mNumberChannels)) {
+                    sizes[n] = Int64(b.mDataByteSize)
+                    counts[n] = Int64(b.mNumberChannels)
+                    n += 1
+                }
+                let frames = au_buffer_list_frames(sizes.baseAddress!, counts.baseAddress!, Int64(n), Int64(maxFrames))
+                let channels = au_buffer_list_channels(counts.baseAddress!, Int64(n))
+                return (Int(frames), Int(channels))
+            }
+        }
+    }
+
+    /// The most buffers of one AudioBufferList the downmix reads.
+    static let bufferListMax = Int(AU_BUFFER_LIST_MAX)
+
+    private static func bufferList(_ values: [Int]) -> [Int64] {
+        var out = [Int64](repeating: 0, count: Int(AU_BUFFER_LIST_MAX))
+        for (i, v) in values.prefix(out.count).enumerated() { out[i] = Int64(v) }
+        return out
+    }
+
+    /// PCM.mono: blocks of interleaved (one) or planar (one per channel) data, and channels per block.
+    public static func monoBlocks(interleaved: Bool, channels: Int) -> Int { Int(au_mono_blocks(interleaved, Int64(channels))) }
+    public static func monoPerBlock(interleaved: Bool, channels: Int) -> Int { Int(au_mono_per_block(interleaved, Int64(channels))) }
+
+    /// PCM.mono reads these sample formats (AVAudioCommonFormat raw values).
+    public static func monoSupported(format: Int) -> Bool { au_mono_supported(Int64(format)) }
+
+    public static func isMonoFloat32(format: Int, channels: Int) -> Bool { au_is_mono_float32(Int64(format), Int64(channels)) }
+
+    /// A deinterleaved mono Float32 buffer is read as it is; anything else through the downmix.
+    public static func isPlainMono(format: Int, channels: Int, interleaved: Bool) -> Bool {
+        au_is_plain_mono(Int64(format), Int64(channels), interleaved)
+    }
+
+    /// PCM.Converter input status (AVAudioConverterInputStatus raw value).
+    public static func converterInput(supplied: Bool, final: Bool) -> Int { Int(au_converter_input(supplied, final)) }
+
+    /// A four-char code shown as text: every byte printable ASCII.
+    public static func isPrintableFourCC(_ code: UInt32) -> Bool { au_fourcc_printable(code) }
+
+    /// The level meter's fill for an RMS level: -60…0 dBFS mapped to 0…1.
+    public static func meterFraction(level: Float) -> Float { au_meter_fraction(level) }
+
+    /// Owner ID of a process without a bundle ID: this prefix and the PID.
+    public static let pidOwnerPrefix = DeviceText.row(Int64(DV_ROW_PID_PREFIX))
+
+    public static func isRegularApp(policyRegular: Bool, hasBundleID: Bool) -> Bool { dv_is_regular_app(policyRegular, hasBundleID) }
+    public static func isProcessPID(_ pid: Int32) -> Bool { dv_process_pid_valid(pid) }
+    public static func responsibleUsable(responsiblePID: Int32, pid: Int32) -> Bool { dv_responsible_usable(responsiblePID, pid) }
+    public static func parentContinues(parentPID: Int32, current: Int32) -> Bool { dv_parent_continues(parentPID, current) }
+
+    /// Where a process's owner ID comes from.
+    public static let ownerIDFromHAL = Int(DV_ID_HAL)
+    public static let ownerIDFromApp = Int(DV_ID_APP)
+    public static let ownerIDFromPID = Int(DV_ID_PID)
+    public static func ownerIDSource(hasHALBundleID: Bool, hasAppBundleID: Bool) -> Int {
+        Int(dv_owner_id_source(hasHALBundleID, hasAppBundleID))
+    }
+
+    /// Where a process owner's name comes from.
+    public static let ownerNameFromApp = Int(DV_NAME_APP)
+    public static let ownerNameFromPath = Int(DV_NAME_PATH)
+    public static let ownerNameFromID = Int(DV_NAME_ID)
+    public static func ownerNameSource(hasAppName: Bool, hasPath: Bool) -> Int { Int(dv_owner_name_source(hasAppName, hasPath)) }
+
+    /// The name of an app found by its bundle path.
+    public static let bundleNameRunning = Int(DV_BUNDLE_NAME_RUNNING)
+    public static let bundleNameDisplay = Int(DV_BUNDLE_NAME_DISPLAY)
+    public static let bundleNameBundle = Int(DV_BUNDLE_NAME_BUNDLE)
+    public static let bundleNameFile = Int(DV_BUNDLE_NAME_FILE)
+    public static func bundleNameSource(hasRunningName: Bool, hasDisplayName: Bool, hasBundleName: Bool) -> Int {
+        Int(dv_bundle_name_source(hasRunningName, hasDisplayName, hasBundleName))
+    }
+
+    public static func pathOwnerIsRegular(hasRunning: Bool, runningRegular: Bool, hasSelf: Bool, selfRegular: Bool) -> Bool {
+        dv_path_owner_regular(hasRunning, runningRegular, hasSelf, selfRegular)
+    }
+
+    public static func appPlaying(alreadyPlaying: Bool, processPlaying: Bool) -> Bool { dv_app_playing(alreadyPlaying, processPlaying) }
+    public static func prefersOwner(candidateRegular: Bool, currentRegular: Bool) -> Bool { dv_prefers_owner(candidateRegular, currentRegular) }
+
+    /// Listening on a loudspeaker: show «наденьте наушники».
+    public static func needsHeadphones(kind: Int) -> Bool { dv_needs_headphones(Int64(kind)) }
 }
 
 /// Strings packed for `device_rules`: one UTF-8 buffer of `DV_TEXT_MAX` bytes and offset/length tables of

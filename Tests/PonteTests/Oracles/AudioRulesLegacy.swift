@@ -2,6 +2,7 @@
 // Kept verbatim (only renamed) as the reference the differential tests compare the C-backed
 // facade with, function by function, bit for bit.
 
+import AVFoundation
 import Foundation
 
 /// Every pure decision and computation of PonteAudio, in one place.
@@ -513,4 +514,87 @@ enum AudioRulesLegacy {
         }
         return false
     }
+}
+
+// MARK: - Decisions extracted unchanged from PonteAudio and PonteApp before they moved to t27 (2026-10-11)
+
+extension AudioRulesLegacy {
+    /// TranslationLane AudioIntake.handle, SetupWizardView CaptureMeter.add.
+    static func hasSignal(peak: Float, rms: Float) -> Bool { levelCode(peak: peak, rms: rms) != levelDigitalSilence }
+
+    /// AppAudioTapSource.build / updateTapProcesses: `isGlobal ? [] : pids`, mixdown unless global.
+    static func tapListsProcesses(isGlobal: Bool) -> Bool { !isGlobal }
+
+    /// WAVFileSink.play `i == input.count - 1 || nextDiffers`; DeviceAudioPlayer.schedule `i == input.count - 1`.
+    static func flushesConverter(index: Int, count: Int, nextFormatDiffers: Bool) -> Bool { index == count - 1 || nextFormatDiffers }
+
+    /// PCM.downmixFloat32: `b.mData != nil && b.mNumberChannels > 0`.
+    static func usesBuffer(hasData: Bool, channels: Int) -> Bool { hasData && channels > 0 }
+
+    /// PCM.downmixFloat32: frames of the buffers that take part, capped at maxFrames.
+    static func bufferListFrames(byteSizes: [Int], channels: [Int], maxFrames: Int) -> Int {
+        var frames = Int.max
+        var totalChannels = 0
+        for (size, c) in zip(byteSizes, channels) {
+            frames = min(frames, framesInBuffer(byteSize: size, channels: c, bytesPerSample: MemoryLayout<Float>.size))
+            totalChannels += c
+        }
+        guard totalChannels > 0, frames != Int.max else { return 0 }
+        return min(frames, maxFrames)
+    }
+
+    static func bufferListChannels(_ channels: [Int]) -> Int { channels.reduce(0, +) }
+
+    /// PCM.mono.
+    static func monoBlocks(interleaved: Bool, channels: Int) -> Int { interleaved ? 1 : channels }
+    static func monoPerBlock(interleaved: Bool, channels: Int) -> Int { interleaved ? channels : 1 }
+    static func monoSupported(format: Int) -> Bool {
+        guard format >= 0, let f = AVAudioCommonFormat(rawValue: UInt(format)) else { return false }
+        switch f {
+        case .pcmFormatFloat32, .pcmFormatInt16, .pcmFormatInt32: return true
+        default: return false
+        }
+    }
+
+    /// PCM.isMonoFloat32 and PCM.samples.
+    static func isMonoFloat32(format: Int, channels: Int) -> Bool { format == Int(AVAudioCommonFormat.pcmFormatFloat32.rawValue) && channels == 1 }
+    static func isPlainMono(format: Int, channels: Int, interleaved: Bool) -> Bool { isMonoFloat32(format: format, channels: channels) && !interleaved }
+
+    /// PCM.Converter.convert input block.
+    static func converterInput(supplied: Bool, final: Bool) -> Int {
+        (supplied ? (final ? AVAudioConverterInputStatus.endOfStream : .noDataNow) : .haveData).rawValue
+    }
+
+    /// HAL.fourCC.
+    static func isPrintableFourCC(_ value: UInt32) -> Bool {
+        let bytes = [24, 16, 8, 0].map { UInt8((value >> UInt32($0)) & 0xFF) }
+        return bytes.allSatisfy { $0 >= 32 && $0 < 127 }
+    }
+
+    /// Components.LevelMeter (before the CGFloat conversion).
+    static func meterFraction(level: Float) -> Float { min(1, max(0, (20 * log10(max(level, 1e-5)) + 60) / 60)) }
+
+    /// AudioProcesses.resolveOwner: `"pid.\(pid)"`.
+    static let pidOwnerPrefix = "pid."
+    static func isRegularApp(policyRegular: Bool, hasBundleID: Bool) -> Bool { policyRegular && hasBundleID }
+    static func isProcessPID(_ pid: Int32) -> Bool { pid > 0 }
+    static func responsibleUsable(responsiblePID rpid: Int32, pid: Int32) -> Bool { rpid != pid && rpid > 1 }
+    static func parentContinues(parentPID ppid: Int32, current: Int32) -> Bool { ppid > 1 && ppid != current }
+    /// `halBundleID ?? selfApp?.bundleIdentifier ?? "pid.<n>"`.
+    static func ownerIDSource(hasHALBundleID: Bool, hasAppBundleID: Bool) -> Int { hasHALBundleID ? 0 : (hasAppBundleID ? 1 : 2) }
+    /// `selfApp?.localizedName ?? path?.lastPathComponent ?? bid`.
+    static func ownerNameSource(hasAppName: Bool, hasPath: Bool) -> Int { hasAppName ? 0 : (hasPath ? 1 : 2) }
+    /// `running?.localizedName ?? CFBundleDisplayName ?? CFBundleName ?? file name`.
+    static func bundleNameSource(hasRunningName: Bool, hasDisplayName: Bool, hasBundleName: Bool) -> Int {
+        hasRunningName ? 0 : (hasDisplayName ? 1 : (hasBundleName ? 2 : 3))
+    }
+    /// `(running?.activationPolicy ?? selfApp?.activationPolicy) == .regular`.
+    static func pathOwnerIsRegular(hasRunning: Bool, runningRegular: Bool, hasSelf: Bool, selfRegular: Bool) -> Bool {
+        hasRunning ? runningRegular : (hasSelf ? selfRegular : false)
+    }
+    /// RunningAudioAppCatalog.group.
+    static func appPlaying(alreadyPlaying: Bool, processPlaying: Bool) -> Bool { alreadyPlaying || processPlaying }
+    static func prefersOwner(candidateRegular: Bool, currentRegular: Bool) -> Bool { candidateRegular && !currentRegular }
+    /// AppModel.refreshSpeakerWarning: `echoRisk == echoSpeaker`.
+    static func needsHeadphones(kind: Int) -> Bool { echoRisk(kind: kind) == echoSpeaker }
 }

@@ -10,7 +10,7 @@ public enum PCM {
     }
 
     public static func isMonoFloat32(_ format: AVAudioFormat) -> Bool {
-        format.commonFormat == .pcmFormatFloat32 && format.channelCount == 1
+        AudioRules.isMonoFloat32(format: Int(format.commonFormat.rawValue), channels: Int(format.channelCount))
     }
 
     // MARK: Downmix (math in AudioRules)
@@ -22,22 +22,18 @@ public enum PCM {
     static func downmixFloat32(_ abl: UnsafePointer<AudioBufferList>,
                                into dst: UnsafeMutablePointer<Float>, maxFrames: Int) -> Int {
         let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: abl))
-        var frames = Int.max
-        var totalChannels = 0
-        for b in buffers where b.mData != nil && b.mNumberChannels > 0 {
-            frames = min(frames, AudioRules.framesInBuffer(byteSize: Int(b.mDataByteSize), channels: Int(b.mNumberChannels),
-                                                           bytesPerSample: MemoryLayout<Float>.size))
-            totalChannels += Int(b.mNumberChannels)
-        }
-        guard totalChannels > 0, frames != Int.max else { return 0 }
-        frames = min(frames, maxFrames)
-        dst.update(repeating: 0, count: frames)
-        for b in buffers where b.mData != nil && b.mNumberChannels > 0 {
+        let shape = AudioRules.bufferListShape(buffers, maxFrames: maxFrames)
+        guard shape.frames > 0 else { return 0 }
+        dst.update(repeating: 0, count: shape.frames)
+        var used = 0
+        for b in buffers where used < AudioRules.bufferListMax
+            && AudioRules.usesBuffer(hasData: b.mData != nil, channels: Int(b.mNumberChannels)) {
+            used += 1
             AudioRules.accumulateFrames(b.mData!.assumingMemoryBound(to: Float.self), channels: Int(b.mNumberChannels),
-                                        frames: frames, into: dst)
+                                        frames: shape.frames, into: dst)
         }
-        AudioRules.scale(dst, frames: frames, by: AudioRules.averageFactor(totalChannels: totalChannels))
-        return frames
+        AudioRules.scale(dst, frames: shape.frames, by: AudioRules.averageFactor(totalChannels: shape.channels))
+        return shape.frames
     }
 
     /// Returns a new mono Float32 buffer at the same sample rate (channels averaged).
@@ -53,11 +49,13 @@ public enum PCM {
         guard frames > 0 else { return out }
         let dst = out.floatChannelData![0]
         dst.update(repeating: 0, count: frames)
-        // Interleaved data is one block of `channels`; planar data is `channels` blocks of 1.
-        let blocks = format.isInterleaved ? 1 : channels
-        let perBlock = format.isInterleaved ? channels : 1
+        // Interleaved data is one block of `channels`; planar data is `channels` blocks of 1 (AudioRules).
+        let blocks = AudioRules.monoBlocks(interleaved: format.isInterleaved, channels: channels)
+        let perBlock = AudioRules.monoPerBlock(interleaved: format.isInterleaved, channels: channels)
         let samplesPerBlock = frames * perBlock
+        guard AudioRules.monoSupported(format: Int(format.commonFormat.rawValue)) else { return nil }
 
+        // The sample type picks the channel-data accessor.
         switch format.commonFormat {
         case .pcmFormatFloat32:
             for k in 0..<blocks {
@@ -69,14 +67,12 @@ public enum PCM {
                 let floats = (0..<samplesPerBlock).map { AudioRules.int16ToFloat(src[$0]) }
                 floats.withUnsafeBufferPointer { AudioRules.accumulateFrames($0.baseAddress!, channels: perBlock, frames: frames, into: dst) }
             }
-        case .pcmFormatInt32:
+        default:
             for k in 0..<blocks {
                 let src = buffer.int32ChannelData![k]
                 let floats = (0..<samplesPerBlock).map { AudioRules.int32ToFloat(src[$0]) }
                 floats.withUnsafeBufferPointer { AudioRules.accumulateFrames($0.baseAddress!, channels: perBlock, frames: frames, into: dst) }
             }
-        default:
-            return nil
         }
         AudioRules.scale(dst, frames: frames, by: AudioRules.averageFactor(totalChannels: channels))
         return out
@@ -95,7 +91,10 @@ public enum PCM {
 
     /// Mono Float32 samples of channel 0 (or of the downmix) as an array.
     public static func samples(_ buffer: AVAudioPCMBuffer) -> [Float] {
-        let mono = isMonoFloat32(buffer.format) && !buffer.format.isInterleaved ? buffer : (PCM.mono(buffer) ?? buffer)
+        let format = buffer.format
+        let plain = AudioRules.isPlainMono(format: Int(format.commonFormat.rawValue), channels: Int(format.channelCount),
+                                           interleaved: format.isInterleaved)
+        let mono = plain ? buffer : (PCM.mono(buffer) ?? buffer)
         guard let data = mono.floatChannelData else { return [] }
         return Array(UnsafeBufferPointer(start: data[0], count: Int(mono.frameLength)))
     }
@@ -191,12 +190,10 @@ public enum PCM {
             var supplied = false
             var error: NSError?
             let status = converter.convert(to: out, error: &error) { _, inputStatus in
-                if supplied {
-                    inputStatus.pointee = final ? .endOfStream : .noDataNow
-                    return nil
-                }
+                let input = AudioRules.converterInput(supplied: supplied, final: final)
+                inputStatus.pointee = AVAudioConverterInputStatus(rawValue: input) ?? .endOfStream
+                guard input == AudioRules.inputHaveData else { return nil }
                 supplied = true
-                inputStatus.pointee = .haveData
                 return buffer
             }
             if status == .error {

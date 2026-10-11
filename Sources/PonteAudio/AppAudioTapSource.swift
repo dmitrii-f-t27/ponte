@@ -207,7 +207,7 @@ public final class AppAudioTapSource: AudioSource {
             return false
         }
         attachedObjects = objects
-        let pids: [Int32] = isGlobal ? [] : objects.compactMap { HAL.pid(ofProcess: $0) }.sorted()
+        let pids: [Int32] = AudioRules.tapListsProcesses(isGlobal: isGlobal) ? objects.compactMap { HAL.pid(ofProcess: $0) }.sorted() : []
         _status = .capturing(pids: pids)
         return true
     }
@@ -225,10 +225,10 @@ public final class AppAudioTapSource: AudioSource {
 
     private func build(objects: [AudioObjectID]) throws {
         let description: CATapDescription
-        if isGlobal {
-            description = CATapDescription(stereoGlobalTapButExcludeProcesses: objects)
-        } else {
+        if AudioRules.tapListsProcesses(isGlobal: isGlobal) {
             description = CATapDescription(stereoMixdownOfProcesses: objects)
+        } else {
+            description = CATapDescription(stereoGlobalTapButExcludeProcesses: objects)
         }
         description.name = "Ponte tap"
         description.uuid = UUID()
@@ -304,7 +304,7 @@ public final class AppAudioTapSource: AudioSource {
         attachedObjects = objects
         try addTapFormatListener()
 
-        let pids: [Int32] = isGlobal ? [] : objects.compactMap { HAL.pid(ofProcess: $0) }.sorted()
+        let pids: [Int32] = AudioRules.tapListsProcesses(isGlobal: isGlobal) ? objects.compactMap { HAL.pid(ofProcess: $0) }.sorted() : []
         _status = .capturing(pids: pids)
     }
 
@@ -339,7 +339,7 @@ public final class AppAudioTapSource: AudioSource {
 
     static func frameCount(_ abl: UnsafePointer<AudioBufferList>) -> Int {
         let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: abl))
-        for b in buffers where b.mData != nil && b.mNumberChannels > 0 {
+        for b in buffers where AudioRules.usesBuffer(hasData: b.mData != nil, channels: Int(b.mNumberChannels)) {
             return AudioRules.framesInBuffer(byteSize: Int(b.mDataByteSize), channels: Int(b.mNumberChannels),
                                              bytesPerSample: MemoryLayout<Float>.size)
         }

@@ -21,8 +21,10 @@ public final class RunningAudioAppCatalog: AudioAppCatalog {
             if byOwner[p.owner.bundleID] == nil { order.append(p.owner.bundleID) }
             var entry = byOwner[p.owner.bundleID] ?? (p.owner, [], false)
             if !entry.pids.contains(p.pid) { entry.pids.append(p.pid) }
-            entry.playing = entry.playing || p.isRunningOutput
-            if p.owner.isRegularApp && !entry.owner.isRegularApp { entry.owner = p.owner }
+            entry.playing = AudioRules.appPlaying(alreadyPlaying: entry.playing, processPlaying: p.isRunningOutput)
+            if AudioRules.prefersOwner(candidateRegular: p.owner.isRegularApp, currentRegular: entry.owner.isRegularApp) {
+                entry.owner = p.owner
+            }
             byOwner[p.owner.bundleID] = entry
         }
         let apps = order.compactMap { bid -> AudioApp? in

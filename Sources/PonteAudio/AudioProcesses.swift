@@ -23,15 +23,15 @@ struct AppOwner: Hashable {
     let isRegularApp: Bool
 }
 
-/// OS glue for process → app attribution. The decisions are in `AudioRules`
-/// (ownerSource, outermostAppPathLength, parentAppIndex, isTapTargetProcess).
+/// OS glue for process → app attribution. The decisions are in `AudioRules` (ownerSource,
+/// outermostAppPathLength, parentAppIndex, isTapTargetProcess, the PID checks and the owner ID and name sources).
 enum AudioProcesses {
     /// Snapshot of all HAL client processes with their owning app resolved.
     static func snapshot() -> [AudioProcessInfo] {
         var cache: [pid_t: AppOwner] = [:]
         let regularApps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
         return HAL.processObjectIDs().compactMap { object in
-            guard let pid = HAL.pid(ofProcess: object), pid > 0 else { return nil }
+            guard let pid = HAL.pid(ofProcess: object), AudioRules.isProcessPID(pid) else { return nil }
             let bundleID = HAL.bundleID(ofProcess: object)
             let owner: AppOwner
             if let cached = cache[pid] {
@@ -62,20 +62,22 @@ enum AudioProcesses {
     /// → bundle-ID prefix of a running Dock app → itself.
     static func resolveOwner(pid: pid_t, halBundleID: String?, regularApps: [NSRunningApplication]) -> AppOwner {
         let selfApp = NSRunningApplication(processIdentifier: pid)
-        let selfIsRegular = selfApp?.activationPolicy == .regular && selfApp?.bundleIdentifier != nil
+        let selfIsRegular = AudioRules.isRegularApp(policyRegular: selfApp?.activationPolicy == .regular,
+                                                    hasBundleID: selfApp?.bundleIdentifier != nil)
 
         let path = executablePath(pid)
         let pathOwner: AppOwner? = path.flatMap { ownerFromBundlePath($0, pid: pid, selfApp: selfApp) }
 
         let responsibleOwner: AppOwner? = responsiblePID(pid).flatMap { rpid -> AppOwner? in
-            guard rpid != pid, rpid > 1, let app = NSRunningApplication(processIdentifier: rpid) else { return nil }
+            guard AudioRules.responsibleUsable(responsiblePID: rpid, pid: pid),
+                  let app = NSRunningApplication(processIdentifier: rpid) else { return nil }
             return owner(of: app)
         }
 
         var parentOwner: AppOwner?
         var current = pid
         for _ in 0..<AudioRules.parentChainMaxDepth {
-            guard let ppid = parentPID(current), ppid > 1, ppid != current else { break }
+            guard let ppid = parentPID(current), AudioRules.parentContinues(parentPID: ppid, current: current) else { break }
             if let app = NSRunningApplication(processIdentifier: ppid), app.activationPolicy == .regular,
                let o = owner(of: app) {
                 parentOwner = o
@@ -101,8 +103,18 @@ enum AudioProcesses {
         case AudioRules.ownerBundlePrefix: if let o = prefixOwner { return o }
         default: break
         }
-        let bid = halBundleID ?? selfApp?.bundleIdentifier ?? "pid.\(pid)"
-        let name = selfApp?.localizedName ?? path.map { URL(fileURLWithPath: $0).lastPathComponent } ?? bid
+        let bid: String
+        switch AudioRules.ownerIDSource(hasHALBundleID: halBundleID != nil, hasAppBundleID: selfApp?.bundleIdentifier != nil) {
+        case AudioRules.ownerIDFromHAL: bid = halBundleID ?? ""
+        case AudioRules.ownerIDFromApp: bid = selfApp?.bundleIdentifier ?? ""
+        default: bid = AudioRules.pidOwnerPrefix + String(pid)
+        }
+        let name: String
+        switch AudioRules.ownerNameSource(hasAppName: selfApp?.localizedName != nil, hasPath: path != nil) {
+        case AudioRules.ownerNameFromApp: name = selfApp?.localizedName ?? bid
+        case AudioRules.ownerNameFromPath: name = path.map { URL(fileURLWithPath: $0).lastPathComponent } ?? bid
+        default: name = bid
+        }
         return AppOwner(bundleID: bid, name: name, pid: pid, isRegularApp: selfIsRegular)
     }
 
@@ -110,12 +122,19 @@ enum AudioProcesses {
         guard let appURL = outermostAppBundle(in: path), let bundle = Bundle(url: appURL),
               let bid = bundle.bundleIdentifier else { return nil }
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: bid).first
-        let name = running?.localizedName
-            ?? (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
-            ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
-            ?? appURL.deletingPathExtension().lastPathComponent
-        return AppOwner(bundleID: bid, name: name, pid: running?.processIdentifier ?? pid,
-                        isRegularApp: (running?.activationPolicy ?? selfApp?.activationPolicy) == .regular)
+        let displayName = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+        let bundleName = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
+        let name: String
+        switch AudioRules.bundleNameSource(hasRunningName: running?.localizedName != nil, hasDisplayName: displayName != nil,
+                                           hasBundleName: bundleName != nil) {
+        case AudioRules.bundleNameRunning: name = running?.localizedName ?? ""
+        case AudioRules.bundleNameDisplay: name = displayName ?? ""
+        case AudioRules.bundleNameBundle: name = bundleName ?? ""
+        default: name = appURL.deletingPathExtension().lastPathComponent
+        }
+        let regular = AudioRules.pathOwnerIsRegular(hasRunning: running != nil, runningRegular: running?.activationPolicy == .regular,
+                                                    hasSelf: selfApp != nil, selfRegular: selfApp?.activationPolicy == .regular)
+        return AppOwner(bundleID: bid, name: name, pid: running?.processIdentifier ?? pid, isRegularApp: regular)
     }
 
     private static func owner(of app: NSRunningApplication) -> AppOwner? {

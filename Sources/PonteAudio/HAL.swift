@@ -160,10 +160,8 @@ enum HAL {
     }
 
     static func fourCC(_ value: UInt32) -> String {
+        guard AudioRules.isPrintableFourCC(value) else { return String(value) }
         let bytes = [24, 16, 8, 0].map { UInt8((value >> UInt32($0)) & 0xFF) }
-        if bytes.allSatisfy({ $0 >= 32 && $0 < 127 }) {
-            return String(decoding: bytes, as: UTF8.self)
-        }
-        return String(value)
+        return String(decoding: bytes, as: UTF8.self)
     }
 }

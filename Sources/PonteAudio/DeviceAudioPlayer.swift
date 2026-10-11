@@ -101,7 +101,7 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
             let input = buffers.filter { $0.frameLength > 0 }
             for (i, b) in input.enumerated() {
                 // The last buffer of a call flushes the resampler, so each call plays out completely.
-                let out = try convert(b, final: i == input.count - 1)
+                let out = try convert(b, final: AudioRules.flushesConverter(index: i, count: input.count, nextFormatDiffers: false))
                 if out.frameLength > 0 { converted.append(out) }
             }
         } catch {
