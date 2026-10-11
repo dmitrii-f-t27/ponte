@@ -1,0 +1,637 @@
+import AVFoundation
+import Foundation
+import os
+import PonteCore
+
+// One direction of the call:
+// AudioSource → Transcriber → (.final) → Translator (+ last 4 phrases as context)
+// → ConversationLine → optional SpeechSynth → AudioPlayer.
+//
+// Every decision is asked from AppRules (gate machine, phrase pipeline, speech
+// cancel, replay, speech rate, echo guard, phrase end). This file only does the
+// plumbing: tasks, queues, locks, generations. It knows only the PonteCore
+// protocols, so tests drive it with fakes. Also compiled into PonteTests.
+
+/// How audio reaches the transcriber.
+enum CaptureMode: String, CaseIterable, Codable, Sendable {
+    /// «Авто»: everything is transcribed; every final phrase is translated (and spoken).
+    case continuous
+    /// Only audio captured while the key is held; the phrase is flushed on release.
+    case pushToTalk
+
+    var ruleCode: Int32 { self == .continuous ? AppRules.MODE_CONTINUOUS : AppRules.MODE_PUSH_TO_TALK }
+}
+
+/// Proposed addition to the SpeechSynth contract: speak faster when phrases pile up.
+protocol RateAdjustableSpeechSynth: SpeechSynth {
+    func synthesize(_ text: String, lang: Lang, ratePercent: Int32) async throws -> [AVAudioPCMBuffer]
+}
+
+enum LaneEvent {
+    /// Volatile text of the current phrase; "" clears it.
+    case partial(String)
+    /// A final phrase arrived; translation is pending.
+    case phrase(ConversationLine)
+    /// The same line with translation and latency filled in (translation nil if it failed).
+    case translated(ConversationLine)
+    /// Synthesized speech for this lane is playing.
+    case speaking(Bool)
+    /// A non-fatal problem worth showing to the user.
+    case problem(String)
+}
+
+/// The last phrases of the whole conversation (both lanes), oldest first.
+final class ConversationMemory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String] = []
+
+    func snapshot() -> [String] { lock.withLock { items } }
+
+    func add(_ phrase: String) {
+        lock.withLock {
+            items.append(phrase)
+            let overflow = Int(AppRules.contextOverflow(count: Int32(items.count)))
+            if overflow > 0 { items.removeFirst(overflow) }
+        }
+    }
+
+    func reset() { lock.withLock { items.removeAll() } }
+}
+
+/// Shared between the lanes: is Ponte's Russian voice playing through the Mac's speakers?
+/// Read on the capture thread of the outgoing lane.
+final class EchoGuard: @unchecked Sendable {
+    private let lock = NSLock()
+    private var speakerOutput = false
+    private var speaking = false
+    private var lastSpeechAt: Date?
+
+    func configure(speakerOutput: Bool) {
+        lock.withLock {
+            self.speakerOutput = speakerOutput
+            speaking = false
+            lastSpeechAt = nil
+        }
+    }
+
+    func setSpeaking(_ on: Bool, at now: Date) {
+        lock.withLock {
+            if speaking || on { lastSpeechAt = now }
+            speaking = on
+        }
+    }
+
+    func blocksMic(at now: Date) -> Bool {
+        lock.withLock {
+            AppRules.echoGuardBlocksMic(speakerOutput: speakerOutput, incomingSpeaking: speaking,
+                                        msSinceSpeech: lastSpeechAt.map { millis(now.timeIntervalSince($0)) } ?? -1)
+        }
+    }
+}
+
+/// Snapshot of what the audio thread has seen, for the status row.
+struct LaneAudioStats: Sendable {
+    var buffers: Int = 0
+    var lastBufferAt: Date?
+    var lastVoiceAt: Date?
+    var level: Float = 0
+}
+
+func millis(_ seconds: TimeInterval) -> Int64 { Int64((seconds * 1000).rounded()) }
+
+@MainActor
+final class TranslationLane {
+    let direction: Direction
+    var onEvent: (LaneEvent) -> Void = { _ in }
+
+    /// Speak every translated phrase automatically.
+    var speechOutputEnabled: Bool {
+        didSet {
+            guard speechOutputEnabled != oldValue else { return }
+            if AppRules.cancelsSpeech(event: AppRules.SCE_VOICE, value: speechOutputEnabled) { cancelSpeech() }
+        }
+    }
+    var mode: CaptureMode {
+        didSet { if mode != oldValue { Task { await gateEvent(AppRules.GEV_MODE) } } }
+    }
+    /// «Пауза голоса в звонок»: no listening, no automatic speech.
+    var isPaused = false {
+        didSet {
+            guard isPaused != oldValue else { return }
+            if AppRules.cancelsSpeech(event: AppRules.SCE_PAUSE, value: isPaused) { cancelSpeech() }
+            Task { await gateEvent(AppRules.GEV_PAUSE) }
+        }
+    }
+    var glossary: [GlossaryTerm] = []
+    /// Set on the outgoing lane: drops mic audio while the Russian voice plays through speakers.
+    var echoGuard: EchoGuard? {
+        didSet { intake.setEchoGuard(echoGuard) }
+    }
+
+    private(set) var gatePhase = AppRules.GATE_STOPPED
+    private(set) var isKeyHeld = false
+    private(set) var lastTranslatedLine: ConversationLine?
+    var isRunning: Bool { gatePhase == AppRules.GATE_OPEN || gatePhase == AppRules.GATE_CLOSED }
+
+    private let source: AudioSource
+    private let makeTranscriber: () -> Transcriber
+    private let translator: Translator
+    private let synth: SpeechSynth?
+    private let player: AudioPlayer?
+    private let memory: ConversationMemory
+    private let clock: @Sendable () -> Date
+    private let intake: AudioIntake
+    private let log = Logger(subsystem: "app.ponte.translator", category: "lane")
+
+    private var preparedTranscriber: Transcriber?
+    private var segment: Segment?
+    private var gateChange: Task<Void, Never>?
+    private var openSegments: [Segment] = []
+    private var lastPartialAt: [UUID: Date] = [:]
+
+    private var translateInput: AsyncStream<PendingPhrase>.Continuation?
+    private var translateWorker: Task<Void, Never>?
+    private var synthInput: AsyncStream<SpeakRequest>.Continuation?
+    private var synthWorker: Task<Void, Never>?
+    private var playInput: AsyncStream<PlayRequest>.Continuation?
+    private var playWorker: Task<Void, Never>?
+    /// Bumped whenever AppRules.cancelsSpeech says so; older queued speech is dropped.
+    private var speechGeneration = 0
+    /// Automatic phrases between PACT_SYNTHESIZE and the end of their playback.
+    private(set) var speechBacklog: Int32 = 0
+    private var lastSpoken: (text: String, buffers: [AVAudioPCMBuffer])?
+
+    init(direction: Direction,
+         source: AudioSource,
+         makeTranscriber: @escaping () -> Transcriber,
+         translator: Translator,
+         synth: SpeechSynth?,
+         player: AudioPlayer?,
+         memory: ConversationMemory = ConversationMemory(),
+         mode: CaptureMode = .continuous,
+         speechOutputEnabled: Bool = true,
+         clock: @escaping @Sendable () -> Date = { Date() }) {
+        self.direction = direction
+        self.source = source
+        self.makeTranscriber = makeTranscriber
+        self.translator = translator
+        self.synth = synth
+        self.player = player
+        self.memory = memory
+        self.mode = mode
+        self.speechOutputEnabled = speechOutputEnabled
+        self.clock = clock
+        self.intake = AudioIntake(clock: clock)
+    }
+
+    var audioStats: LaneAudioStats { intake.stats() }
+
+    // MARK: Lifecycle
+
+    /// Prepares models and the translator, then starts capturing.
+    func start() async throws {
+        guard gatePhase == AppRules.GATE_STOPPED else { return }
+        await gateEvent(AppRules.GEV_START)
+        do {
+            let first = makeTranscriber()
+            try await first.prepare()
+            try await translator.prepare(from: direction.source, to: direction.target)
+            preparedTranscriber = first
+            startWorkers()
+            try source.start { [intake] buffer, _ in intake.handle(buffer) }
+        } catch {
+            stopWorkers()
+            preparedTranscriber = nil
+            await gateEvent(AppRules.GEV_START_FAILED)
+            throw error
+        }
+        await gateEvent(AppRules.GEV_STARTED)
+    }
+
+    /// Stops capture, flushes the transcriber and waits for pending translations
+    /// (so the transcript is complete). Queued speech is dropped.
+    func stop() async {
+        guard isRunning else { return }
+        isKeyHeld = false
+        source.stop()
+        await gateEvent(AppRules.GEV_STOP)
+        for open in openSegments { await open.waitForConsumer(timeout: 3) }
+        openSegments.removeAll()
+        translateInput?.finish()
+        if let worker = translateWorker {
+            let watchdog = Task { try? await Task.sleep(for: .seconds(8)); worker.cancel() }
+            await worker.value
+            watchdog.cancel()
+        }
+        if AppRules.cancelsSpeech(event: AppRules.SCE_STOP, value: true) { cancelSpeech() }
+        stopWorkers()
+        preparedTranscriber = nil
+        lastPartialAt.removeAll()
+        onEvent(.partial(""))
+    }
+
+    // MARK: Controls
+
+    /// Push-to-talk key state (the gate ignores it in «Авто»).
+    func setKeyHeld(_ held: Bool) {
+        guard held != isKeyHeld else { return }
+        isKeyHeld = held
+        Task { await gateEvent(AppRules.GEV_KEY) }
+    }
+
+    /// «Повторить» / «Сказать заново»: the last translated phrase again.
+    func replayLast() {
+        let translation = lastTranslatedLine?.translation ?? ""
+        let action = AppRules.replayAction(hasCachedAudio: lastSpoken != nil,
+                                           hasLastTranslation: !translation.isEmpty,
+                                           hasPlayer: player != nil)
+        guard action != AppRules.RPL_NONE else { return }
+        ensureSpeechWorkers()
+        if action == AppRules.RPL_AUDIO, let lastSpoken {
+            playInput?.yield(PlayRequest(buffers: lastSpoken.buffers, generation: speechGeneration, counted: false))
+        } else if action == AppRules.RPL_SYNTH {
+            synthInput?.yield(SpeakRequest(text: translation, generation: speechGeneration, counted: false))
+        }
+    }
+
+    private func cancelSpeech() {
+        speechGeneration += 1
+        player?.stopAll()
+        onEvent(.speaking(false))
+    }
+
+    // MARK: Gate (one transcriber session per open period)
+
+    /// Feeds one event to AppRules.gateStep and performs its action. Serialized, so quick
+    /// key taps cannot interleave.
+    private func gateEvent(_ event: Int32) async {
+        let previous = gateChange
+        let change = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            let step = AppRules.gateStep(state: self.gatePhase, event: event, mode: self.mode.ruleCode,
+                                         keyHeld: self.isKeyHeld, paused: self.isPaused)
+            self.gatePhase = AppRules.stepState(step)
+            switch AppRules.stepAction(step) {
+            case AppRules.GACT_OPEN_SEGMENT:
+                self.openSegment()
+            case AppRules.GACT_CLOSE_SEGMENT:
+                if let segment = self.segment { await self.close(segment) }
+            default:
+                break
+            }
+        }
+        gateChange = change
+        await change.value
+    }
+
+    private func openSegment() {
+        let transcriber = preparedTranscriber ?? makeTranscriber()
+        let needsPrepare = preparedTranscriber == nil
+        preparedTranscriber = nil
+        let segment = Segment(transcriber: transcriber)
+        self.segment = segment
+        openSegments.append(segment)
+        intake.setSegment(segment)
+        segment.consumer = Task { [weak self] in
+            do {
+                if needsPrepare { try await transcriber.prepare() }
+                let stream = try transcriber.start()
+                if segment.markStarted() {
+                    // Closed before it started (a short key tap): flush what we have.
+                    Task { await transcriber.finish() }
+                }
+                for await event in stream {
+                    self?.handle(event)
+                }
+            } catch {
+                self?.onEvent(.problem("Распознавание: \(error.localizedDescription)"))
+            }
+            self?.openSegments.removeAll { $0 === segment }
+        }
+    }
+
+    private func close(_ segment: Segment) async {
+        if self.segment === segment {
+            self.segment = nil
+            intake.setSegment(nil)
+        }
+        if segment.markClosed() {
+            await segment.transcriber.finish()
+        }
+    }
+
+    // MARK: Transcript events
+
+    private func handle(_ event: TranscriptEvent) {
+        switch event {
+        case .partial(let id, let text):
+            lastPartialAt[id] = clock()
+            let step = AppRules.phraseStep(stage: AppRules.PH_LISTENING, event: AppRules.PEV_PARTIAL, flags: 0)
+            if AppRules.stepAction(step) == AppRules.PACT_SHOW_PARTIAL { onEvent(.partial(text)) }
+        case .final(let id, let text):
+            let partialAt = lastPartialAt.removeValue(forKey: id)
+            onEvent(.partial(""))
+            let phrase = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let step = AppRules.phraseStep(stage: AppRules.PH_LISTENING, event: AppRules.PEV_FINAL,
+                                           flags: phrase.isEmpty ? AppRules.PF_EMPTY_TEXT : 0)
+            guard AppRules.stepAction(step) == AppRules.PACT_TRANSLATE else { return }
+            let end = phraseEnd(lastPartialAt: partialAt)
+            let line = ConversationLine(id: id, direction: direction, at: end, original: phrase)
+            onEvent(.phrase(line))
+            let context = memory.snapshot()
+            memory.add(phrase)
+            let speak = AppRules.speakRequested(speechEnabled: speechOutputEnabled, paused: isPaused)
+            translateInput?.yield(PendingPhrase(line: line, context: context, end: end,
+                                                speak: speak, generation: speechGeneration))
+        }
+    }
+
+    private func phraseEnd(lastPartialAt: Date?) -> Date {
+        let now = clock()
+        let voiceAt = intake.stats().lastVoiceAt
+        let source = AppRules.phraseEndSource(
+            msSinceVoice: voiceAt.map { millis(now.timeIntervalSince($0)) } ?? -1,
+            msSincePartial: lastPartialAt.map { max(-1, millis(now.timeIntervalSince($0))) } ?? -1)
+        switch source {
+        case AppRules.END_LAST_VOICE: return voiceAt ?? now
+        case AppRules.END_LAST_PARTIAL: return lastPartialAt ?? now
+        default: return now
+        }
+    }
+
+    // MARK: Workers (each one is a FIFO, so order is kept end to end)
+
+    private struct PendingPhrase {
+        var line: ConversationLine
+        let context: [String]
+        let end: Date
+        let speak: Bool
+        let generation: Int
+    }
+
+    private struct SpeakRequest {
+        let text: String
+        let generation: Int
+        /// Automatic phrases count in the backlog; replays do not.
+        let counted: Bool
+    }
+
+    private struct PlayRequest {
+        let buffers: [AVAudioPCMBuffer]
+        let generation: Int
+        let counted: Bool
+    }
+
+    private func flags(generation: Int, extra: Int32 = 0) -> Int32 {
+        var f = extra
+        if generation == speechGeneration { f |= AppRules.PF_GENERATION_CURRENT }
+        if speechOutputEnabled { f |= AppRules.PF_SPEECH_ENABLED }
+        if isPaused { f |= AppRules.PF_PAUSED }
+        if synth != nil { f |= AppRules.PF_HAS_SYNTH }
+        if player != nil { f |= AppRules.PF_HAS_PLAYER }
+        return f
+    }
+
+    private func startWorkers() {
+        let (translateStream, translateInput) = AsyncStream<PendingPhrase>.makeStream()
+        self.translateInput = translateInput
+        translateWorker = Task { [weak self] in
+            for await pending in translateStream {
+                guard let self else { return }
+                await self.translate(pending)
+            }
+        }
+        ensureSpeechWorkers()
+    }
+
+    private func ensureSpeechWorkers() {
+        guard synth != nil || player != nil, synthWorker == nil else { return }
+        let (synthStream, synthInput) = AsyncStream<SpeakRequest>.makeStream()
+        let (playStream, playInput) = AsyncStream<PlayRequest>.makeStream()
+        self.synthInput = synthInput
+        self.playInput = playInput
+        synthWorker = Task { [weak self] in
+            for await request in synthStream {
+                guard let self else { return }
+                await self.synthesize(request)
+            }
+        }
+        playWorker = Task { [weak self] in
+            for await request in playStream {
+                guard let self else { return }
+                await self.play(request)
+            }
+        }
+    }
+
+    private func stopWorkers() {
+        translateInput?.finish()
+        synthInput?.finish()
+        playInput?.finish()
+        translateWorker?.cancel()
+        synthWorker?.cancel()
+        playWorker?.cancel()
+        translateInput = nil
+        synthInput = nil
+        playInput = nil
+        translateWorker = nil
+        synthWorker = nil
+        playWorker = nil
+        speechBacklog = 0
+    }
+
+    private func endOfSpeech(_ counted: Bool) {
+        if counted { speechBacklog = max(0, speechBacklog - 1) }
+    }
+
+    private func translate(_ pending: PendingPhrase) async {
+        var line = pending.line
+        do {
+            let raw = try await translator.translate(line.original, from: direction.source,
+                                                     to: direction.target, context: pending.context)
+            let text = GlossaryTerm.apply(glossary, to: raw, direction: direction)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            line.translation = text
+            let latency = AppRules.latencyMs(endMs: millis(pending.end.timeIntervalSince1970),
+                                             readyMs: millis(clock().timeIntervalSince1970))
+            line.latency = Double(latency) / 1000
+            log.info("latency \(self.direction.rawValue, privacy: .public) \(latency, privacy: .public) ms")
+            lastTranslatedLine = line
+            var extra: Int32 = text.isEmpty ? AppRules.PF_EMPTY_TEXT : 0
+            if pending.speak { extra |= AppRules.PF_SPEAK_REQUESTED }
+            let step = AppRules.phraseStep(stage: AppRules.PH_TRANSLATING, event: AppRules.PEV_TRANSLATED,
+                                           flags: flags(generation: pending.generation, extra: extra))
+            onEvent(.translated(line))
+            if AppRules.stepAction(step) == AppRules.PACT_SYNTHESIZE {
+                speechBacklog += 1
+                synthInput?.yield(SpeakRequest(text: text, generation: pending.generation, counted: true))
+            }
+        } catch {
+            // PEV_TRANSLATE_FAILED always shows the original only.
+            _ = AppRules.phraseStep(stage: AppRules.PH_TRANSLATING, event: AppRules.PEV_TRANSLATE_FAILED, flags: 0)
+            onEvent(.translated(line))
+            if !(error is CancellationError) {
+                onEvent(.problem("Перевод: \(error.localizedDescription)"))
+            }
+        }
+    }
+
+    private func synthesize(_ request: SpeakRequest) async {
+        let start = AppRules.phraseStep(stage: AppRules.PH_SYNTH_QUEUED, event: AppRules.PEV_SYNTH_DEQUEUED,
+                                        flags: flags(generation: request.generation))
+        guard AppRules.stepAction(start) == AppRules.PACT_RUN_SYNTH, let synth else {
+            endOfSpeech(request.counted)
+            return
+        }
+        do {
+            let waiting = request.counted ? speechBacklog - 1 : speechBacklog
+            let rate = AppRules.speechRatePercent(waiting: waiting)
+            let buffers: [AVAudioPCMBuffer]
+            if let rated = synth as? RateAdjustableSpeechSynth {
+                buffers = try await rated.synthesize(request.text, lang: direction.target, ratePercent: rate)
+            } else {
+                buffers = try await synth.synthesize(request.text, lang: direction.target)
+            }
+            if !buffers.isEmpty { lastSpoken = (request.text, buffers) }
+            let done = AppRules.phraseStep(stage: AppRules.PH_SYNTH_QUEUED, event: AppRules.PEV_SYNTHESIZED,
+                                           flags: flags(generation: request.generation,
+                                                        extra: buffers.isEmpty ? 0 : AppRules.PF_HAS_AUDIO))
+            if AppRules.stepAction(done) == AppRules.PACT_ENQUEUE_PLAY {
+                playInput?.yield(PlayRequest(buffers: buffers, generation: request.generation, counted: request.counted))
+            } else {
+                endOfSpeech(request.counted)
+            }
+        } catch {
+            _ = AppRules.phraseStep(stage: AppRules.PH_SYNTH_QUEUED, event: AppRules.PEV_SYNTH_FAILED, flags: 0)
+            endOfSpeech(request.counted)
+            onEvent(.problem("Голос: \(error.localizedDescription)"))
+        }
+    }
+
+    private func play(_ request: PlayRequest) async {
+        let start = AppRules.phraseStep(stage: AppRules.PH_PLAY_QUEUED, event: AppRules.PEV_PLAY_DEQUEUED,
+                                        flags: flags(generation: request.generation,
+                                                     extra: request.buffers.isEmpty ? 0 : AppRules.PF_HAS_AUDIO))
+        guard AppRules.stepAction(start) == AppRules.PACT_PLAY, let player else {
+            endOfSpeech(request.counted)
+            return
+        }
+        onEvent(.speaking(true))
+        for buffer in request.buffers {
+            guard request.generation == speechGeneration else { break }   // cancelled mid-phrase
+            await player.play(buffer)
+        }
+        let finish = AppRules.phraseStep(stage: AppRules.PH_PLAYING, event: AppRules.PEV_PLAYED, flags: 0)
+        endOfSpeech(request.counted)
+        if AppRules.stepAction(finish) == AppRules.PACT_FINISH, request.generation == speechGeneration {
+            onEvent(.speaking(false))
+        }
+    }
+}
+
+// MARK: - Audio-thread side
+
+/// Receives PCM on the capture thread and forwards it to the open segment.
+final class AudioIntake: @unchecked Sendable {
+    private let lock = NSLock()
+    private var segment: Segment?
+    private var echoGuard: EchoGuard?
+    private var current = LaneAudioStats()
+    private let clock: @Sendable () -> Date
+
+    init(clock: @escaping @Sendable () -> Date) { self.clock = clock }
+
+    func setSegment(_ segment: Segment?) { lock.withLock { self.segment = segment } }
+    func setEchoGuard(_ echoGuard: EchoGuard?) { lock.withLock { self.echoGuard = echoGuard } }
+
+    func stats() -> LaneAudioStats { lock.withLock { current } }
+
+    func handle(_ buffer: AVAudioPCMBuffer) {
+        let level = buffer.laneRMS
+        let now = clock()
+        let (segment, echo): (Segment?, EchoGuard?) = lock.withLock {
+            current.buffers += 1
+            current.lastBufferAt = now
+            current.level = level
+            return (self.segment, self.echoGuard)
+        }
+        guard let segment else { return }
+        if let echo, echo.blocksMic(at: now) { return }
+        if AppRules.isVoice(rms: Double(level)) {
+            lock.withLock { current.lastVoiceAt = now }
+        }
+        segment.append(buffer)
+    }
+}
+
+/// One transcriber session. Audio that arrives before `start()` returned is kept
+/// and replayed in order.
+final class Segment: @unchecked Sendable {
+    let transcriber: Transcriber
+    var consumer: Task<Void, Never>?
+    private let lock = NSLock()
+    private var started = false
+    private var closed = false
+    private var pending: [AVAudioPCMBuffer] = []
+
+    init(transcriber: Transcriber) { self.transcriber = transcriber }
+
+    func append(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed else { return }
+        if started {
+            transcriber.append(buffer)
+        } else if let copy = buffer.copy() as? AVAudioPCMBuffer {
+            pending.append(copy)
+        }
+    }
+
+    /// Flushes buffered audio. Returns true if the segment was closed meanwhile,
+    /// so the caller must finish the transcriber itself.
+    func markStarted() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        started = true
+        for buffer in pending { transcriber.append(buffer) }
+        pending.removeAll()
+        return closed
+    }
+
+    /// Returns true if the transcriber had started and must be finished now.
+    func markClosed() -> Bool {
+        lock.withLock {
+            guard !closed else { return false }
+            closed = true
+            return started
+        }
+    }
+
+    func waitForConsumer(timeout: TimeInterval) async {
+        guard let consumer else { return }
+        let watchdog = Task { try? await Task.sleep(for: .seconds(timeout)); consumer.cancel() }
+        await consumer.value
+        watchdog.cancel()
+    }
+}
+
+extension AVAudioPCMBuffer {
+    /// RMS of the first channel (Float32 or Int16), 0 if unknown.
+    var laneRMS: Float {
+        let frames = Int(frameLength)
+        guard frames > 0 else { return 0 }
+        var sum: Float = 0
+        if let data = floatChannelData {
+            for i in 0..<frames { sum += data[0][i] * data[0][i] }
+        } else if let data = int16ChannelData {
+            for i in 0..<frames {
+                let v = Float(data[0][i]) / Float(Int16.max)
+                sum += v * v
+            }
+        } else {
+            return 0
+        }
+        return (sum / Float(frames)).squareRoot()
+    }
+}
