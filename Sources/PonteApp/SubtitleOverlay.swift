@@ -123,7 +123,7 @@ struct SubtitleOverlayView: View {
                         .foregroundStyle(.white.opacity(0.7))
                 }
                 .buttonStyle(.plain)
-                .help("Скрыть субтитры")
+                .accessibilityHint("Скрыть субтитры")
                 .padding(10)
             }
         }
