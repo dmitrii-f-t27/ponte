@@ -277,6 +277,52 @@ enum AudioRulesLegacy {
         inputRate > 0 && inputChannels > 0 && busRate > 0 && busChannels > 0
     }
 
+    // MARK: - The call output heals itself (2026-10-13, phrases cut by engine stops)
+
+    /// DeviceAudioPlayer rebuilt lazily on the next phrase and completed a phrase cut by a stop as played.
+    /// Now: idle → running on a start; a failed start retries with the capture backoff and, after
+    /// restartAttempts in a row, completes the waiting phrases; a stop of a running engine cuts what is
+    /// scheduled and rebuilds; any other configuration change changes nothing.
+    static let playerIdle = 0, playerRunning = 1, playerRebuilding = 2, playerFailed = 3
+    static let playerStarted = 0, playerStartFailed = 1, playerChange = 2
+    static let playerNone = 0, playerScheduleWaiting = 1, playerRetry = 2, playerRetryRelease = 3, playerCutRetry = 4
+    static let playerEnqueueStart = 0, playerEnqueueSchedule = 1, playerEnqueueWait = 2, playerEnqueueRefuse = 3
+    static let playerCompletionDone = 0, playerCompletionIgnore = 1, playerCompletionReplay = 2
+    static let playerMaxReplays: Int64 = 3
+    static let playerEndToleranceFrames: Int64 = 4096
+
+    static func playerStep(state: Int, event: Int, engineRunning: Bool, failures: Int64) -> (state: Int, action: Int) {
+        switch event {
+        case playerStarted:
+            return (playerRunning, playerScheduleWaiting)
+        case playerStartFailed:
+            return restartFailed(failures: failures) ? (playerFailed, playerRetryRelease) : (playerRebuilding, playerRetry)
+        case playerChange where !engineRunning && state == playerRunning:
+            return (playerRebuilding, playerCutRetry)
+        default:
+            return (state, playerNone)
+        }
+    }
+
+    static func playerEnqueue(state: Int) -> Int {
+        switch state {
+        case playerRunning: return playerEnqueueSchedule
+        case playerRebuilding: return playerEnqueueWait
+        case playerFailed: return playerEnqueueRefuse
+        default: return playerEnqueueStart
+        }
+    }
+
+    /// A completion is also called when the node is stopped: heard only from the phrase's own running engine
+    /// rendered up to its end; flushed on its own running engine → replay; any other engine → ignore.
+    static func playerCompletion(sameGeneration: Bool, engineRunning: Bool, position: Int64?, endFrame: Int64) -> Int {
+        guard sameGeneration, engineRunning else { return playerCompletionIgnore }
+        guard let position else { return playerCompletionDone }
+        return position >= endFrame - playerEndToleranceFrames ? playerCompletionDone : playerCompletionReplay
+    }
+
+    static func playerReplays(cuts: Int64) -> Bool { cuts <= playerMaxReplays }
+
     // MARK: - Devices
 
     /// Device kind codes.

@@ -731,6 +731,8 @@ extension AppRulesLegacy {
     /// The two TranslationLane(...) calls in AppModel.start.
     static func laneMode(direction: Int32, outgoingMode: Int32) -> Int32 { direction == DIR_INCOMING ? MODE_CONTINUOUS : MODE_PUSH_TO_TALK }
     static func laneSpeaks(direction: Int32, speakRussian: Bool) -> Bool { direction == DIR_INCOMING ? speakRussian : true }
+    /// 2026-10-13: the outgoing lane starts its call output with the lane (DeviceAudioPlayer started lazily).
+    static func lanePreparesOutput(direction: Int32, speaks: Bool) -> Bool { direction == DIR_OUTGOING && speaks }
     /// `outgoing.isPaused = voicePaused`, `outgoing.echoGuard = echoGuard`, `.speaking` of the incoming lane.
     static func laneVoicePause(direction: Int32) -> Bool { direction == DIR_OUTGOING }
     static func laneEchoGuarded(direction: Int32) -> Bool { direction == DIR_OUTGOING }

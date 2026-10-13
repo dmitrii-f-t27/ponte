@@ -514,6 +514,8 @@ enum AppRules {
     /// Per-lane settings by direction.
     static func laneMode(direction: Int32, outgoingMode: Int32) -> Int32 { ln_lane_mode(direction, outgoingMode) }
     static func laneSpeaks(direction: Int32, speakRussian: Bool) -> Bool { ln_lane_speaks(direction, speakRussian) }
+    /// The call output starts with the lane and keeps running between phrases.
+    static func lanePreparesOutput(direction: Int32, speaks: Bool) -> Bool { ln_lane_prepares_output(direction, speaks) }
     static func laneVoicePause(direction: Int32) -> Bool { ln_lane_voice_pause(direction) }
     static func laneEchoGuarded(direction: Int32) -> Bool { ln_lane_echo_guarded(direction) }
     static func laneEchoSource(direction: Int32) -> Bool { ln_lane_echo_source(direction) }

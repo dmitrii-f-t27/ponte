@@ -163,6 +163,7 @@ bool ln_requests_mic_permission(bool mic_is_live, int64_t mic_decision);
 int32_t ln_call_output(bool has_sink, bool has_blackhole);
 int32_t ln_lane_mode(int32_t direction, int32_t outgoing_mode);
 bool ln_lane_speaks(int32_t direction, bool speak_russian);
+bool ln_lane_prepares_output(int32_t direction, bool speaks);
 bool ln_lane_voice_pause(int32_t direction);
 bool ln_lane_echo_guarded(int32_t direction);
 bool ln_lane_echo_source(int32_t direction);
@@ -547,6 +548,10 @@ bool ln_lane_speaks(int32_t direction, bool speak_russian) {
     return true;
 }
 
+bool ln_lane_prepares_output(int32_t direction, bool speaks) {
+    return ((direction == LN_DIR_OUTGOING) && speaks);
+}
+
 bool ln_lane_voice_pause(int32_t direction) {
     return (direction == LN_DIR_OUTGOING);
 }
@@ -809,6 +814,10 @@ void test_ln_moved_rules(void) {
     assert((ln_lane_mode(LN_DIR_OUTGOING, LN_MODE_CONTINUOUS) == LN_MODE_PUSH_TO_TALK));
     assert((ln_lane_speaks(LN_DIR_INCOMING, false) == false));
     assert((ln_lane_speaks(LN_DIR_OUTGOING, false) == true));
+    assert((ln_lane_prepares_output(LN_DIR_OUTGOING, true) == true));
+    assert((ln_lane_prepares_output(LN_DIR_OUTGOING, false) == false));
+    assert((ln_lane_prepares_output(LN_DIR_INCOMING, true) == false));
+    assert((ln_lane_prepares_output(LN_DIR_INCOMING, false) == false));
     assert((ln_lane_voice_pause(LN_DIR_OUTGOING) == true));
     assert((ln_lane_echo_guarded(LN_DIR_INCOMING) == false));
     assert((ln_lane_echo_source(LN_DIR_INCOMING) == true));

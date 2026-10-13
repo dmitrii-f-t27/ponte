@@ -25,6 +25,7 @@ final class AppTestSource: AudioSource {
 
     func start(handler: @escaping PCMHandler) throws { self.handler = handler }
     func stop() { stopped = true; handler = nil }
+    var isStarted: Bool { handler != nil }
 
     /// Pushes `seconds` of audio; amplitude 0 is silence, 0.5 is clearly speech.
     func push(seconds: Double = 0.1, amplitude: Float = 0.5) {
@@ -135,6 +136,15 @@ final class AppTestPlayer: AudioPlayer {
     private(set) var calls: [Int] = []
     private(set) var stopCount = 0
     var duration: Duration = .milliseconds(5)
+    private(set) var prepareCount = 0
+    var prepareError: Error?
+    var onPrepare: (() -> Void)?
+
+    func prepare() throws {
+        prepareCount += 1
+        onPrepare?()
+        if let prepareError { throw prepareError }
+    }
 
     func play(_ buffer: AVAudioPCMBuffer) async {
         await play([buffer])
@@ -224,6 +234,29 @@ func appTestWait(_ what: String = "", timeout: Duration = .seconds(2),
     await rig.lane.stop()
     #expect(rig.source.stopped)
     #expect(rig.current?.finished == true)
+}
+
+/// The call output starts with the outgoing lane, before the capture, and keeps running between phrases
+/// (2026-10-13); a device that cannot start yet does not stop the lane. The headphones start on demand.
+@MainActor @Test func outgoingLaneStartsItsCallOutputBeforeTheCapture() async throws {
+    let rig = AppTestRig(direction: .outgoing)
+    var sourceStartedAtPrepare: Bool?
+    rig.player.onPrepare = { sourceStartedAtPrepare = rig.source.isStarted }
+    rig.player.prepareError = CocoaError(.featureUnsupported)
+    try await rig.lane.start()
+    #expect(rig.player.prepareCount == 1)
+    #expect(sourceStartedAtPrepare == false)
+    #expect(rig.lane.isRunning && rig.source.isStarted)
+    await rig.lane.stop()
+
+    let incoming = AppTestRig(direction: .incoming, speak: true)
+    try await incoming.lane.start()
+    #expect(incoming.player.prepareCount == 0)
+    await incoming.lane.stop()
+    let quiet = AppTestRig(direction: .outgoing, speak: false)
+    try await quiet.lane.start()
+    #expect(quiet.player.prepareCount == 0)
+    await quiet.lane.stop()
 }
 
 @MainActor @Test func laneKeepsOrderWhenTranslationsTakeUnevenTime() async throws {

@@ -6,13 +6,15 @@
 //                  [--self-play file]   (also plays the file from this process: checks self-exclusion)
 //   AudioProbe mic [--device <name>] --seconds N --out file.wav [--request]
 //   AudioProbe permissions
-//   AudioProbe play [--device <name substring>] [--volume 0..1] file
+//   AudioProbe play [--device <name substring>] [--volume 0..1] [--wait S] [--hold S] [--stop-engine-at S] file
+//                  (--wait: the output runs S seconds before the phrase; --hold: S seconds after it;
+//                   --stop-engine-at: stops the engine S seconds into the phrase the way a device change does)
 //   AudioProbe file <path> [--realtime]
 //
 // Capture commands print the format, then frames and RMS once per second.
 import AVFoundation
 import Foundation
-import PonteAudio
+@_spi(Probe) import PonteAudio
 import PonteCore
 
 setvbuf(stdout, nil, _IOLBF, 0)
@@ -24,7 +26,8 @@ struct Args {
     var options: [String: [String]] = [:]
     var flags: Set<String> = []
 
-    static let valueOptions: Set<String> = ["--bundle", "--pid", "--seconds", "--out", "--device", "--self-play", "--volume"]
+    static let valueOptions: Set<String> = ["--bundle", "--pid", "--seconds", "--out", "--device", "--self-play", "--volume",
+                                            "--wait", "--hold", "--stop-engine-at"]
 
     init(_ argv: [String]) throws {
         var i = 0
@@ -65,7 +68,7 @@ AudioProbe apps [--raw]
 AudioProbe tap (--bundle <id> | --pid <n> [--pid <n>...] | --system) --seconds N --out file.wav [--self-play file]
 AudioProbe mic [--device <name>] --seconds N --out file.wav [--request]
 AudioProbe permissions
-AudioProbe play [--device <name substring>] [--volume 0..1] <file>
+AudioProbe play [--device <name substring>] [--volume 0..1] [--wait S] [--hold S] [--stop-engine-at S] <file>
 AudioProbe file <path> [--realtime]
 """
 
@@ -380,11 +383,18 @@ func cmdPlay(_ args: Args) async throws {
         player.volume = v   // clamped to 0…1 by AudioRules.clampUnit
         print("volume: \(player.volume)")
     }
+    print("pid \(getpid())")
     try player.prepare()
+    // The output stays on (silence) before and after the phrase, as the call output does.
+    if let wait = args.value("--wait").flatMap(Double.init), wait > 0 {
+        print(String(format: "output running, phrase in %.1f s", wait))
+        try? await Task.sleep(nanoseconds: UInt64(wait * 1e9))
+    }
     // Feed ~100 ms chunks like a synthesizer would, in one gapless call; it returns once all are heard.
     let chunk = Int(PCM.framesPerChunk(sampleRate: file.processingFormat.sampleRate))
     let pieces = PCM.chunkRanges(total: Int(whole.frameLength), chunk: chunk).compactMap { sliceAny(whole, $0) }
     let started = Date()
+    print("phrase start \(ISO8601DateFormatter.probe.string(from: started))")
     await withTaskGroup(of: Void.self) { group in
         group.addTask { await player.play(pieces) }
         group.addTask {
@@ -392,9 +402,29 @@ func cmdPlay(_ args: Args) async throws {
             let used = RunningAudioAppCatalog.outputDevices(ofPID: getpid()).map(\.name)
             print("this process is playing to: \(used.isEmpty ? "-" : used.joined(separator: ", "))")
         }
+        if let at = args.value("--stop-engine-at").flatMap(Double.init), at >= 0 {
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(at * 1e9))
+                print(String(format: "stopping the engine at %.2f s, as a device change does", Date().timeIntervalSince(started)))
+                player.simulateDeviceStop()
+            }
+        }
+    }
+    let ended = Date()
+    print("phrase end \(ISO8601DateFormatter.probe.string(from: ended))")
+    print(String(format: "played in %.2f s (file %.2f s)", ended.timeIntervalSince(started), duration))
+    if let hold = args.value("--hold").flatMap(Double.init), hold > 0 {
+        try? await Task.sleep(nanoseconds: UInt64(hold * 1e9))
     }
     if let err = player.lastError { throw ProbeError.failed("player: \(err)") }
-    print(String(format: "played in %.2f s (file %.2f s)", Date().timeIntervalSince(started), duration))
+}
+
+extension ISO8601DateFormatter {
+    static let probe: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 }
 
 /// Slices any deinterleaved Float32 buffer; other layouts are first downmixed to mono.

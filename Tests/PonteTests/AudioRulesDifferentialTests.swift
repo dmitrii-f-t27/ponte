@@ -280,6 +280,59 @@ private typealias L = AudioRulesLegacy
         log.finish(minimumCases: 78_000)
     }
 
+    /// playerStep, playerEnqueue, playerCompletion, playerReplays (2026-10-13, phrases cut by engine stops).
+    @Test func playerRules() {
+        let log = DiffLog("playerStep, playerEnqueue, playerCompletion, playerReplays")
+        log.check([F.playerIdle, F.playerRunning, F.playerRebuilding, F.playerFailed],
+                  [L.playerIdle, L.playerRunning, L.playerRebuilding, L.playerFailed], "player states")
+        log.check([F.playerStarted, F.playerStartFailed, F.playerChange], [L.playerStarted, L.playerStartFailed, L.playerChange], "player events")
+        log.check([F.playerNone, F.playerScheduleWaiting, F.playerRetry, F.playerRetryRelease, F.playerCutRetry],
+                  [L.playerNone, L.playerScheduleWaiting, L.playerRetry, L.playerRetryRelease, L.playerCutRetry], "player actions")
+        log.check([F.playerEnqueueStart, F.playerEnqueueSchedule, F.playerEnqueueWait, F.playerEnqueueRefuse],
+                  [L.playerEnqueueStart, L.playerEnqueueSchedule, L.playerEnqueueWait, L.playerEnqueueRefuse], "enqueue codes")
+        log.check([F.playerCompletionDone, F.playerCompletionIgnore, F.playerCompletionReplay],
+                  [L.playerCompletionDone, L.playerCompletionIgnore, L.playerCompletionReplay], "completion codes")
+        log.check([F.playerMaxReplays, F.playerEndToleranceFrames], [L.playerMaxReplays, L.playerEndToleranceFrames], "player constants")
+        // Every state (and codes beyond them), event, running flag and failure count around the limit.
+        for state in -2...6 {
+            log.check(F.playerEnqueue(state: state), L.playerEnqueue(state: state), "\(state)")
+            for event in -1...4 {
+                for running in [false, true] {
+                    for failures: Int64 in [.min, -1, 0, 1, 2, 5, 6, 7, 100, .max] {
+                        let f = F.playerStep(state: state, event: event, engineRunning: running, failures: failures)
+                        let l = L.playerStep(state: state, event: event, engineRunning: running, failures: failures)
+                        log.check([f.state, f.action], [l.state, l.action], describe(state, event, running, failures))
+                    }
+                }
+            }
+        }
+        var r = DiffRandom(seed: 2026_10_13)
+        let limit: Int64 = 1 << 40
+        var positions: [Int64] = [0, 1, -1, 4095, 4096, 4097, 47_999, 48_000, 48_001, limit, -limit]
+        for _ in 0..<2_000 { positions.append(r.int64(-limit ... limit)) }
+        for end in positions.prefix(40) + [0, 1024, 48_000, 96_000] {
+            for position in positions.prefix(60) + [end - 4097, end - 4096, end - 4095, end, end + 1] {
+                for bits in 0..<8 {
+                    let same = bits & 1 == 1, running = bits & 2 == 2, has = bits & 4 == 4
+                    let p: Int64? = has ? position : nil
+                    log.check(F.playerCompletion(sameGeneration: same, engineRunning: running, position: p, endFrame: end),
+                              L.playerCompletion(sameGeneration: same, engineRunning: running, position: p, endFrame: end),
+                              describe(same, running, p as Any, end))
+                }
+            }
+        }
+        for _ in 0..<20_000 {
+            let end = r.int64(-limit ... limit), position = r.int64(-limit ... limit)
+            log.check(F.playerCompletion(sameGeneration: true, engineRunning: true, position: position, endFrame: end),
+                      L.playerCompletion(sameGeneration: true, engineRunning: true, position: position, endFrame: end),
+                      describe(position, end))
+        }
+        var cuts: [Int64] = Array(-10...100) + [.min, .max]
+        for _ in 0..<1_000 { cuts.append(r.int64(.min ... .max)) }
+        for c in cuts { log.check(F.playerReplays(cuts: c), L.playerReplays(cuts: c), "\(c)") }
+        log.finish(minimumCases: 44_000)
+    }
+
     // MARK: Devices
 
     private static let names = ["MacBook Pro Speakers", "MacBook Pro Microphone", "External Headphones", "BlackHole 2ch",

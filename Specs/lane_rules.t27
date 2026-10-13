@@ -477,6 +477,13 @@ pub fn ln_lane_speaks(direction: i32, speak_russian: bool) -> bool {
     return true;
 }
 
+; The call output (BlackHole, the outgoing lane's voice) starts with the lane and keeps running between phrases,
+; so a phrase never waits for the engine and Meet always has a live microphone (2026-10-13). The headphones
+; player of the incoming lane starts with its first phrase.
+pub fn ln_lane_prepares_output(direction: i32, speaks: bool) -> bool {
+    return direction == LN_DIR_OUTGOING and speaks;
+}
+
 ; The voice pause and the echo guard belong to the outgoing lane; the incoming lane's voice feeds the guard.
 pub fn ln_lane_voice_pause(direction: i32) -> bool {
     return direction == LN_DIR_OUTGOING;
@@ -730,6 +737,10 @@ test ln_moved_rules {
     assert ln_lane_mode(LN_DIR_OUTGOING, LN_MODE_CONTINUOUS) == LN_MODE_PUSH_TO_TALK;
     assert ln_lane_speaks(LN_DIR_INCOMING, false) == false;
     assert ln_lane_speaks(LN_DIR_OUTGOING, false) == true;
+    assert ln_lane_prepares_output(LN_DIR_OUTGOING, true) == true;
+    assert ln_lane_prepares_output(LN_DIR_OUTGOING, false) == false;
+    assert ln_lane_prepares_output(LN_DIR_INCOMING, true) == false;
+    assert ln_lane_prepares_output(LN_DIR_INCOMING, false) == false;
     assert ln_lane_voice_pause(LN_DIR_OUTGOING) == true;
     assert ln_lane_echo_guarded(LN_DIR_INCOMING) == false;
     assert ln_lane_echo_source(LN_DIR_INCOMING) == true;

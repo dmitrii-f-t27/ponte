@@ -108,6 +108,11 @@ private typealias L = AppRulesLegacy
                       [L.laneVoicePause(direction: d), L.laneEchoGuarded(direction: d), L.laneEchoSource(direction: d), L.glossarySourceIsPT(direction: d)],
                       "\(d)")
         }
+        for d: Int32 in -3...4 {
+            for speaks in bools {
+                log.check(F.lanePreparesOutput(direction: d, speaks: speaks), L.lanePreparesOutput(direction: d, speaks: speaks), describe(d, speaks))
+            }
+        }
         for scope: Int32 in -3...6 {
             log.check(F.pttLocal(scope: scope), L.pttLocal(scope: scope), "\(scope)")
             log.check(F.pttGlobal(scope: scope), L.pttGlobal(scope: scope), "\(scope)")

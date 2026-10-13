@@ -112,6 +112,9 @@ public protocol AudioPlayer: AnyObject {
     func play(_ buffers: [AVAudioPCMBuffer]) async
     /// Drops everything queued or playing; pending `play` calls return.
     func stopAll()
+    /// Starts the output now and keeps it running between phrases (otherwise the first `play` starts it).
+    /// Throws the reason the device cannot be used.
+    func prepare() throws
 }
 
 extension AudioPlayer {
@@ -119,6 +122,9 @@ extension AudioPlayer {
     public func play(_ buffers: [AVAudioPCMBuffer]) async {
         for buffer in buffers { await play(buffer) }
     }
+
+    /// Default: nothing to start ahead.
+    public func prepare() throws {}
 }
 
 // MARK: - Speech

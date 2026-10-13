@@ -56,6 +56,28 @@
 #define AU_RESTART_DELAY_MS 300
 #define AU_RESTART_MAX_DELAY_MS 5000
 #define AU_RESTART_ATTEMPTS 6
+#define AU_PL_IDLE 0
+#define AU_PL_RUNNING 1
+#define AU_PL_REBUILDING 2
+#define AU_PL_FAILED 3
+#define AU_PLE_STARTED 0
+#define AU_PLE_START_FAILED 1
+#define AU_PLE_CHANGE 2
+#define AU_PLA_NONE 0
+#define AU_PLA_SCHEDULE_WAITING 1
+#define AU_PLA_RETRY 2
+#define AU_PLA_RETRY_RELEASE 3
+#define AU_PLA_CUT_RETRY 4
+#define AU_PLQ_START 0
+#define AU_PLQ_SCHEDULE 1
+#define AU_PLQ_WAIT 2
+#define AU_PLQ_REFUSE 3
+#define AU_PLC_DONE 0
+#define AU_PLC_IGNORE 1
+#define AU_PLC_REPLAY 2
+#define AU_PLAYER_MAX_REPLAYS 3
+#define AU_PLAYER_END_TOLERANCE_FRAMES 4096
+#define AU_PL_STEP_BASE 256
 #define AU_FORMAT_OTHER 0
 #define AU_FORMAT_FLOAT32 1
 #define AU_FORMAT_FLOAT64 2
@@ -119,6 +141,13 @@ int64_t au_mic_start_decision(int64_t authorization_status);
 int64_t au_restart_delay_ms(int64_t attempt);
 bool au_restart_failed(int64_t failures);
 bool au_mic_tap_ready(double input_rate, int64_t input_channels, double bus_rate, int64_t bus_channels);
+int64_t au_player_step(int64_t state, int64_t event, bool engine_running, int64_t failures);
+int64_t au_player_keep(int64_t state);
+int64_t au_player_step_state(int64_t step);
+int64_t au_player_step_action(int64_t step);
+int64_t au_player_enqueue(int64_t state);
+int64_t au_player_completion(bool same_generation, bool engine_running, bool has_position, int64_t position, int64_t end_frame);
+bool au_player_replays(int64_t cuts);
 bool au_has_signal(float peak, float rms);
 bool au_tap_lists_processes(bool is_global);
 bool au_flushes_converter(int64_t index, int64_t count, bool next_format_differs);
@@ -542,6 +571,64 @@ bool au_restart_failed(int64_t failures) {
 
 bool au_mic_tap_ready(double input_rate, int64_t input_channels, double bus_rate, int64_t bus_channels) {
     return ((((input_rate > 0.0) && (input_channels > 0)) && (bus_rate > 0.0)) && (bus_channels > 0));
+}
+
+int64_t au_player_step(int64_t state, int64_t event, bool engine_running, int64_t failures) {
+    if ((event == AU_PLE_STARTED)) {
+        return ((AU_PL_RUNNING * AU_PL_STEP_BASE) + AU_PLA_SCHEDULE_WAITING);
+    }
+    if ((event == AU_PLE_START_FAILED)) {
+        if (au_restart_failed(failures)) {
+            return ((AU_PL_FAILED * AU_PL_STEP_BASE) + AU_PLA_RETRY_RELEASE);
+        }
+        return ((AU_PL_REBUILDING * AU_PL_STEP_BASE) + AU_PLA_RETRY);
+    }
+    if ((((event == AU_PLE_CHANGE) && (engine_running == false)) && (state == AU_PL_RUNNING))) {
+        return ((AU_PL_REBUILDING * AU_PL_STEP_BASE) + AU_PLA_CUT_RETRY);
+    }
+    return au_player_keep(state);
+}
+
+int64_t au_player_keep(int64_t state) {
+    return ((state * AU_PL_STEP_BASE) + AU_PLA_NONE);
+}
+
+int64_t au_player_step_state(int64_t step) {
+    return (step / AU_PL_STEP_BASE);
+}
+
+int64_t au_player_step_action(int64_t step) {
+    return (step % AU_PL_STEP_BASE);
+}
+
+int64_t au_player_enqueue(int64_t state) {
+    if ((state == AU_PL_RUNNING)) {
+        return AU_PLQ_SCHEDULE;
+    }
+    if ((state == AU_PL_REBUILDING)) {
+        return AU_PLQ_WAIT;
+    }
+    if ((state == AU_PL_FAILED)) {
+        return AU_PLQ_REFUSE;
+    }
+    return AU_PLQ_START;
+}
+
+int64_t au_player_completion(bool same_generation, bool engine_running, bool has_position, int64_t position, int64_t end_frame) {
+    if (((same_generation == false) || (engine_running == false))) {
+        return AU_PLC_IGNORE;
+    }
+    if ((has_position == false)) {
+        return AU_PLC_DONE;
+    }
+    if ((position >= (end_frame - AU_PLAYER_END_TOLERANCE_FRAMES))) {
+        return AU_PLC_DONE;
+    }
+    return AU_PLC_REPLAY;
+}
+
+bool au_player_replays(int64_t cuts) {
+    return (cuts <= AU_PLAYER_MAX_REPLAYS);
 }
 
 bool au_has_signal(float peak, float rms) {
@@ -1071,6 +1158,83 @@ void test_au_restart_backoff(void) {
     assert((au_mic_tap_ready(-48000.0, 1, 48000.0, 1) == false));
 }
 
+void test_au_player_rules(void) {
+    assert((au_player_step_state(au_player_step(AU_PL_IDLE, AU_PLE_STARTED, true, 0)) == AU_PL_RUNNING));
+    assert((au_player_step_action(au_player_step(AU_PL_IDLE, AU_PLE_STARTED, true, 0)) == AU_PLA_SCHEDULE_WAITING));
+    assert((au_player_step_state(au_player_step(AU_PL_REBUILDING, AU_PLE_STARTED, true, 0)) == AU_PL_RUNNING));
+    assert((au_player_step_state(au_player_step(AU_PL_FAILED, AU_PLE_STARTED, true, 0)) == AU_PL_RUNNING));
+    assert((au_player_step(AU_PL_RUNNING, AU_PLE_CHANGE, true, 0) == au_player_keep(AU_PL_RUNNING)));
+    assert((au_player_step_state(au_player_step(AU_PL_RUNNING, AU_PLE_CHANGE, false, 0)) == AU_PL_REBUILDING));
+    assert((au_player_step_action(au_player_step(AU_PL_RUNNING, AU_PLE_CHANGE, false, 0)) == AU_PLA_CUT_RETRY));
+    assert((au_player_step(AU_PL_REBUILDING, AU_PLE_CHANGE, false, 0) == au_player_keep(AU_PL_REBUILDING)));
+    assert((au_player_step(AU_PL_FAILED, AU_PLE_CHANGE, false, 0) == au_player_keep(AU_PL_FAILED)));
+    assert((au_player_step(AU_PL_IDLE, AU_PLE_CHANGE, false, 0) == au_player_keep(AU_PL_IDLE)));
+    assert((au_player_step_state(au_player_step(AU_PL_IDLE, AU_PLE_START_FAILED, false, 1)) == AU_PL_REBUILDING));
+    assert((au_player_step_action(au_player_step(AU_PL_REBUILDING, AU_PLE_START_FAILED, false, 5)) == AU_PLA_RETRY));
+    assert((au_player_step_state(au_player_step(AU_PL_REBUILDING, AU_PLE_START_FAILED, false, 6)) == AU_PL_FAILED));
+    assert((au_player_step_action(au_player_step(AU_PL_REBUILDING, AU_PLE_START_FAILED, false, 6)) == AU_PLA_RETRY_RELEASE));
+    assert((au_player_step_action(au_player_step(AU_PL_FAILED, AU_PLE_START_FAILED, false, 7)) == AU_PLA_RETRY_RELEASE));
+    assert((au_player_enqueue(AU_PL_IDLE) == AU_PLQ_START));
+    assert((au_player_enqueue(AU_PL_RUNNING) == AU_PLQ_SCHEDULE));
+    assert((au_player_enqueue(AU_PL_REBUILDING) == AU_PLQ_WAIT));
+    assert((au_player_enqueue(AU_PL_FAILED) == AU_PLQ_REFUSE));
+    uint32_t bad = 0;
+    int64_t state = AU_PL_IDLE;
+    while ((state <= AU_PL_FAILED)) {
+        int64_t event = AU_PLE_STARTED;
+        while ((event <= AU_PLE_CHANGE)) {
+            int64_t f = 0;
+            while ((f <= 20)) {
+                int64_t r = 0;
+                while ((r <= 1)) {
+                    bool running = (r == 1);
+                    int64_t step = au_player_step(state, event, running, f);
+                    int64_t next = au_player_step_state(step);
+                    int64_t action = au_player_step_action(step);
+                    if (((next < AU_PL_IDLE) || (next > AU_PL_FAILED))) {
+                        bad = (bad + 1);
+                    }
+                    if (((action < AU_PLA_NONE) || (action > AU_PLA_CUT_RETRY))) {
+                        bad = (bad + 1);
+                    }
+                    if (((event == AU_PLE_STARTED) && (next != AU_PL_RUNNING))) {
+                        bad = (bad + 1);
+                    }
+                    if ((((event == AU_PLE_START_FAILED) && (action != AU_PLA_RETRY)) && (action != AU_PLA_RETRY_RELEASE))) {
+                        bad = (bad + 1);
+                    }
+                    if (((event == AU_PLE_START_FAILED) && ((action == AU_PLA_RETRY_RELEASE) != au_restart_failed(f)))) {
+                        bad = (bad + 1);
+                    }
+                    bool cut = (action == AU_PLA_CUT_RETRY);
+                    if ((cut != (((event == AU_PLE_CHANGE) && (running == false)) && (state == AU_PL_RUNNING)))) {
+                        bad = (bad + 1);
+                    }
+                    if ((((event == AU_PLE_CHANGE) && (cut == false)) && (step != au_player_keep(state)))) {
+                        bad = (bad + 1);
+                    }
+                    r = (r + 1);
+                }
+                f = (f + 1);
+            }
+            event = (event + 1);
+        }
+        state = (state + 1);
+    }
+    assert((bad == 0));
+    assert((au_player_completion(true, true, true, 48000, 48000) == AU_PLC_DONE));
+    assert((au_player_completion(true, true, true, 43904, 48000) == AU_PLC_DONE));
+    assert((au_player_completion(true, true, true, 43903, 48000) == AU_PLC_REPLAY));
+    assert((au_player_completion(true, true, true, 0, 48000) == AU_PLC_REPLAY));
+    assert((au_player_completion(true, true, false, 0, 48000) == AU_PLC_DONE));
+    assert((au_player_completion(false, true, true, 96000, 48000) == AU_PLC_IGNORE));
+    assert((au_player_completion(true, false, true, 96000, 48000) == AU_PLC_IGNORE));
+    assert((au_player_completion(false, false, false, 0, 0) == AU_PLC_IGNORE));
+    assert((au_player_replays(1) == true));
+    assert((au_player_replays(3) == true));
+    assert((au_player_replays(4) == false));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1085,7 +1249,8 @@ int main(void) {
     test_au_tap_and_mic();
     test_au_moved_rules();
     test_au_restart_backoff();
-    printf("All %d tests passed.\n", 6);
+    test_au_player_rules();
+    printf("All %d tests passed.\n", 7);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

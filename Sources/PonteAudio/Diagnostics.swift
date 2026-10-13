@@ -3,9 +3,11 @@ import Foundation
 /// A small append-only diagnostics log at ~/Library/Logs/Ponte/ponte.log (audio events only: device
 /// changes, rebuilds and their errors). It exists because the unified log is often unreadable when
 /// a user reports a problem. Lines are short and contain no speech or translated text.
+/// `PONTE_LOG=<path>` writes elsewhere (probes and tests, so they stay out of the app's log).
 public enum PonteDiagnostics {
     private static let queue = DispatchQueue(label: "app.ponte.diagnostics")
     private static let url: URL = {
+        if let path = ProcessInfo.processInfo.environment["PONTE_LOG"], !path.isEmpty { return URL(fileURLWithPath: path) }
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Ponte", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("ponte.log")

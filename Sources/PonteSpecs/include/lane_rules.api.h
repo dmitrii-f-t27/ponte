@@ -157,6 +157,7 @@ bool ln_requests_mic_permission(bool mic_is_live, int64_t mic_decision);
 int32_t ln_call_output(bool has_sink, bool has_blackhole);
 int32_t ln_lane_mode(int32_t direction, int32_t outgoing_mode);
 bool ln_lane_speaks(int32_t direction, bool speak_russian);
+bool ln_lane_prepares_output(int32_t direction, bool speaks);
 bool ln_lane_voice_pause(int32_t direction);
 bool ln_lane_echo_guarded(int32_t direction);
 bool ln_lane_echo_source(int32_t direction);

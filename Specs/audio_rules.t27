@@ -491,6 +491,115 @@ pub fn au_mic_tap_ready(input_rate: f64, input_channels: i64, bus_rate: f64, bus
     return input_rate > 0.0 and input_channels > 0 and bus_rate > 0.0 and bus_channels > 0;
 }
 
+; --- The call output heals itself (DeviceAudioPlayer) ------------------------------------------------------------
+; Seen live 2026-10-13: Ponte runs several AVAudioEngines (the microphone, the BlackHole player, the headphones
+; player). Whenever any audio device reconfigures (Meet opening BlackHole as its input, another engine starting,
+; an iPhone Continuity microphone appearing, headphones connecting) the engines are stopped, in bursts of 2-4
+; within 2 s. The player rebuilt its engine only on the next phrase, and a phrase that was playing during the
+; stop was reported as played: it was cut, and a replay right after a burst reached nothing in Meet.
+; Now the player keeps its engine running between phrases (silence), rebuilds it after a real stop with the
+; capture backoff above (never inside the notification), and plays a cut phrase again from its start.
+
+; Player states (PL_*): no engine yet; running; stopped with a rebuild scheduled (phrases wait for it);
+; RESTART_ATTEMPTS rebuilds in a row failed (it still retries, but phrases are refused at once, so a lane
+; never waits for a device that is gone).
+pub const AU_PL_IDLE : i64 = 0;
+pub const AU_PL_RUNNING : i64 = 1;
+pub const AU_PL_REBUILDING : i64 = 2;
+pub const AU_PL_FAILED : i64 = 3;
+; Player events (PLE_*): the engine started (a first start or a rebuild); a start or a rebuild failed;
+; AVAudioEngineConfigurationChange arrived (with the engine's isRunning at that moment).
+pub const AU_PLE_STARTED : i64 = 0;
+pub const AU_PLE_START_FAILED : i64 = 1;
+pub const AU_PLE_CHANGE : i64 = 2;
+; Player actions (PLA_*): nothing; schedule the phrases that wait (the engine runs again); schedule a rebuild
+; after restartDelayMs(failures); the same and complete the waiting phrases unplayed (failed); the engine
+; stopped under the phrases: everything scheduled is cut (it waits for the rebuild), then schedule a rebuild.
+pub const AU_PLA_NONE : i64 = 0;
+pub const AU_PLA_SCHEDULE_WAITING : i64 = 1;
+pub const AU_PLA_RETRY : i64 = 2;
+pub const AU_PLA_RETRY_RELEASE : i64 = 3;
+pub const AU_PLA_CUT_RETRY : i64 = 4;
+; What a new phrase does (PLQ_*): start the engine first (no engine yet), go to the player node now, wait for
+; the rebuild, or complete at once unplayed.
+pub const AU_PLQ_START : i64 = 0;
+pub const AU_PLQ_SCHEDULE : i64 = 1;
+pub const AU_PLQ_WAIT : i64 = 2;
+pub const AU_PLQ_REFUSE : i64 = 3;
+; What the completion of a phrase's last buffer means (PLC_*): the phrase was heard; it comes from an engine
+; instance that is gone or stopped (the cut and the rebuild take care of the phrase); it comes from the
+; phrase's own running engine, but the player has not rendered up to the phrase's end, so a stop flushed it
+; (play it again now).
+pub const AU_PLC_DONE : i64 = 0;
+pub const AU_PLC_IGNORE : i64 = 1;
+pub const AU_PLC_REPLAY : i64 = 2;
+; A phrase cut by a stop is played again from its start at most this many times, then dropped.
+pub const AU_PLAYER_MAX_REPLAYS : i64 = 3;
+; A completion counts as heard when the player has rendered up to the phrase's end less this many frames
+; (render cycles; the end is a lower bound taken when the phrase was scheduled). At most this much of a
+; phrase's tail (85 ms at 48 kHz, usually its trailing silence) can be cut unnoticed.
+pub const AU_PLAYER_END_TOLERANCE_FRAMES : i64 = 4096;
+; A step packs the state and the action: state * STEP_BASE + action.
+pub const AU_PL_STEP_BASE : i64 = 256;
+
+; playerStep: the state and the action after an event. `failures` is the number of failed starts in a row
+; including this one (START_FAILED only); `engine_running` is the engine's isRunning (CHANGE only).
+;   STARTED                        -> running, schedule the waiting phrases
+;   START_FAILED, restartFailed    -> failed, retry and complete the waiting phrases
+;   START_FAILED                   -> rebuilding, retry
+;   CHANGE, engine still running   -> no change (AVAudioEngine also posts it after its own start)
+;   CHANGE, stopped, was running   -> rebuilding, cut and retry
+;   CHANGE, stopped, otherwise     -> no change (a rebuild is already scheduled, or there is no engine yet)
+pub fn au_player_step(state: i64, event: i64, engine_running: bool, failures: i64) -> i64 {
+    if (event == AU_PLE_STARTED) { return AU_PL_RUNNING * AU_PL_STEP_BASE + AU_PLA_SCHEDULE_WAITING; }
+    if (event == AU_PLE_START_FAILED) {
+        if (au_restart_failed(failures)) { return AU_PL_FAILED * AU_PL_STEP_BASE + AU_PLA_RETRY_RELEASE; }
+        return AU_PL_REBUILDING * AU_PL_STEP_BASE + AU_PLA_RETRY;
+    }
+    if (event == AU_PLE_CHANGE and engine_running == false and state == AU_PL_RUNNING) {
+        return AU_PL_REBUILDING * AU_PL_STEP_BASE + AU_PLA_CUT_RETRY;
+    }
+    return au_player_keep(state);
+}
+
+; The same state with no action.
+pub fn au_player_keep(state: i64) -> i64 {
+    return state * AU_PL_STEP_BASE + AU_PLA_NONE;
+}
+
+pub fn au_player_step_state(step: i64) -> i64 {
+    return step / AU_PL_STEP_BASE;
+}
+
+pub fn au_player_step_action(step: i64) -> i64 {
+    return step % AU_PL_STEP_BASE;
+}
+
+; playerEnqueue: what a new phrase does in each state.
+pub fn au_player_enqueue(state: i64) -> i64 {
+    if (state == AU_PL_RUNNING) { return AU_PLQ_SCHEDULE; }
+    if (state == AU_PL_REBUILDING) { return AU_PLQ_WAIT; }
+    if (state == AU_PL_FAILED) { return AU_PLQ_REFUSE; }
+    return AU_PLQ_START;
+}
+
+; playerCompletion: AVAudioPlayerNode also calls the completions of its buffers when it is stopped, so a
+; completion means the phrase was heard only when it comes from the engine instance the phrase is scheduled
+; on (`same_generation`: the player bumps its generation before every stop of its own), that engine still
+; runs (a stop by the system flushes too), and the player has rendered up to the phrase's end (`position`,
+; when the node reports one). From the phrase's own running engine short of its end it was flushed: replay.
+pub fn au_player_completion(same_generation: bool, engine_running: bool, has_position: bool, position: i64, end_frame: i64) -> i64 {
+    if (same_generation == false or engine_running == false) { return AU_PLC_IGNORE; }
+    if (has_position == false) { return AU_PLC_DONE; }
+    if (position >= end_frame - AU_PLAYER_END_TOLERANCE_FRAMES) { return AU_PLC_DONE; }
+    return AU_PLC_REPLAY;
+}
+
+; playerReplays: a phrase cut `cuts` times (this one included) is played again from its start.
+pub fn au_player_replays(cuts: i64) -> bool {
+    return cuts <= AU_PLAYER_MAX_REPLAYS;
+}
+
 ; --- Rules moved here from the rest of PonteAudio and the app (2026-10-11) ------------------------------------
 
 ; AVAudioCommonFormat raw values (PCM.mono, PCM.samples).
@@ -1047,4 +1156,75 @@ test au_restart_backoff {
     assert au_mic_tap_ready(48000.0, 1, 0.0, 1) == false;
     assert au_mic_tap_ready(48000.0, 1, 48000.0, 0) == false;
     assert au_mic_tap_ready(-48000.0, 1, 48000.0, 1) == false;
+}
+
+test au_player_rules {
+    // Live 2026-10-13: the call output keeps running, rebuilds after a real stop and replays a cut phrase.
+    assert au_player_step_state(au_player_step(AU_PL_IDLE, AU_PLE_STARTED, true, 0)) == AU_PL_RUNNING;
+    assert au_player_step_action(au_player_step(AU_PL_IDLE, AU_PLE_STARTED, true, 0)) == AU_PLA_SCHEDULE_WAITING;
+    assert au_player_step_state(au_player_step(AU_PL_REBUILDING, AU_PLE_STARTED, true, 0)) == AU_PL_RUNNING;
+    assert au_player_step_state(au_player_step(AU_PL_FAILED, AU_PLE_STARTED, true, 0)) == AU_PL_RUNNING;
+    // A configuration change while the engine runs is ignored; a real stop cuts and schedules a rebuild.
+    assert au_player_step(AU_PL_RUNNING, AU_PLE_CHANGE, true, 0) == au_player_keep(AU_PL_RUNNING);
+    assert au_player_step_state(au_player_step(AU_PL_RUNNING, AU_PLE_CHANGE, false, 0)) == AU_PL_REBUILDING;
+    assert au_player_step_action(au_player_step(AU_PL_RUNNING, AU_PLE_CHANGE, false, 0)) == AU_PLA_CUT_RETRY;
+    // The rest of a burst: a rebuild is already scheduled.
+    assert au_player_step(AU_PL_REBUILDING, AU_PLE_CHANGE, false, 0) == au_player_keep(AU_PL_REBUILDING);
+    assert au_player_step(AU_PL_FAILED, AU_PLE_CHANGE, false, 0) == au_player_keep(AU_PL_FAILED);
+    assert au_player_step(AU_PL_IDLE, AU_PLE_CHANGE, false, 0) == au_player_keep(AU_PL_IDLE);
+    // Failed starts retry; after RESTART_ATTEMPTS in a row the waiting phrases are completed unplayed.
+    assert au_player_step_state(au_player_step(AU_PL_IDLE, AU_PLE_START_FAILED, false, 1)) == AU_PL_REBUILDING;
+    assert au_player_step_action(au_player_step(AU_PL_REBUILDING, AU_PLE_START_FAILED, false, 5)) == AU_PLA_RETRY;
+    assert au_player_step_state(au_player_step(AU_PL_REBUILDING, AU_PLE_START_FAILED, false, 6)) == AU_PL_FAILED;
+    assert au_player_step_action(au_player_step(AU_PL_REBUILDING, AU_PLE_START_FAILED, false, 6)) == AU_PLA_RETRY_RELEASE;
+    assert au_player_step_action(au_player_step(AU_PL_FAILED, AU_PLE_START_FAILED, false, 7)) == AU_PLA_RETRY_RELEASE;
+    assert au_player_enqueue(AU_PL_IDLE) == AU_PLQ_START;
+    assert au_player_enqueue(AU_PL_RUNNING) == AU_PLQ_SCHEDULE;
+    assert au_player_enqueue(AU_PL_REBUILDING) == AU_PLQ_WAIT;
+    assert au_player_enqueue(AU_PL_FAILED) == AU_PLQ_REFUSE;
+    // Every state, event, running flag and failure count: the step stays in the four states, a failure
+    // always retries, the engine runs after STARTED, and only a stop of a running engine cuts.
+    var bad: u32 = 0;
+    var state: i64 = AU_PL_IDLE;
+    while (state <= AU_PL_FAILED) {
+        var event: i64 = AU_PLE_STARTED;
+        while (event <= AU_PLE_CHANGE) {
+            var f: i64 = 0;
+            while (f <= 20) {
+                var r: i64 = 0;
+                while (r <= 1) {
+                    var running: bool = r == 1;
+                    var step: i64 = au_player_step(state, event, running, f);
+                    var next: i64 = au_player_step_state(step);
+                    var action: i64 = au_player_step_action(step);
+                    if (next < AU_PL_IDLE or next > AU_PL_FAILED) { bad = bad + 1; }
+                    if (action < AU_PLA_NONE or action > AU_PLA_CUT_RETRY) { bad = bad + 1; }
+                    if (event == AU_PLE_STARTED and next != AU_PL_RUNNING) { bad = bad + 1; }
+                    if (event == AU_PLE_START_FAILED and action != AU_PLA_RETRY and action != AU_PLA_RETRY_RELEASE) { bad = bad + 1; }
+                    if (event == AU_PLE_START_FAILED and (action == AU_PLA_RETRY_RELEASE) != au_restart_failed(f)) { bad = bad + 1; }
+                    var cut: bool = action == AU_PLA_CUT_RETRY;
+                    if (cut != (event == AU_PLE_CHANGE and running == false and state == AU_PL_RUNNING)) { bad = bad + 1; }
+                    if (event == AU_PLE_CHANGE and cut == false and step != au_player_keep(state)) { bad = bad + 1; }
+                    r = r + 1;
+                }
+                f = f + 1;
+            }
+            event = event + 1;
+        }
+        state = state + 1;
+    }
+    assert bad == 0;
+    // Heard: only from the phrase's own engine, still running, rendered up to the end (less the tolerance).
+    assert au_player_completion(true, true, true, 48000, 48000) == AU_PLC_DONE;
+    assert au_player_completion(true, true, true, 43904, 48000) == AU_PLC_DONE;
+    assert au_player_completion(true, true, true, 43903, 48000) == AU_PLC_REPLAY;
+    assert au_player_completion(true, true, true, 0, 48000) == AU_PLC_REPLAY;
+    assert au_player_completion(true, true, false, 0, 48000) == AU_PLC_DONE;
+    assert au_player_completion(false, true, true, 96000, 48000) == AU_PLC_IGNORE;
+    assert au_player_completion(true, false, true, 96000, 48000) == AU_PLC_IGNORE;
+    assert au_player_completion(false, false, false, 0, 0) == AU_PLC_IGNORE;
+    // A cut phrase is played again at most MAX_REPLAYS times.
+    assert au_player_replays(1) == true;
+    assert au_player_replays(3) == true;
+    assert au_player_replays(4) == false;
 }

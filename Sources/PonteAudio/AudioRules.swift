@@ -309,6 +309,57 @@ public enum AudioRules {
         au_mic_tap_ready(inputRate, Int64(inputChannels), busRate, Int64(busChannels))
     }
 
+    // MARK: - The call output heals itself (DeviceAudioPlayer)
+
+    /// Player states: no engine yet, running, stopped with a rebuild scheduled, rebuilds failing.
+    public static let playerIdle = Int(AU_PL_IDLE)
+    public static let playerRunning = Int(AU_PL_RUNNING)
+    public static let playerRebuilding = Int(AU_PL_REBUILDING)
+    public static let playerFailed = Int(AU_PL_FAILED)
+    /// Player events: the engine started, a start failed, a configuration change arrived.
+    public static let playerStarted = Int(AU_PLE_STARTED)
+    public static let playerStartFailed = Int(AU_PLE_START_FAILED)
+    public static let playerChange = Int(AU_PLE_CHANGE)
+    /// Player actions.
+    public static let playerNone = Int(AU_PLA_NONE)
+    public static let playerScheduleWaiting = Int(AU_PLA_SCHEDULE_WAITING)   // the engine runs: schedule the waiting phrases
+    public static let playerRetry = Int(AU_PLA_RETRY)                        // rebuild after restartDelayMs(failures)
+    public static let playerRetryRelease = Int(AU_PLA_RETRY_RELEASE)         // the same, and complete the waiting phrases
+    public static let playerCutRetry = Int(AU_PLA_CUT_RETRY)                 // cut what is scheduled, then rebuild
+    /// What a new phrase does.
+    public static let playerEnqueueStart = Int(AU_PLQ_START)
+    public static let playerEnqueueSchedule = Int(AU_PLQ_SCHEDULE)
+    public static let playerEnqueueWait = Int(AU_PLQ_WAIT)
+    public static let playerEnqueueRefuse = Int(AU_PLQ_REFUSE)
+    /// What the completion of a phrase's last buffer means: heard; from an engine that is gone or stopped
+    /// (the cut and the rebuild take care of it); flushed on its own running engine (replay it now).
+    public static let playerCompletionDone = Int(AU_PLC_DONE)
+    public static let playerCompletionIgnore = Int(AU_PLC_IGNORE)
+    public static let playerCompletionReplay = Int(AU_PLC_REPLAY)
+    /// A cut phrase is played again from its start at most this many times.
+    public static let playerMaxReplays = Int64(AU_PLAYER_MAX_REPLAYS)
+    /// Frames short of a phrase's end that still count as played back.
+    public static let playerEndToleranceFrames = Int64(AU_PLAYER_END_TOLERANCE_FRAMES)
+
+    /// The state and the action after `event` (`failures`: failed starts in a row including this one;
+    /// `engineRunning`: the engine's isRunning when a configuration change arrived).
+    public static func playerStep(state: Int, event: Int, engineRunning: Bool, failures: Int64) -> (state: Int, action: Int) {
+        let step = au_player_step(Int64(state), Int64(event), engineRunning, failures)
+        return (Int(au_player_step_state(step)), Int(au_player_step_action(step)))
+    }
+
+    /// What a new phrase does in `state`.
+    public static func playerEnqueue(state: Int) -> Int { Int(au_player_enqueue(Int64(state))) }
+
+    /// What the completion of a phrase's last buffer means (`position`: frames the player node has rendered,
+    /// nil when it reports none; `endFrame`: where the phrase ends on the node's timeline).
+    public static func playerCompletion(sameGeneration: Bool, engineRunning: Bool, position: Int64?, endFrame: Int64) -> Int {
+        Int(au_player_completion(sameGeneration, engineRunning, position != nil, position ?? 0, endFrame))
+    }
+
+    /// A phrase cut `cuts` times (this one included) is played again from its start.
+    public static func playerReplays(cuts: Int64) -> Bool { au_player_replays(cuts) }
+
     // MARK: - Devices
 
     /// Device kind codes.

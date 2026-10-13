@@ -209,6 +209,7 @@ final class TranslationLane {
             await prepareTranslator()
             preparedTranscriber = first
             startWorkers()
+            prepareOutput()
             try source.start { [intake] buffer, _ in intake.handle(buffer) }
         } catch {
             stopWorkers()
@@ -217,6 +218,19 @@ final class TranslationLane {
             throw error
         }
         await gateEvent(AppRules.GEV_STARTED)
+    }
+
+    /// The call output starts with the lane, before the capture, and keeps running between phrases. A device
+    /// that cannot start yet does not stop the lane: the player keeps retrying on its own.
+    private func prepareOutput() {
+        guard let player, AppRules.lanePreparesOutput(direction: AppRules.directionCode(direction), speaks: speechOutputEnabled) else {
+            return
+        }
+        do {
+            try player.prepare()
+        } catch {
+            log.error("output not ready \(self.direction.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func prepareTranslator() async {
