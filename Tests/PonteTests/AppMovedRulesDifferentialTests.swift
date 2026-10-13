@@ -156,8 +156,11 @@ private typealias L = AppRulesLegacy
             log.check(F.packDownloadEnabled(light: light), L.packDownloadEnabled(light: light), "\(light)")
             for a in bools {
                 for b in bools {
-                    log.check(F.silenceBanner(sourceLight: light, alreadyWarned: a, errorShown: b), L.silenceBanner(sourceLight: light, alreadyWarned: a, errorShown: b),
-                              describe(light, a, b))
+                    for c in bools {
+                        log.check(F.silenceBanner(sourceLight: light, alreadyWarned: a, errorShown: b, silenceShown: c),
+                                  L.silenceBanner(sourceLight: light, alreadyWarned: a, errorShown: b, silenceShown: c),
+                                  describe(light, a, b, c))
+                    }
                 }
             }
         }

@@ -108,6 +108,7 @@ static const uint32_t UI_ROW_LENGTHS[5] = { 6, 4, 3, 4, 1 };
 #define UI_SB_NONE 0
 #define UI_SB_MARK 1
 #define UI_SB_SHOW 2
+#define UI_SB_CLEAR 3
 #define UI_HELP_IDLE 0
 #define UI_HELP_WAITING 1
 #define UI_HELP_FAILED 2
@@ -185,7 +186,7 @@ int32_t ui_translation_font_size(int32_t stored);
 int32_t ui_overlay_line_count(int32_t available, int32_t panel_height, int32_t font_size);
 int32_t ui_models_light_all(int32_t run_state, bool ever_started, int32_t lanes_started, int32_t lanes_failed, int32_t translators_failed);
 bool ui_shows_level(int32_t light);
-int32_t ui_silence_banner(int32_t source_light, bool already_warned, bool error_shown);
+int32_t ui_silence_banner(int32_t source_light, bool already_warned, bool error_shown, bool silence_shown);
 bool ui_poll_refreshes_catalogs(int64_t tick);
 int32_t ui_source_help(int32_t run_state, int32_t tap_status, int32_t source_light);
 int32_t ui_source_title(bool is_system, bool has_running_name, bool has_label);
@@ -495,12 +496,18 @@ bool ui_shows_level(int32_t light) {
     return (light == UI_LIGHT_OK);
 }
 
-int32_t ui_silence_banner(int32_t source_light, bool already_warned, bool error_shown) {
-    if (((source_light == UI_LIGHT_WARN) && (already_warned == false))) {
+int32_t ui_silence_banner(int32_t source_light, bool already_warned, bool error_shown, bool silence_shown) {
+    if ((source_light == UI_LIGHT_WARN)) {
+        if (already_warned) {
+            return UI_SB_NONE;
+        }
         if (error_shown) {
             return UI_SB_MARK;
         }
         return UI_SB_SHOW;
+    }
+    if (silence_shown) {
+        return UI_SB_CLEAR;
     }
     return UI_SB_NONE;
 }
@@ -936,10 +943,16 @@ void test_ui_moved_rules(void) {
     assert((ui_models_light_all(UI_RUN_RUNNING, true, 2, 0, 0) == UI_LIGHT_OK));
     assert((ui_shows_level(UI_LIGHT_OK) == true));
     assert((ui_shows_level(UI_LIGHT_WARN) == false));
-    assert((ui_silence_banner(UI_LIGHT_WARN, false, false) == UI_SB_SHOW));
-    assert((ui_silence_banner(UI_LIGHT_WARN, false, true) == UI_SB_MARK));
-    assert((ui_silence_banner(UI_LIGHT_WARN, true, false) == UI_SB_NONE));
-    assert((ui_silence_banner(UI_LIGHT_OK, false, false) == UI_SB_NONE));
+    assert((ui_silence_banner(UI_LIGHT_WARN, false, false, false) == UI_SB_SHOW));
+    assert((ui_silence_banner(UI_LIGHT_WARN, false, true, false) == UI_SB_MARK));
+    assert((ui_silence_banner(UI_LIGHT_WARN, true, false, false) == UI_SB_NONE));
+    assert((ui_silence_banner(UI_LIGHT_WARN, true, false, true) == UI_SB_NONE));
+    assert((ui_silence_banner(UI_LIGHT_OK, false, false, false) == UI_SB_NONE));
+    assert((ui_silence_banner(UI_LIGHT_OK, true, false, true) == UI_SB_CLEAR));
+    assert((ui_silence_banner(UI_LIGHT_BUSY, true, false, true) == UI_SB_CLEAR));
+    assert((ui_silence_banner(UI_LIGHT_BAD, true, false, true) == UI_SB_CLEAR));
+    assert((ui_silence_banner(UI_LIGHT_UNKNOWN, true, false, true) == UI_SB_CLEAR));
+    assert((ui_silence_banner(UI_LIGHT_OK, true, true, false) == UI_SB_NONE));
     assert((ui_poll_refreshes_catalogs(5) == true));
     assert((ui_poll_refreshes_catalogs(11) == true));
     assert((ui_poll_refreshes_catalogs(6) == false));

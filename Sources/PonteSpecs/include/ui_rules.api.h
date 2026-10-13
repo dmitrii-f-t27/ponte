@@ -104,6 +104,7 @@ static const uint32_t UI_ROW_LENGTHS[5] = { 6, 4, 3, 4, 1 };
 #define UI_SB_NONE 0
 #define UI_SB_MARK 1
 #define UI_SB_SHOW 2
+#define UI_SB_CLEAR 3
 #define UI_HELP_IDLE 0
 #define UI_HELP_WAITING 1
 #define UI_HELP_FAILED 2
@@ -179,7 +180,7 @@ int32_t ui_translation_font_size(int32_t stored);
 int32_t ui_overlay_line_count(int32_t available, int32_t panel_height, int32_t font_size);
 int32_t ui_models_light_all(int32_t run_state, bool ever_started, int32_t lanes_started, int32_t lanes_failed, int32_t translators_failed);
 bool ui_shows_level(int32_t light);
-int32_t ui_silence_banner(int32_t source_light, bool already_warned, bool error_shown);
+int32_t ui_silence_banner(int32_t source_light, bool already_warned, bool error_shown, bool silence_shown);
 bool ui_poll_refreshes_catalogs(int64_t tick);
 int32_t ui_source_help(int32_t run_state, int32_t tap_status, int32_t source_light);
 int32_t ui_source_title(bool is_system, bool has_running_name, bool has_label);

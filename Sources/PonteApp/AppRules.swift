@@ -533,8 +533,9 @@ enum AppRules {
     static let SB_NONE: Int32 = UI_SB_NONE
     static let SB_MARK: Int32 = UI_SB_MARK
     static let SB_SHOW: Int32 = UI_SB_SHOW
-    static func silenceBanner(sourceLight: Int32, alreadyWarned: Bool, errorShown: Bool) -> Int32 {
-        ui_silence_banner(sourceLight, alreadyWarned, errorShown)
+    static let SB_CLEAR: Int32 = UI_SB_CLEAR
+    static func silenceBanner(sourceLight: Int32, alreadyWarned: Bool, errorShown: Bool, silenceShown: Bool) -> Int32 {
+        ui_silence_banner(sourceLight, alreadyWarned, errorShown, silenceShown)
     }
 
     static let HELP_IDLE: Int32 = UI_HELP_IDLE

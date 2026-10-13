@@ -90,6 +90,42 @@ struct Banner: Identifiable, Equatable {
     var actionTitle: String?
 }
 
+/// The silence warning of one call. AppRules.silenceBanner decides from the source light: give the warning
+/// once while the light is WARN, take it down as soon as the light is anything else. This keeps only what
+/// the rule needs: whether the warning was given, and which banner on screen is the warning.
+struct SilenceWarning {
+    private(set) var warned = false
+    private var bannerID: UUID?
+
+    /// A new call.
+    mutating func reset() {
+        warned = false
+        bannerID = nil
+    }
+
+    /// The banner to show after a poll that read `sourceLight` (AppRules.LIGHT_*); `current` is the banner on screen.
+    mutating func banner(after current: Banner?, sourceLight: Int32, sourceName: String?) -> Banner? {
+        let silenceShown = bannerID.map { current?.id == $0 } ?? false
+        switch AppRules.silenceBanner(sourceLight: sourceLight, alreadyWarned: warned,
+                                      errorShown: current?.kind == .error, silenceShown: silenceShown) {
+        case AppRules.SB_MARK:
+            warned = true
+            return current
+        case AppRules.SB_SHOW:
+            warned = true
+            let warning = Banner(kind: .warning, text: AppModel.silenceText(sourceName),
+                                 action: .privacySettings("Privacy_ScreenCapture"), actionTitle: "Открыть настройки")
+            bannerID = warning.id
+            return warning
+        case AppRules.SB_CLEAR:
+            bannerID = nil
+            return nil
+        default:
+            return current
+        }
+    }
+}
+
 /// The app state: settings, both lanes, status row, transcript. Decisions come from AppRules.
 @MainActor @Observable
 final class AppModel {
@@ -111,7 +147,7 @@ final class AppModel {
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
     @ObservationIgnored private var incomingTap: AppAudioTapSource?
     @ObservationIgnored private var terminationSignal: DispatchSourceSignal?
-    @ObservationIgnored private var silenceWarned = false
+    @ObservationIgnored private var silenceWarning = SilenceWarning()
 
     // MARK: Catalog snapshots
 
@@ -346,7 +382,7 @@ final class AppModel {
         }
     }
 
-    static func silenceText(_ name: String?) -> String {
+    nonisolated static func silenceText(_ name: String?) -> String {
         "Из «\(name ?? "источника")» приходит только тишина. Если собеседники говорят, а текста нет, — разрешите Ponte "
             + "запись системного звука: Системные настройки → Конфиденциальность и безопасность → Запись экрана и системного звука."
     }
@@ -452,13 +488,9 @@ final class AppModel {
         if isRunning {
             translatorsFailed = Int32([incomingLane, outgoingLane].compactMap { $0 }.filter { $0.translatorError != nil }.count)
         }
-        let silence = AppRules.silenceBanner(sourceLight: sourceCode, alreadyWarned: silenceWarned,
-                                             errorShown: banner?.kind == .error)
-        if silence != AppRules.SB_NONE { silenceWarned = true }
-        if silence == AppRules.SB_SHOW {
-            banner = Banner(kind: .warning, text: Self.silenceText(activeSourceName),
-                            action: .privacySettings("Privacy_ScreenCapture"), actionTitle: "Открыть настройки")
-        }
+        // The silence banner follows the source light: it goes as soon as a non-zero sample turns the light OK.
+        let next = silenceWarning.banner(after: banner, sourceLight: sourceCode, sourceName: activeSourceName)
+        if next != banner { banner = next }
     }
 
     // MARK: Process tap status
@@ -539,7 +571,7 @@ final class AppModel {
         lanesStarted = 0
         lanesFailed = 0
         translatorsFailed = 0
-        silenceWarned = false
+        silenceWarning.reset()
         sourceTapDetail = nil
         pollAudioStats()
 

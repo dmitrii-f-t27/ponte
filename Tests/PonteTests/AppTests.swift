@@ -610,6 +610,65 @@ private typealias R = AppRules
     #expect([0, 3, 4, 5, 9].map { R.contextOverflow(count: Int32($0)) } == [0, 0, 0, 1, 5])
 }
 
+/// Live test 2026-10-13 (Google Meet in BrowserOS): the silence banner came up while the call delivered only
+/// exact zeros, then stayed after the other side spoke, with translations already appearing under it.
+/// The source light was green again; the banner must follow it.
+@Test func silenceBannerLeavesAsSoonAsRealAudioArrives() {
+    var warning = SilenceWarning()
+    var banner: Banner?
+    let name = "BrowserOS (Meet)"
+    /// One status-row poll `ms` after start; buffers keep coming, the last non-zero sample came at `signalAt`.
+    func poll(_ ms: Int64, signalAt: Int64? = nil) -> Int32 {
+        let light = R.sourceLight(runState: R.RUN_RUNNING, laneActive: true, tapStatus: R.TAP_CAPTURING,
+                                  msSinceStart: ms, msSinceBuffer: 100, msSinceSignal: signalAt.map { ms - $0 } ?? -1)
+        let next = warning.banner(after: banner, sourceLight: light, sourceName: name)
+        if next != banner { banner = next }
+        return light
+    }
+    // Only zeros: nothing during the first SILENCE_SUSPECT_MS, then the warning.
+    for ms in stride(from: Int64(0), to: R.SILENCE_SUSPECT_MS, by: Int(R.POLL_INTERVAL_MS)) {
+        #expect(poll(ms) == R.LIGHT_OK)
+        #expect(banner == nil)
+    }
+    #expect(poll(R.SILENCE_SUSPECT_MS) == R.LIGHT_WARN)
+    #expect(banner?.kind == .warning)
+    #expect(banner?.text == AppModel.silenceText(name))
+    #expect(poll(R.SILENCE_SUSPECT_MS + 500) == R.LIGHT_WARN)
+    #expect(banner?.kind == .warning)
+    // The other side speaks: the light turns green and the banner goes at the same poll.
+    #expect(poll(9_500, signalAt: 9_400) == R.LIGHT_OK)
+    #expect(banner == nil)
+    // It does not come back during the call, even when the call goes quiet again.
+    for ms in stride(from: Int64(10_000), to: 30_000, by: Int(R.POLL_INTERVAL_MS)) {
+        #expect(poll(ms, signalAt: 9_400) == R.LIGHT_OK)
+        #expect(banner == nil)
+    }
+}
+
+@Test func silenceBannerLeavesOtherBannersAlone() {
+    var warning = SilenceWarning()
+    // Closed by the person: not given again in this call.
+    #expect(warning.banner(after: nil, sourceLight: R.LIGHT_WARN, sourceName: nil)?.kind == .warning)
+    #expect(warning.banner(after: nil, sourceLight: R.LIGHT_WARN, sourceName: nil) == nil)
+    // Another banner on screen stays when the light changes.
+    let saved = Banner(kind: .info, text: "Стенограмма сохранена")
+    #expect(warning.banner(after: saved, sourceLight: R.LIGHT_OK, sourceName: nil) == saved)
+    // An error on screen: the warning is only remembered, and the error stays when the light turns green.
+    var other = SilenceWarning()
+    let error = Banner(kind: .error, text: "Ошибка")
+    #expect(other.banner(after: error, sourceLight: R.LIGHT_WARN, sourceName: nil) == error)
+    #expect(other.warned)
+    #expect(other.banner(after: error, sourceLight: R.LIGHT_OK, sourceName: nil) == error)
+    #expect(other.banner(after: nil, sourceLight: R.LIGHT_WARN, sourceName: nil) == nil)
+    // The warning also goes when the call stops (the light is no longer WARN), and a new call starts over.
+    var third = SilenceWarning()
+    let shown = third.banner(after: nil, sourceLight: R.LIGHT_WARN, sourceName: "Zoom")
+    #expect(shown?.kind == .warning)
+    #expect(third.banner(after: shown, sourceLight: R.LIGHT_UNKNOWN, sourceName: "Zoom") == nil)
+    third.reset()
+    #expect(third.banner(after: nil, sourceLight: R.LIGHT_WARN, sourceName: "Zoom")?.kind == .warning)
+}
+
 @Test func rulesRunStateBannersAndButtons() {
     #expect(R.toggleRun(runState: R.RUN_IDLE) == R.TOGGLE_START)
     #expect(R.toggleRun(runState: R.RUN_RUNNING) == R.TOGGLE_STOP)

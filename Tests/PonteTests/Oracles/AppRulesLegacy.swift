@@ -735,9 +735,11 @@ extension AppRulesLegacy {
     }
     /// pollAudioStats `sourceCode == LIGHT_OK ? level : 0`; StatusChip `check == .ok`.
     static func showsLevel(light: Int32) -> Bool { light == LIGHT_OK }
-    /// pollAudioStats: 0 nothing, 1 only remember, 2 show the warning.
-    static func silenceBanner(sourceLight: Int32, alreadyWarned: Bool, errorShown: Bool) -> Int32 {
-        guard sourceLight == LIGHT_WARN && !alreadyWarned else { return 0 }
+    /// pollAudioStats: 0 nothing, 1 only remember, 2 show the warning, 3 take the silence banner down
+    /// (2026-10-13: the banner follows the source light; it stayed after real audio arrived).
+    static func silenceBanner(sourceLight: Int32, alreadyWarned: Bool, errorShown: Bool, silenceShown: Bool) -> Int32 {
+        guard sourceLight == LIGHT_WARN else { return silenceShown ? 3 : 0 }
+        guard !alreadyWarned else { return 0 }
         return errorShown ? 1 : 2
     }
     /// sourceHelp: 0 idle, 1 waiting, 2 failed, 3 file, 4 silence, 5 audio flows.

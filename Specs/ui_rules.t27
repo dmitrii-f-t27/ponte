@@ -346,10 +346,11 @@ pub const UI_CATALOG_EVERY_TICKS : i64 = 6;
 pub const UI_CATALOG_TICK : i64 = 5;
 ; "Copied" stays on a copy button this long.
 pub const UI_COPIED_FEEDBACK_MS : i64 = 2000;
-; The silence warning: nothing, remember it was given (an error banner stays), or show it.
+; The silence warning: nothing, remember it was given (an error banner stays), show it, or take it down.
 pub const UI_SB_NONE : i32 = 0;
 pub const UI_SB_MARK : i32 = 1;
 pub const UI_SB_SHOW : i32 = 2;
+pub const UI_SB_CLEAR : i32 = 3;
 ; The source light's tooltip.
 pub const UI_HELP_IDLE : i32 = 0;
 pub const UI_HELP_WAITING : i32 = 1;
@@ -423,12 +424,18 @@ pub fn ui_shows_level(light: i32) -> bool {
     return light == UI_LIGHT_OK;
 }
 
-; The silence warning is given once per call; an error banner already shown stays.
-pub fn ui_silence_banner(source_light: i32, already_warned: bool, error_shown: bool) -> i32 {
-    if (source_light == UI_LIGHT_WARN and already_warned == false) {
+; The silence warning follows the source light. While the light is WARN the warning is given once per call;
+; an error banner already shown stays, and the warning counts as given. As soon as the light is anything
+; but WARN (a non-zero sample arrived, the tap waits or failed, the call stopped), a silence warning still
+; on screen is taken down; it is not given again in the same call. silence_shown: the banner on screen is
+; the silence warning.
+pub fn ui_silence_banner(source_light: i32, already_warned: bool, error_shown: bool, silence_shown: bool) -> i32 {
+    if (source_light == UI_LIGHT_WARN) {
+        if (already_warned) { return UI_SB_NONE; }
         if (error_shown) { return UI_SB_MARK; }
         return UI_SB_SHOW;
     }
+    if (silence_shown) { return UI_SB_CLEAR; }
     return UI_SB_NONE;
 }
 
@@ -799,10 +806,17 @@ test ui_moved_rules {
     assert ui_models_light_all(UI_RUN_RUNNING, true, 2, 0, 0) == UI_LIGHT_OK;
     assert ui_shows_level(UI_LIGHT_OK) == true;
     assert ui_shows_level(UI_LIGHT_WARN) == false;
-    assert ui_silence_banner(UI_LIGHT_WARN, false, false) == UI_SB_SHOW;
-    assert ui_silence_banner(UI_LIGHT_WARN, false, true) == UI_SB_MARK;
-    assert ui_silence_banner(UI_LIGHT_WARN, true, false) == UI_SB_NONE;
-    assert ui_silence_banner(UI_LIGHT_OK, false, false) == UI_SB_NONE;
+    assert ui_silence_banner(UI_LIGHT_WARN, false, false, false) == UI_SB_SHOW;
+    assert ui_silence_banner(UI_LIGHT_WARN, false, true, false) == UI_SB_MARK;
+    assert ui_silence_banner(UI_LIGHT_WARN, true, false, false) == UI_SB_NONE;
+    assert ui_silence_banner(UI_LIGHT_WARN, true, false, true) == UI_SB_NONE;
+    assert ui_silence_banner(UI_LIGHT_OK, false, false, false) == UI_SB_NONE;
+    // The stuck banner (live test 2026-10-13): shown while only zeros came; real audio turns the light OK.
+    assert ui_silence_banner(UI_LIGHT_OK, true, false, true) == UI_SB_CLEAR;
+    assert ui_silence_banner(UI_LIGHT_BUSY, true, false, true) == UI_SB_CLEAR;
+    assert ui_silence_banner(UI_LIGHT_BAD, true, false, true) == UI_SB_CLEAR;
+    assert ui_silence_banner(UI_LIGHT_UNKNOWN, true, false, true) == UI_SB_CLEAR;
+    assert ui_silence_banner(UI_LIGHT_OK, true, true, false) == UI_SB_NONE;
     assert ui_poll_refreshes_catalogs(5) == true;
     assert ui_poll_refreshes_catalogs(11) == true;
     assert ui_poll_refreshes_catalogs(6) == false;
