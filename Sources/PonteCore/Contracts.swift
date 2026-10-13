@@ -81,6 +81,7 @@ public struct AudioApp: Hashable, Identifiable, Sendable {
         "us.zoom.xos": "Zoom",
         "com.google.Chrome": "Chrome (Meet)",
         "com.apple.Safari": "Safari (Meet)",
+        "com.browseros.BrowserClaw": "BrowserOS (Meet)",
         "ru.keepcoder.Telegram": "Telegram",
         "org.telegram.desktop": "Telegram Desktop",
         "net.whatsapp.WhatsApp": "WhatsApp",

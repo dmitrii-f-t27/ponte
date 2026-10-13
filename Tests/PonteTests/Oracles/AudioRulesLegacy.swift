@@ -374,6 +374,7 @@ enum AudioRulesLegacy {
     static let knownCallAppBundleIDs = [
         "com.apple.FaceTime",
         "com.apple.Safari",
+        "com.browseros.BrowserClaw",
         "com.google.Chrome",
         "com.microsoft.teams2",
         "net.whatsapp.WhatsApp",
@@ -384,6 +385,7 @@ enum AudioRulesLegacy {
     static let knownCallAppLabels = [
         "FaceTime",
         "Safari (Meet)",
+        "BrowserOS (Meet)",
         "Chrome (Meet)",
         "Teams",
         "WhatsApp",

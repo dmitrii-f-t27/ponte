@@ -305,6 +305,27 @@ private final class FakeCatalog: AudioDeviceCatalog {
     #expect(objects == [1, 2])
 }
 
+@Test func browserOSMeetIsAKnownCallApp() {
+    // Google Meet in BrowserOS neo (Chromium): the helper that plays is grouped under the browser,
+    // which is listed first as a known call app with its label.
+    let browser = AppOwner(bundleID: "com.browseros.BrowserClaw", name: "BrowserOS neo", pid: 700, isRegularApp: true)
+    let notes = AppOwner(bundleID: "com.apple.Notes", name: "Notes", pid: 300, isRegularApp: true)
+    let processes = [
+        AudioProcessInfo(objectID: 1, pid: 300, bundleID: "com.apple.Notes", isRunningOutput: false, owner: notes),
+        AudioProcessInfo(objectID: 2, pid: 700, bundleID: "com.browseros.BrowserClaw", isRunningOutput: false, owner: browser),
+        AudioProcessInfo(objectID: 3, pid: 701, bundleID: "com.browseros.BrowserClaw.helper", isRunningOutput: true, owner: browser),
+    ]
+    let apps = RunningAudioAppCatalog.group(processes, selfPID: 999)
+    #expect(apps.map(\.bundleID) == ["com.browseros.BrowserClaw", "com.apple.Notes"])
+    #expect(apps[0].isKnownCallApp && apps[0].isPlayingAudio)
+    #expect(apps[0].name == "BrowserOS (Meet)")
+    #expect(apps[0].pids == [700, 701])
+    #expect(AudioApp.knownCallApps["com.browseros.BrowserClaw"] == "BrowserOS (Meet)")
+    #expect(AudioRules.isKnownCallApp(bundleID: "com.browseros.BrowserClaw"))
+    #expect(!AudioRules.isKnownCallApp(bundleID: "com.browseros.BrowserClaw.helper"))
+    #expect(AudioProcesses.objects(forApp: "com.browseros.BrowserClaw", in: processes).map(\.objectID) == [2, 3])
+}
+
 @Test func outermostAppBundleOfHelpers() {
     let chromeHelper = "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/131/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper"
     #expect(AudioProcesses.outermostAppBundle(in: chromeHelper)?.path == "/Applications/Google Chrome.app")

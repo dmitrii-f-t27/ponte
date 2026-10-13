@@ -47,7 +47,8 @@ Ponte — **собственное приложение владельца**, а
   Источник выбирается в UI: список программ, которые сейчас выводят звук (по bundle ID, со всеми
   их процессами — у браузеров звук идёт из helper-процессов), или «Весь звук Мака, кроме Ponte».
   Известные звонилки помечаются: `us.zoom.xos`, `com.google.Chrome`, `com.apple.Safari`,
-  `ru.keepcoder.Telegram`, `net.whatsapp.WhatsApp`, `com.apple.FaceTime`, `com.microsoft.teams2`.
+  `com.browseros.BrowserClaw` (Meet в BrowserOS), `ru.keepcoder.Telegram`, `org.telegram.desktop`,
+  `net.whatsapp.WhatsApp`, `com.apple.FaceTime`, `com.microsoft.teams2`.
   Если программа закрылась и открылась снова — переподключиться самому.
 - Виртуальный микрофон: BlackHole 2ch. Ставит владелец: `brew install --cask blackhole-2ch`
   (нужен пароль администратора). В любой звонилке: «Микрофон» = BlackHole 2ch, «Динамик» = наушники.

@@ -329,8 +329,9 @@ private typealias L = AudioRulesLegacy
 
     // MARK: App catalog
 
-    private static let bundleIDs = ["com.apple.FaceTime", "com.apple.Safari", "com.google.Chrome", "com.microsoft.teams2",
-                                    "net.whatsapp.WhatsApp", "org.telegram.desktop", "ru.keepcoder.Telegram", "us.zoom.xos",
+    private static let bundleIDs = ["com.apple.FaceTime", "com.apple.Safari", "com.browseros.BrowserClaw", "com.google.Chrome",
+                                    "com.microsoft.teams2", "net.whatsapp.WhatsApp", "org.telegram.desktop", "ru.keepcoder.Telegram",
+                                    "us.zoom.xos", "com.browseros.BrowserClaw.helper", "com.browseros",
                                     "com.google.Chrome.helper", "com.google.Chrome.helper.Renderer", "com.google", "com.google.ChromeX",
                                     "com.apple.WebKit.GPU", "com.apple.avconferenced", "com.apple.TelephonyUtilities",
                                     "com.apple.Music", "us.zoom.xos.helper", "US.ZOOM.XOS", "", "com", "com."]

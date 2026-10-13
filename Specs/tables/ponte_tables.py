@@ -32,6 +32,7 @@ DEVICE_WORDS = [
 CALL_APPS = [
     ("com.apple.FaceTime", "FaceTime"),
     ("com.apple.Safari", "Safari (Meet)"),
+    ("com.browseros.BrowserClaw", "BrowserOS (Meet)"),   # BrowserOS neo, Chromium: Google Meet in a browser
     ("com.google.Chrome", "Chrome (Meet)"),
     ("com.microsoft.teams2", "Teams"),
     ("net.whatsapp.WhatsApp", "WhatsApp"),
@@ -63,6 +64,7 @@ DEVICE_FIXTURES = [
     ("ABZ_C", "AbZ-\u00e7"), ("ABZ_C_FOLDED", "abz-\u00e7"), ("BH_16CH", "BlackHole 16ch"), ("UID_296C", "296C"),
     ("MICROPHONE", "microphone"), ("MACBOOK", "macbook"), ("BLACKHOLE_WORD", "BlackHole"),
     ("CHROME", "com.google.Chrome"), ("GOOGLE", "com.google"), ("SAFARI", "com.apple.Safari"),
+    ("BROWSEROS", "com.browseros.BrowserClaw"), ("BROWSEROS_HELPER", "com.browseros.BrowserClaw.helper"),
     ("CHROME_HELPER", "com.google.Chrome.helper"), ("CHROME_RENDERER", "com.google.Chrome.helper.Renderer"),
     ("CHROME_X", "com.google.ChromeX"), ("WEBKIT_GPU", "com.apple.WebKit.GPU"),
     ("PATH_CHROME_HELPER", CHROME_HELPER_PATH), ("PATH_CHROME_APP", "/Applications/Google Chrome.app"),
