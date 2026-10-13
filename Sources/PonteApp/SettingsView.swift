@@ -45,7 +45,8 @@ private struct DevicesSettings: View {
         Form {
             Section {
                 DevicePicker(title: "Мой микрофон", uid: $model.micUID,
-                             automatic: "Системный по умолчанию", devices: model.inputDevices)
+                             automatic: "Автоматически (\(model.autoMicDevice?.name ?? "системный"))",
+                             devices: model.inputDevices)
                 DevicePicker(title: "Мои наушники", uid: $model.headphonesUID,
                              automatic: "Системный выход (\(model.defaultOutput?.name ?? "—"))",
                              devices: model.outputDevices.filter { !AudioRules.isBlackHole(name: $0.name) })
@@ -58,7 +59,9 @@ private struct DevicesSettings: View {
             } header: {
                 Text("Устройства")
             } footer: {
-                Text("В звонилке выберите «BlackHole 2ch» как микрофон, а наушники — как динамик. Изменения применяются при следующем «Старт».")
+                Text("Микрофон «Автоматически»: гарнитура (например, AirPods), если звук идёт в неё, иначе микрофон MacBook. "
+                     + "В звонилке выберите «BlackHole 2ch» как микрофон, а наушники — как динамик. "
+                     + "Изменения применяются при следующем «Старт».")
                     .foregroundStyle(.secondary)
             }
 

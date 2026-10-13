@@ -5,7 +5,8 @@ import PonteCore
 /// UserDefaults keys. Devices are stored by UID (stable), never by AudioDeviceID.
 enum PrefKey {
     static let source = "source"                    // "system" | "app:<bundleID>"
-    static let micUID = "micUID"                    // "" = system default input
+    static let micUID = "micUID"                    // "" = automatic (AudioRules.pickAutoMicIndex)
+    static let micAutoMigrated = "micAutoMigrated"  // the one-time move of a stored mic to automatic is done
     static let headphonesUID = "headphonesUID"      // "" = system default output
     static let callOutputUID = "callOutputUID"      // "" = BlackHole, found automatically
     static let voicePT = "voicePT"                  // "" = best available
@@ -18,6 +19,7 @@ enum PrefKey {
     static let fontSize = "fontSize"
     static let overlayVisible = "overlayVisible"
     static let setupCompleted = "setupCompleted"
+    static let checklistOnLaunch = "checklistOnLaunch"  // «Перед звонком» opens at launch
 }
 
 enum TranslatorKind: String, CaseIterable, Identifiable {
