@@ -729,7 +729,7 @@ extension AppRulesLegacy {
     /// `launch.outgoingSink.map { WAVFileSink } ?? blackHoleDevice.map { DeviceAudioPlayer }`: 0 sink, 1 device, 2 none.
     static func callOutput(hasSink: Bool, hasBlackHole: Bool) -> Int32 { hasSink ? 0 : (hasBlackHole ? 1 : 2) }
     /// The two TranslationLane(...) calls in AppModel.start.
-    static func laneMode(direction: Int32, outgoingMode: Int32) -> Int32 { direction == DIR_INCOMING ? MODE_CONTINUOUS : outgoingMode }
+    static func laneMode(direction: Int32, outgoingMode: Int32) -> Int32 { direction == DIR_INCOMING ? MODE_CONTINUOUS : MODE_PUSH_TO_TALK }
     static func laneSpeaks(direction: Int32, speakRussian: Bool) -> Bool { direction == DIR_INCOMING ? speakRussian : true }
     /// `outgoing.isPaused = voicePaused`, `outgoing.echoGuard = echoGuard`, `.speaking` of the incoming lane.
     static func laneVoicePause(direction: Int32) -> Bool { direction == DIR_OUTGOING }

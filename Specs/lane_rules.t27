@@ -463,10 +463,12 @@ pub fn ln_call_output(has_sink: bool, has_blackhole: bool) -> i32 {
     return LN_OUT_NONE;
 }
 
-; The incoming lane always transcribes everything; the outgoing one follows the setting.
+; The incoming lane always transcribes everything. The outgoing lane is push-to-talk only: the owner
+; removed «Авто» on 2026-10-13 (only what is said while the button is held goes into the call), so a
+; stored «Авто» setting is ignored.
 pub fn ln_lane_mode(direction: i32, outgoing_mode: i32) -> i32 {
     if (direction == LN_DIR_INCOMING) { return LN_MODE_CONTINUOUS; }
-    return outgoing_mode;
+    return LN_MODE_PUSH_TO_TALK;
 }
 
 ; The incoming lane speaks Russian when the setting says so; the outgoing lane always speaks.
@@ -725,6 +727,7 @@ test ln_moved_rules {
     assert ln_call_output(false, false) == LN_OUT_NONE;
     assert ln_lane_mode(LN_DIR_INCOMING, LN_MODE_PUSH_TO_TALK) == LN_MODE_CONTINUOUS;
     assert ln_lane_mode(LN_DIR_OUTGOING, LN_MODE_PUSH_TO_TALK) == LN_MODE_PUSH_TO_TALK;
+    assert ln_lane_mode(LN_DIR_OUTGOING, LN_MODE_CONTINUOUS) == LN_MODE_PUSH_TO_TALK;
     assert ln_lane_speaks(LN_DIR_INCOMING, false) == false;
     assert ln_lane_speaks(LN_DIR_OUTGOING, false) == true;
     assert ln_lane_voice_pause(LN_DIR_OUTGOING) == true;

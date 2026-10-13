@@ -271,8 +271,11 @@ final class AppModel {
         translatorKind = TranslatorKind(rawValue: d.string(forKey: PrefKey.translator) ?? "")
             ?? TranslatorKind(ruleCode: AppRules.DEFAULT_TRANSLATOR)
         glossary = GlossaryTerm.decode(d.string(forKey: PrefKey.glossary) ?? "[]")
-        outgoingMode = CaptureMode(rawValue: d.string(forKey: PrefKey.outgoingMode) ?? "")
+        let storedMode = CaptureMode(rawValue: d.string(forKey: PrefKey.outgoingMode) ?? "")
             ?? CaptureMode(ruleCode: AppRules.DEFAULT_MODE)
+        // Push-to-talk only (lane_rules: ln_lane_mode); a stored «Авто» is ignored.
+        outgoingMode = CaptureMode(ruleCode: AppRules.laneMode(direction: AppRules.directionCode(.outgoing),
+                                                               outgoingMode: storedMode.ruleCode))
         pttKey = PTTKey(rawValue: d.string(forKey: PrefKey.pttKey) ?? "") ?? PTTKey(ruleCode: AppRules.DEFAULT_PTT_KEY)
         fontSize = Double(AppRules.translationFontSize(stored: Int32(d.integer(forKey: PrefKey.fontSize))))
         overlayVisible = d.object(forKey: PrefKey.overlayVisible) == nil ? AppRules.DEFAULT_OVERLAY_VISIBLE

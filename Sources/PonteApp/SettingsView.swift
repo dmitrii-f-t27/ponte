@@ -162,10 +162,8 @@ private struct TranslationSettings: View {
             }
 
             Section("Мой голос в звонок") {
-                Picker("Режим", selection: $model.outgoingMode) {
-                    ForEach(CaptureMode.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
+                Text("Ваша речь уходит в звонок только пока вы держите кнопку или клавишу.")
+                    .foregroundStyle(.secondary)
                 Picker("Клавиша push-to-talk", selection: $model.pttKey) {
                     ForEach(PTTKey.allCases) { Text($0.title).tag($0) }
                 }

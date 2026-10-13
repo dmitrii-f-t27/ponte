@@ -537,7 +537,7 @@ int32_t ln_lane_mode(int32_t direction, int32_t outgoing_mode) {
     if ((direction == LN_DIR_INCOMING)) {
         return LN_MODE_CONTINUOUS;
     }
-    return outgoing_mode;
+    return LN_MODE_PUSH_TO_TALK;
 }
 
 bool ln_lane_speaks(int32_t direction, bool speak_russian) {
@@ -806,6 +806,7 @@ void test_ln_moved_rules(void) {
     assert((ln_call_output(false, false) == LN_OUT_NONE));
     assert((ln_lane_mode(LN_DIR_INCOMING, LN_MODE_PUSH_TO_TALK) == LN_MODE_CONTINUOUS));
     assert((ln_lane_mode(LN_DIR_OUTGOING, LN_MODE_PUSH_TO_TALK) == LN_MODE_PUSH_TO_TALK));
+    assert((ln_lane_mode(LN_DIR_OUTGOING, LN_MODE_CONTINUOUS) == LN_MODE_PUSH_TO_TALK));
     assert((ln_lane_speaks(LN_DIR_INCOMING, false) == false));
     assert((ln_lane_speaks(LN_DIR_OUTGOING, false) == true));
     assert((ln_lane_voice_pause(LN_DIR_OUTGOING) == true));

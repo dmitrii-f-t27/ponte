@@ -90,10 +90,12 @@ public final class MicSource: AudioSource {
         } catch {
             self.handler = nil
             lock.unlock()
+            PonteDiagnostics.log("mic start FAILED: \(error.localizedDescription)")
             throw error
         }
         running = true
         failures = 0
+        PonteDiagnostics.log("mic start ok device=\(device?.name ?? "default") format=\(outputFormat)")
         let changed = setStatus(.capturing)
         lock.unlock()
         notify(changed)
@@ -121,8 +123,17 @@ public final class MicSource: AudioSource {
             lock.unlock()
             return
         }
+        // AVAudioEngine also posts this right after its own start (the I/O unit settles); then the
+        // engine keeps running and tearing it down only starts the same cycle again (seen live:
+        // a rebuild every 0.47 s). Only a stopped engine needs a rebuild.
+        if changedEngine.isRunning {
+            lock.unlock()
+            PonteDiagnostics.log("mic configuration change ignored: engine still running")
+            return
+        }
         stopEngine()
         failures = 0
+        PonteDiagnostics.log("mic configuration change: engine stopped, rebuild scheduled")
         let changed = setStatus(.restarting(failures: 0))
         scheduleRestart()
         lock.unlock()
@@ -148,10 +159,12 @@ public final class MicSource: AudioSource {
         let changed: Status?
         do {
             try startEngine()
+            PonteDiagnostics.log("mic rebuild ok after \(failures) failure(s) format=\(outputFormat)")
             failures = 0
             changed = setStatus(.capturing)
         } catch {
             failures += 1
+            PonteDiagnostics.log("mic rebuild \(failures) FAILED: \(error.localizedDescription)")
             if AudioRules.restartFailed(failures: failures) {
                 changed = setStatus(.failed(error.localizedDescription))
             } else {
@@ -175,7 +188,9 @@ public final class MicSource: AudioSource {
     private func startEngine() throws {
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        if let id = try resolvedDeviceID() {
+        // Setting the device on the input unit reconfigures it; skip that when the chosen device is
+        // already the system input, so the engine starts as configured.
+        if let id = try resolvedDeviceID(), id != HAL.defaultDevice(input: true) {
             guard let au = input.audioUnit else { throw PonteAudioError.engine("input node has no audio unit") }
             var deviceID = id
             let status = AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
@@ -183,7 +198,8 @@ public final class MicSource: AudioSource {
             try HAL.check(status, "set input device \(device?.name ?? "")")
         }
         // Both sides of the input node need a real format, or installTap raises (an Objective-C
-        // exception Swift cannot catch). The tap then takes the bus's own format (format: nil).
+        // exception, caught below). The tap is given the bus format read after the device was set:
+        // `format: nil` made engine.start fail with -10868 (format not supported) on an explicit device.
         let deviceFormat = input.inputFormat(forBus: 0)
         let busFormat = input.outputFormat(forBus: 0)
         guard AudioRules.micTapReady(inputRate: deviceFormat.sampleRate, inputChannels: Int(deviceFormat.channelCount),
@@ -195,7 +211,7 @@ public final class MicSource: AudioSource {
         let handler = self.handler
         let frames = bufferFrames
         if let reason = PonteCatchObjC({
-            input.installTap(onBus: 0, bufferSize: frames, format: nil) { buffer, time in
+            input.installTap(onBus: 0, bufferSize: frames, format: busFormat) { buffer, time in
                 guard let handler, let mono = PCM.mono(buffer) else { return }
                 handler(mono, time)
             }

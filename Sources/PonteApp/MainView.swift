@@ -277,13 +277,6 @@ private struct OutgoingColumn: View {
         @Bindable var model = model
         VStack(spacing: 0) {
             ColumnHeader(title: "Я → по-португальски", route: "ru → pt-BR", systemImage: "person.wave.2.fill", tint: .green) {
-                Picker("Режим", selection: $model.outgoingMode) {
-                    ForEach(CaptureMode.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .accessibilityHint("Авто: каждая фраза уходит в звонок. Push-to-talk: только пока держите клавишу.")
                 Button {
                     model.replayLast(.outgoing)
                 } label: {
