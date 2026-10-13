@@ -706,6 +706,9 @@ final class AppModel {
         }
         pollAudioStats()
         updatePushToTalk()
+        // Test mode (-PonteOutgoingFile): the outgoing lane is push-to-talk only, so the file is
+        // "spoken" with the talk key held, as a person would.
+        if isRunning, launch.outgoingFile != nil { setTalkKey(true) }
 
         let hasCallOutput = AppRules.hasCallOutput(hasBlackHole: blackHoleDevice != nil, hasSink: launch.outgoingSink != nil)
         let startBanner = AppRules.startBannerAfterStart(lanesFailed: lanesFailed, translatorsFailed: translatorsFailed,

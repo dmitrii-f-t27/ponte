@@ -27,8 +27,11 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
+    // Replaced after a real device change: a reused AVAudioEngine stayed silent after several
+    // reconfigurations (seen live 2026-10-13: phrases reached nothing after a device switch).
+    private var engine = AVAudioEngine()
+    private var player = AVAudioPlayerNode()
+    private var needsRebuild = false
     private var attached = false
     private var running = false
     private var playFormat: AVAudioFormat?
@@ -149,6 +152,23 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
 
     private func ensureRunning() throws {
         if running && engine.isRunning { return }
+        if needsRebuild {
+            if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
+            configObserver = nil
+            _ = PonteCatchObjC {
+                self.player.stop()
+                self.engine.stop()
+            }
+            let volume = player.volume
+            engine = AVAudioEngine()
+            player = AVAudioPlayerNode()
+            player.volume = volume
+            attached = false
+            playFormat = nil
+            converters.removeAll()
+            needsRebuild = false
+            PonteDiagnostics.log("player \(device?.name ?? "default"): engine rebuilt after a device change")
+        }
         if !attached {
             engine.attach(player)
             attached = true
@@ -158,10 +178,17 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
                 throw PonteAudioError.deviceNotFound(device.name)
             }
             guard let au = engine.outputNode.audioUnit else { throw PonteAudioError.engine("output node has no audio unit") }
-            var id = live.id
-            try HAL.check(AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-                                               &id, UInt32(MemoryLayout<AudioDeviceID>.size)),
-                          "set output device \(device.name)")
+            // Setting the device reconfigures the unit (and AVAudioEngine then reports a change):
+            // only set it when the unit is on another device.
+            var current = AudioDeviceID(0)
+            var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+            let read = AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size)
+            if read != noErr || current != live.id {
+                var id = live.id
+                try HAL.check(AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                                   &id, UInt32(MemoryLayout<AudioDeviceID>.size)),
+                              "set output device \(device.name)")
+            }
         }
         let hw = engine.outputNode.outputFormat(forBus: 0)
         let rate = AudioRules.rateOrDefault(hw.sampleRate)
@@ -176,6 +203,8 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
         do {
             try engine.start()
         } catch {
+            PonteDiagnostics.log("player \(device?.name ?? "default"): start FAILED \(error.localizedDescription)")
+            needsRebuild = true
             throw PonteAudioError.engine("start failed on \(device?.name ?? "default output"): \(error.localizedDescription)")
         }
         if let reason = PonteCatchObjC({ player.play() }) {
@@ -183,14 +212,25 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
         }
         running = true
         lastError = nil
+        PonteDiagnostics.log("player \(device?.name ?? "default"): running at \(Int(rate)) Hz")
 
         if configObserver == nil {
-            // Device unplugged / rate changed: the engine stops. Release waiters; restart on next play.
+            // Device unplugged / rate changed: the engine stops. Release waiters; rebuild on next play.
+            // AVAudioEngine also posts this right after its own start while it keeps running: ignore that.
+            let observed = engine
             configObserver = NotificationCenter.default.addObserver(
-                forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-            ) { [weak self] _ in
-                guard let self else { return }
-                self.lock.withLock { self.running = false }
+                forName: .AVAudioEngineConfigurationChange, object: observed, queue: nil
+            ) { [weak self, weak observed] _ in
+                guard let self, let observed else { return }
+                if observed.isRunning {
+                    PonteDiagnostics.log("player \(self.device?.name ?? "default"): configuration change ignored, engine running")
+                    return
+                }
+                PonteDiagnostics.log("player \(self.device?.name ?? "default"): configuration change, engine stopped")
+                self.lock.withLock {
+                    self.running = false
+                    self.needsRebuild = true
+                }
                 self.releaseAll()
             }
         }
