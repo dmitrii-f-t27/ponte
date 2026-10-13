@@ -252,6 +252,34 @@ private typealias L = AudioRulesLegacy
         log.finish(minimumCases: 1100)
     }
 
+    /// restartDelayMs, restartFailed, micTapReady (2026-10-13, after the live crash in MicSource).
+    @Test func restartAndMicTap() {
+        let log = DiffLog("restartDelayMs, restartFailed, micTapReady")
+        log.check([F.restartDelayMs, F.restartMaxDelayMs, F.restartAttempts], [L.restartDelayMs, L.restartMaxDelayMs, L.restartAttempts], "restart constants")
+        var r = DiffRandom(seed: 1859)
+        var attempts: [Int64] = Array(-100...10_000) + [.min, .min + 1, -1, .max - 1, .max]
+        for _ in 0..<20_000 { attempts.append(r.int64(.min ... .max)) }
+        for a in attempts {
+            log.check(F.restartDelayMs(attempt: a), L.restartDelayMs(attempt: a), "\(a)")
+            log.check(F.restartFailed(failures: a), L.restartFailed(failures: a), "\(a)")
+        }
+        let rates: [Double] = [0, -0.0, 1, -1, 8_000, 16_000, 24_000, 44_100, 48_000, 96_000, 192_000, .leastNonzeroMagnitude,
+                               -.leastNonzeroMagnitude, .greatestFiniteMagnitude, .infinity, -.infinity, .nan]
+        let channels = [Int.min, -1, 0, 1, 2, 3, 64, Int.max]
+        for inRate in rates {
+            for inChannels in channels {
+                for busRate in rates {
+                    for busChannels in channels {
+                        log.check(F.micTapReady(inputRate: inRate, inputChannels: inChannels, busRate: busRate, busChannels: busChannels),
+                                  L.micTapReady(inputRate: inRate, inputChannels: inChannels, busRate: busRate, busChannels: busChannels),
+                                  describe(inRate, inChannels, busRate, busChannels))
+                    }
+                }
+            }
+        }
+        log.finish(minimumCases: 78_000)
+    }
+
     // MARK: Devices
 
     private static let names = ["MacBook Pro Speakers", "MacBook Pro Microphone", "External Headphones", "BlackHole 2ch",

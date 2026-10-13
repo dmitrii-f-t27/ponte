@@ -374,8 +374,10 @@ func appTestWait(_ what: String = "", timeout: Duration = .seconds(2),
 }
 
 /// The «Микрофон» light the window shows for this lane (AppModel.pollAudioStats), the call started at `startedAt`.
-@MainActor private func appTestMic(_ rig: AppTestRig, startedAt: Date) -> (light: Int32, level: Float) {
-    AppModel.micStatus(runState: R.RUN_RUNNING, stats: rig.lane.audioStats, callStartedAt: startedAt, now: rig.clock.now)
+@MainActor private func appTestMic(_ rig: AppTestRig, startedAt: Date,
+                                    micSource: Int32 = R.MIC_CAPTURING) -> (light: Int32, level: Float) {
+    AppModel.micStatus(runState: R.RUN_RUNNING, stats: rig.lane.audioStats, micSource: micSource,
+                       callStartedAt: startedAt, now: rig.clock.now)
 }
 
 /// Live test 2026-10-13: push-to-talk, key up, the light «Микрофон» turned red within seconds although
@@ -416,7 +418,13 @@ func appTestWait(_ what: String = "", timeout: Duration = .seconds(2),
     #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_OK)
 
     // A microphone that did not start (no outgoing lane) is still BAD.
-    #expect(AppModel.micStatus(runState: R.RUN_RUNNING, stats: nil, callStartedAt: startedAt, now: rig.clock.now).light == R.LIGHT_BAD)
+    #expect(AppModel.micStatus(runState: R.RUN_RUNNING, stats: nil, micSource: R.MIC_CAPTURING,
+                               callStartedAt: startedAt, now: rig.clock.now).light == R.LIGHT_BAD)
+    // Live crash 2026-10-13: a device change stops the microphone. With the key up, a rebuild in progress
+    // is BUSY and rebuilds that keep failing are BAD; a test file (MIC_NONE) is as a running microphone.
+    #expect(appTestMic(rig, startedAt: startedAt, micSource: R.MIC_RESTARTING).light == R.LIGHT_BUSY)
+    #expect(appTestMic(rig, startedAt: startedAt, micSource: R.MIC_FAILED).light == R.LIGHT_BAD)
+    #expect(appTestMic(rig, startedAt: startedAt, micSource: R.MIC_NONE).light == R.LIGHT_OK)
     await rig.lane.stop()
 }
 

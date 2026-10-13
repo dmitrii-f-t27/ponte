@@ -243,6 +243,8 @@ final class AppModel {
     /// AppRules.TAP_* of the incoming process tap (TAP_NONE for a test file).
     var sourceTapStatus = AppRules.TAP_IDLE
     var sourceTapDetail: String?
+    /// AppRules.MIC_* of the outgoing microphone (MicSource's status; MIC_NONE until a source reports one).
+    var micSourceStatus = AppRules.MIC_NONE
     private var everStarted = false
     private var lanesStarted: Int32 = 0
     private var lanesFailed: Int32 = 0
@@ -479,7 +481,7 @@ final class AppModel {
         sourceCheck = Check(light: sourceCode)
         sourceLevel = AppRules.showsLevel(light: sourceCode) ? incoming?.level ?? 0 : 0
 
-        let mic = AppModel.micStatus(runState: runState.code, stats: outgoingLane?.audioStats,
+        let mic = AppModel.micStatus(runState: runState.code, stats: outgoingLane?.audioStats, micSource: micSourceStatus,
                                      callStartedAt: callStartedAt, now: now)
         micCheck = Check(light: mic.light)
         micLevel = mic.level
@@ -492,12 +494,13 @@ final class AppModel {
         if next != banner { banner = next }
     }
 
-    /// «Микрофон» light and meter level from the outgoing lane's stats (nil: no outgoing lane).
-    nonisolated static func micStatus(runState: Int32, stats: LaneAudioStats?, callStartedAt: Date?,
+    /// «Микрофон» light and meter level from the outgoing lane's stats (nil: no outgoing lane) and the
+    /// microphone's status (AppRules.MIC_*).
+    nonisolated static func micStatus(runState: Int32, stats: LaneAudioStats?, micSource: Int32, callStartedAt: Date?,
                                       now: Date) -> (light: Int32, level: Float) {
         func since(_ date: Date?) -> Int64 { date.map { millis(now.timeIntervalSince($0)) } ?? -1 }
         let msSinceBuffer = since(stats?.lastBufferAt)
-        let light = AppRules.micLight(runState: runState, laneActive: stats != nil,
+        let light = AppRules.micLight(runState: runState, laneActive: stats != nil, micStatus: micSource,
                                       msSinceStart: callStartedAt.map { millis(now.timeIntervalSince($0)) } ?? 0,
                                       msSinceListen: since(stats?.listeningSince), msSinceBuffer: msSinceBuffer)
         let level = AppRules.micShowsLevel(light: light, msSinceBuffer: msSinceBuffer) ? stats?.level ?? 0 : 0

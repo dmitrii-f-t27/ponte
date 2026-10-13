@@ -255,6 +255,28 @@ enum AudioRulesLegacy {
         }
     }
 
+    // MARK: - Rebuilding a capture after a device change (2026-10-13, after the live crash)
+
+    /// MicSource rebuilt its engine inside the configuration-change notification and aborted on a stale
+    /// tap format. Now: wait 300 ms, double after each failed rebuild, at most 5 s, retry while running;
+    /// after 6 failures in a row report failed.
+    static let restartDelayMs: Int64 = 300
+    static let restartMaxDelayMs: Int64 = 5_000
+    static let restartAttempts: Int64 = 6
+
+    static func restartDelayMs(attempt: Int64) -> Int64 {
+        guard attempt > 0 else { return restartDelayMs }
+        guard attempt < 5 else { return restartMaxDelayMs }   // 300 << 5 = 9600 > cap
+        return min(restartDelayMs << attempt, restartMaxDelayMs)
+    }
+
+    static func restartFailed(failures: Int64) -> Bool { failures >= restartAttempts }
+
+    /// installTap(format: nil) takes the bus's format; both it and the device side need a rate and channels.
+    static func micTapReady(inputRate: Double, inputChannels: Int, busRate: Double, busChannels: Int) -> Bool {
+        inputRate > 0 && inputChannels > 0 && busRate > 0 && busChannels > 0
+    }
+
     // MARK: - Devices
 
     /// Device kind codes.

@@ -290,6 +290,25 @@ public enum AudioRules {
         Int(au_mic_start_decision(Int64(authorizationStatus)))
     }
 
+    // MARK: - Rebuilding a capture after a device change
+
+    /// First wait after a configuration change, and the longest wait of the backoff.
+    public static let restartDelayMs = Int64(AU_RESTART_DELAY_MS)
+    public static let restartMaxDelayMs = Int64(AU_RESTART_MAX_DELAY_MS)
+    /// Failed rebuilds in a row after which a source reports itself failed (it keeps retrying).
+    public static let restartAttempts = Int64(AU_RESTART_ATTEMPTS)
+
+    /// Wait before rebuild number `attempt` (0 = the first after the change).
+    public static func restartDelayMs(attempt: Int64) -> Int64 { au_restart_delay_ms(attempt) }
+
+    /// After `failures` failed rebuilds in a row the source reports failed.
+    public static func restartFailed(failures: Int64) -> Bool { au_restart_failed(failures) }
+
+    /// A microphone tap goes in only when the device side and the tap's bus both have a rate and channels.
+    public static func micTapReady(inputRate: Double, inputChannels: Int, busRate: Double, busChannels: Int) -> Bool {
+        au_mic_tap_ready(inputRate, Int64(inputChannels), busRate, Int64(busChannels))
+    }
+
     // MARK: - Devices
 
     /// Device kind codes.

@@ -387,15 +387,26 @@ enum AppRulesLegacy {
         return base
     }
 
+    /// Microphone status (MicSource.Status), as codes (2026-10-13, after the live crash: a device change
+    /// stops the microphone and it is rebuilt with a backoff).
+    static let MIC_NONE: Int32 = 0               // the outgoing source is not a microphone (test file)
+    static let MIC_CAPTURING: Int32 = 1
+    static let MIC_RESTARTING: Int32 = 2
+    static let MIC_FAILED: Int32 = 3
+    static let MIC_IDLE: Int32 = 4
+
     /// «Микрофон» light (2026-10-13: was audioLight, which turned BAD in push-to-talk with the key up).
-    /// The outgoing lane asks for audio only while its capture gate is open; with it closed (key up,
-    /// «Пауза голоса в звонок») a started microphone is OK. With it open: audioLight, the warm-up from
-    /// the later of «Старт» and the gate opening. `msSinceListen` < 0 = the gate is closed.
-    static func micLight(runState: Int32, laneActive: Bool, msSinceStart: Int64, msSinceListen: Int64,
+    /// A failed rebuild is BAD and a rebuild in progress BUSY, whatever the gate. The outgoing lane asks
+    /// for audio only while its capture gate is open; with it closed (key up, «Пауза голоса в звонок») a
+    /// started microphone is OK. With it open: audioLight, the warm-up from the later of «Старт» and the
+    /// gate opening. `msSinceListen` < 0 = the gate is closed.
+    static func micLight(runState: Int32, laneActive: Bool, micStatus: Int32, msSinceStart: Int64, msSinceListen: Int64,
                          msSinceBuffer: Int64) -> Int32 {
         guard runState == RUN_RUNNING, laneActive else {
             return audioLight(runState: runState, laneActive: laneActive, msSinceStart: msSinceStart, msSinceBuffer: msSinceBuffer)
         }
+        if micStatus == MIC_FAILED { return LIGHT_BAD }
+        if micStatus == MIC_RESTARTING { return LIGHT_BUSY }
         guard msSinceListen >= 0 else { return LIGHT_OK }
         return audioLight(runState: runState, laneActive: laneActive, msSinceStart: min(msSinceStart, msSinceListen),
                           msSinceBuffer: msSinceBuffer)

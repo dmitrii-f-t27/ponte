@@ -269,12 +269,20 @@ enum AppRules {
         ui_source_light(runState, laneActive, tapStatus, msSinceStart, msSinceBuffer, msSinceSignal)
     }
 
-    /// «Микрофон» light: OK while the capture gate is closed (push-to-talk key up, «Пауза голоса в звонок»);
-    /// with it open, audioLight with the warm-up from the later of Старт and the gate opening.
+    /// Microphone status (MicSource.Status), as codes.
+    static let MIC_NONE: Int32 = UI_MIC_NONE                      // the outgoing source is not a microphone (test file)
+    static let MIC_CAPTURING: Int32 = UI_MIC_CAPTURING
+    static let MIC_RESTARTING: Int32 = UI_MIC_RESTARTING          // a device change stopped it; being rebuilt
+    static let MIC_FAILED: Int32 = UI_MIC_FAILED                  // AudioRules.restartFailed: rebuilds keep failing
+    static let MIC_IDLE: Int32 = UI_MIC_IDLE                      // not started or stopped
+
+    /// «Микрофон» light. Not running or no lane: audioLight. MIC_FAILED → BAD and MIC_RESTARTING → BUSY,
+    /// whatever the gate. Gate closed (push-to-talk key up, «Пауза голоса в звонок»): OK. Gate open:
+    /// audioLight with the warm-up from the later of Старт and the gate opening.
     /// `msSinceListen` < 0 = the gate is closed.
-    static func micLight(runState: Int32, laneActive: Bool, msSinceStart: Int64, msSinceListen: Int64,
+    static func micLight(runState: Int32, laneActive: Bool, micStatus: Int32, msSinceStart: Int64, msSinceListen: Int64,
                          msSinceBuffer: Int64) -> Int32 {
-        ui_mic_light(runState, laneActive, msSinceStart, msSinceListen, msSinceBuffer)
+        ui_mic_light(runState, laneActive, micStatus, msSinceStart, msSinceListen, msSinceBuffer)
     }
 
     /// Setup wizard «Запись звука программ»: listen to all audio except Ponte for CAPTURE_CHECK_MS.

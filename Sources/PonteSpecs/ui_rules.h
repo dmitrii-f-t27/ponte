@@ -57,6 +57,11 @@
 #define UI_TAP_IDLE 4
 #define UI_SILENCE_SUSPECT_MS 8000
 #define UI_CAPTURE_CHECK_MS 3000
+#define UI_MIC_NONE 0
+#define UI_MIC_CAPTURING 1
+#define UI_MIC_RESTARTING 2
+#define UI_MIC_FAILED 3
+#define UI_MIC_IDLE 4
 #define UI_LAT_NONE 0
 #define UI_LAT_GOOD 1
 #define UI_LAT_SLOW 2
@@ -170,7 +175,7 @@ bool ui_autosave_on_stop(int32_t lines);
 bool ui_button_enabled(int32_t button, int32_t run_state, int32_t incoming_lines, int32_t outgoing_lines, bool has_blackhole, bool busy);
 int32_t ui_audio_light(int32_t run_state, bool lane_active, int64_t ms_since_start, int64_t ms_since_buffer);
 int32_t ui_source_light(int32_t run_state, bool lane_active, int32_t tap_status, int64_t ms_since_start, int64_t ms_since_buffer, int64_t ms_since_signal);
-int32_t ui_mic_light(int32_t run_state, bool lane_active, int64_t ms_since_start, int64_t ms_since_listen, int64_t ms_since_buffer);
+int32_t ui_mic_light(int32_t run_state, bool lane_active, int32_t mic_status, int64_t ms_since_start, int64_t ms_since_listen, int64_t ms_since_buffer);
 int32_t ui_capture_check_light(int32_t tap_status, bool frames_seen, bool signal_seen);
 int32_t ui_blackhole_light(bool found);
 int32_t ui_models_light(int32_t run_state, bool ever_started, int32_t lanes_started, int32_t lanes_failed);
@@ -338,9 +343,15 @@ int32_t ui_source_light(int32_t run_state, bool lane_active, int32_t tap_status,
     return base;
 }
 
-int32_t ui_mic_light(int32_t run_state, bool lane_active, int64_t ms_since_start, int64_t ms_since_listen, int64_t ms_since_buffer) {
+int32_t ui_mic_light(int32_t run_state, bool lane_active, int32_t mic_status, int64_t ms_since_start, int64_t ms_since_listen, int64_t ms_since_buffer) {
     if (((run_state != UI_RUN_RUNNING) || (lane_active == false))) {
         return ui_audio_light(run_state, lane_active, ms_since_start, ms_since_buffer);
+    }
+    if ((mic_status == UI_MIC_FAILED)) {
+        return UI_LIGHT_BAD;
+    }
+    if ((mic_status == UI_MIC_RESTARTING)) {
+        return UI_LIGHT_BUSY;
     }
     if ((ms_since_listen < 0)) {
         return UI_LIGHT_OK;
@@ -1075,19 +1086,25 @@ void test_ui_moved_rules(void) {
 
 void test_ui_mic_light_gate(void) {
     assert((ui_audio_light(UI_RUN_RUNNING, true, 10000, -1) == UI_LIGHT_BAD));
-    assert((ui_mic_light(UI_RUN_RUNNING, true, 10000, -1, -1) == UI_LIGHT_OK));
-    assert((ui_mic_light(UI_RUN_RUNNING, true, 10000, -1, 8000) == UI_LIGHT_OK));
-    assert((ui_mic_light(UI_RUN_RUNNING, true, 10000, -1, 100) == UI_LIGHT_OK));
-    assert((ui_mic_light(UI_RUN_RUNNING, true, 13999, 3999, 7999) == UI_LIGHT_BUSY));
-    assert((ui_mic_light(UI_RUN_RUNNING, true, 14000, 4000, 8000) == UI_LIGHT_BAD));
-    assert((ui_mic_light(UI_RUN_RUNNING, true, 15000, 5000, -1) == UI_LIGHT_BAD));
-    assert((ui_mic_light(UI_RUN_RUNNING, true, 15000, 5000, 1999) == UI_LIGHT_OK));
-    assert((ui_mic_light(UI_RUN_RUNNING, true, 3999, 3000, -1) == UI_LIGHT_BUSY));
-    assert((ui_mic_light(UI_RUN_RUNNING, true, 9000, 8000, 2000) == UI_LIGHT_BAD));
-    assert((ui_mic_light(UI_RUN_RUNNING, false, 9000, -1, -1) == UI_LIGHT_BAD));
-    assert((ui_mic_light(UI_RUN_STARTING, true, 0, -1, -1) == UI_LIGHT_BUSY));
-    assert((ui_mic_light(UI_RUN_IDLE, true, 0, -1, -1) == UI_LIGHT_UNKNOWN));
-    assert((ui_mic_light(UI_RUN_STOPPING, true, 9000, 5000, -1) == UI_LIGHT_UNKNOWN));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 10000, -1, -1) == UI_LIGHT_OK));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 10000, -1, 8000) == UI_LIGHT_OK));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 10000, -1, 100) == UI_LIGHT_OK));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 13999, 3999, 7999) == UI_LIGHT_BUSY));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 14000, 4000, 8000) == UI_LIGHT_BAD));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 15000, 5000, -1) == UI_LIGHT_BAD));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 15000, 5000, 1999) == UI_LIGHT_OK));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 3999, 3000, -1) == UI_LIGHT_BUSY));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 9000, 8000, 2000) == UI_LIGHT_BAD));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_RESTARTING, 10000, -1, -1) == UI_LIGHT_BUSY));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_RESTARTING, 10000, 9000, 100) == UI_LIGHT_BUSY));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_FAILED, 10000, -1, -1) == UI_LIGHT_BAD));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_FAILED, 10000, 9000, 100) == UI_LIGHT_BAD));
+    assert((ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_NONE, 10000, -1, -1) == UI_LIGHT_OK));
+    assert((ui_mic_light(UI_RUN_IDLE, true, UI_MIC_FAILED, 0, -1, -1) == UI_LIGHT_UNKNOWN));
+    assert((ui_mic_light(UI_RUN_RUNNING, false, UI_MIC_CAPTURING, 9000, -1, -1) == UI_LIGHT_BAD));
+    assert((ui_mic_light(UI_RUN_STARTING, true, UI_MIC_CAPTURING, 0, -1, -1) == UI_LIGHT_BUSY));
+    assert((ui_mic_light(UI_RUN_IDLE, true, UI_MIC_CAPTURING, 0, -1, -1) == UI_LIGHT_UNKNOWN));
+    assert((ui_mic_light(UI_RUN_STOPPING, true, UI_MIC_CAPTURING, 9000, 5000, -1) == UI_LIGHT_UNKNOWN));
     assert((ui_mic_shows_level(UI_LIGHT_OK, 1999) == true));
     assert((ui_mic_shows_level(UI_LIGHT_OK, 2000) == false));
     assert((ui_mic_shows_level(UI_LIGHT_OK, -1) == false));
@@ -1113,33 +1130,45 @@ void test_ui_mic_light_gate(void) {
                 while ((j < 8)) {
                     int32_t k = 0;
                     while ((k < 8)) {
-                        int32_t light = ui_mic_light(run, active, ms[i], ms[j], ms[k]);
-                        bool fresh = ((ms[k] >= 0) && (ms[k] < UI_AUDIO_FRESH_MS));
-                        if (((run != UI_RUN_RUNNING) || (active == false))) {
-                            if ((light != ui_audio_light(run, active, ms[i], ms[k]))) {
+                        int32_t mic = -1;
+                        while ((mic <= 5)) {
+                            int32_t light = ui_mic_light(run, active, mic, ms[i], ms[j], ms[k]);
+                            bool fresh = ((ms[k] >= 0) && (ms[k] < UI_AUDIO_FRESH_MS));
+                            if (((run != UI_RUN_RUNNING) || (active == false))) {
+                                if ((light != ui_audio_light(run, active, ms[i], ms[k]))) {
+                                    bad = (bad + 1);
+                                }
+                            } else if ((mic == UI_MIC_FAILED)) {
+                                if ((light != UI_LIGHT_BAD)) {
+                                    bad = (bad + 1);
+                                }
+                            } else if ((mic == UI_MIC_RESTARTING)) {
+                                if ((light != UI_LIGHT_BUSY)) {
+                                    bad = (bad + 1);
+                                }
+                            } else if ((ms[j] < 0)) {
+                                if ((light != UI_LIGHT_OK)) {
+                                    bad = (bad + 1);
+                                }
+                            } else {
+                                int64_t warm = ms[i];
+                                if ((ms[j] < warm)) {
+                                    warm = ms[j];
+                                }
+                                if ((light != ui_audio_light(run, active, warm, ms[k]))) {
+                                    bad = (bad + 1);
+                                }
+                                if (((light == UI_LIGHT_BAD) && (fresh || (warm < UI_AUDIO_WARMUP_MS)))) {
+                                    bad = (bad + 1);
+                                }
+                            }
+                            if ((((((light == UI_LIGHT_BAD) && (run == UI_RUN_RUNNING)) && active) && (ms[j] < 0)) && (mic != UI_MIC_FAILED))) {
                                 bad = (bad + 1);
                             }
-                        } else if ((ms[j] < 0)) {
-                            if ((light != UI_LIGHT_OK)) {
+                            if ((ui_mic_shows_level(light, ms[k]) != ((light == UI_LIGHT_OK) && fresh))) {
                                 bad = (bad + 1);
                             }
-                        } else {
-                            int64_t warm = ms[i];
-                            if ((ms[j] < warm)) {
-                                warm = ms[j];
-                            }
-                            if ((light != ui_audio_light(run, active, warm, ms[k]))) {
-                                bad = (bad + 1);
-                            }
-                            if (((light == UI_LIGHT_BAD) && (fresh || (warm < UI_AUDIO_WARMUP_MS)))) {
-                                bad = (bad + 1);
-                            }
-                        }
-                        if (((((light == UI_LIGHT_BAD) && (run == UI_RUN_RUNNING)) && active) && (ms[j] < 0))) {
-                            bad = (bad + 1);
-                        }
-                        if ((ui_mic_shows_level(light, ms[k]) != ((light == UI_LIGHT_OK) && fresh))) {
-                            bad = (bad + 1);
+                            mic = (mic + 1);
                         }
                         k = (k + 1);
                     }

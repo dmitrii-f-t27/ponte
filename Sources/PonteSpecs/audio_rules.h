@@ -53,6 +53,9 @@
 #define AU_AV_AUTHORIZED 3
 #define AU_METER_ATTACK 0.5
 #define AU_METER_RELEASE 0.1
+#define AU_RESTART_DELAY_MS 300
+#define AU_RESTART_MAX_DELAY_MS 5000
+#define AU_RESTART_ATTEMPTS 6
 #define AU_FORMAT_OTHER 0
 #define AU_FORMAT_FLOAT32 1
 #define AU_FORMAT_FLOAT64 2
@@ -113,6 +116,9 @@ int64_t au_conversion_path(bool same_format, bool same_rate);
 bool au_is_usable_tap_format(bool is_linear_pcm, bool is_float, int64_t bits_per_channel, double sample_rate);
 int64_t au_tap_action(bool attached, int64_t desired_count, bool same_set, bool is_global, bool force);
 int64_t au_mic_start_decision(int64_t authorization_status);
+int64_t au_restart_delay_ms(int64_t attempt);
+bool au_restart_failed(int64_t failures);
+bool au_mic_tap_ready(double input_rate, int64_t input_channels, double bus_rate, int64_t bus_channels);
 bool au_has_signal(float peak, float rms);
 bool au_tap_lists_processes(bool is_global);
 bool au_flushes_converter(int64_t index, int64_t count, bool next_format_differs);
@@ -515,6 +521,27 @@ int64_t au_mic_start_decision(int64_t authorization_status) {
         return AU_MIC_REQUEST_FIRST;
     }
     return AU_MIC_DENIED;
+}
+
+int64_t au_restart_delay_ms(int64_t attempt) {
+    int64_t delay = AU_RESTART_DELAY_MS;
+    int64_t n = 0;
+    while (((n < attempt) && (delay < AU_RESTART_MAX_DELAY_MS))) {
+        delay = (delay * 2);
+        n = (n + 1);
+    }
+    if ((delay > AU_RESTART_MAX_DELAY_MS)) {
+        return AU_RESTART_MAX_DELAY_MS;
+    }
+    return delay;
+}
+
+bool au_restart_failed(int64_t failures) {
+    return (failures >= AU_RESTART_ATTEMPTS);
+}
+
+bool au_mic_tap_ready(double input_rate, int64_t input_channels, double bus_rate, int64_t bus_channels) {
+    return ((((input_rate > 0.0) && (input_channels > 0)) && (bus_rate > 0.0)) && (bus_channels > 0));
 }
 
 bool au_has_signal(float peak, float rms) {
@@ -998,6 +1025,52 @@ void test_au_moved_rules(void) {
     assert((bad == 0));
 }
 
+void test_au_restart_backoff(void) {
+    assert((au_restart_delay_ms(0) == 300));
+    assert((au_restart_delay_ms(-3) == 300));
+    assert((au_restart_delay_ms(1) == 600));
+    assert((au_restart_delay_ms(2) == 1200));
+    assert((au_restart_delay_ms(3) == 2400));
+    assert((au_restart_delay_ms(4) == 4800));
+    assert((au_restart_delay_ms(5) == 5000));
+    assert((au_restart_delay_ms(1000000) == 5000));
+    assert((au_restart_delay_ms(9223372036854775807) == 5000));
+    assert((au_restart_failed(0) == false));
+    assert((au_restart_failed(5) == false));
+    assert((au_restart_failed(6) == true));
+    assert((au_restart_failed(100) == true));
+    int64_t a = -5;
+    int64_t previous = 0;
+    uint32_t bad = 0;
+    while ((a <= 200)) {
+        int64_t d = au_restart_delay_ms(a);
+        if ((((d < previous) || (d < AU_RESTART_DELAY_MS)) || (d > AU_RESTART_MAX_DELAY_MS))) {
+            bad = (bad + 1);
+        }
+        if ((au_restart_failed(a) != (a >= AU_RESTART_ATTEMPTS))) {
+            bad = (bad + 1);
+        }
+        previous = d;
+        a = (a + 1);
+    }
+    assert((bad == 0));
+    assert((previous == AU_RESTART_MAX_DELAY_MS));
+    int64_t total = 0;
+    int64_t f = 0;
+    while ((au_restart_failed(f) == false)) {
+        total = (total + au_restart_delay_ms(f));
+        f = (f + 1);
+    }
+    assert((total == 14300));
+    assert((au_mic_tap_ready(48000.0, 1, 48000.0, 1) == true));
+    assert((au_mic_tap_ready(48000.0, 1, 24000.0, 2) == true));
+    assert((au_mic_tap_ready(0.0, 1, 48000.0, 1) == false));
+    assert((au_mic_tap_ready(48000.0, 0, 48000.0, 1) == false));
+    assert((au_mic_tap_ready(48000.0, 1, 0.0, 1) == false));
+    assert((au_mic_tap_ready(48000.0, 1, 48000.0, 0) == false));
+    assert((au_mic_tap_ready(-48000.0, 1, 48000.0, 1) == false));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1011,7 +1084,8 @@ int main(void) {
     test_au_rates_chunks_pacing();
     test_au_tap_and_mic();
     test_au_moved_rules();
-    printf("All %d tests passed.\n", 5);
+    test_au_restart_backoff();
+    printf("All %d tests passed.\n", 6);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

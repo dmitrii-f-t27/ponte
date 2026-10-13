@@ -53,6 +53,11 @@
 #define UI_TAP_IDLE 4
 #define UI_SILENCE_SUSPECT_MS 8000
 #define UI_CAPTURE_CHECK_MS 3000
+#define UI_MIC_NONE 0
+#define UI_MIC_CAPTURING 1
+#define UI_MIC_RESTARTING 2
+#define UI_MIC_FAILED 3
+#define UI_MIC_IDLE 4
 #define UI_LAT_NONE 0
 #define UI_LAT_GOOD 1
 #define UI_LAT_SLOW 2
@@ -164,7 +169,7 @@ bool ui_autosave_on_stop(int32_t lines);
 bool ui_button_enabled(int32_t button, int32_t run_state, int32_t incoming_lines, int32_t outgoing_lines, bool has_blackhole, bool busy);
 int32_t ui_audio_light(int32_t run_state, bool lane_active, int64_t ms_since_start, int64_t ms_since_buffer);
 int32_t ui_source_light(int32_t run_state, bool lane_active, int32_t tap_status, int64_t ms_since_start, int64_t ms_since_buffer, int64_t ms_since_signal);
-int32_t ui_mic_light(int32_t run_state, bool lane_active, int64_t ms_since_start, int64_t ms_since_listen, int64_t ms_since_buffer);
+int32_t ui_mic_light(int32_t run_state, bool lane_active, int32_t mic_status, int64_t ms_since_start, int64_t ms_since_listen, int64_t ms_since_buffer);
 int32_t ui_capture_check_light(int32_t tap_status, bool frames_seen, bool signal_seen);
 int32_t ui_blackhole_light(bool found);
 int32_t ui_models_light(int32_t run_state, bool ever_started, int32_t lanes_started, int32_t lanes_failed);

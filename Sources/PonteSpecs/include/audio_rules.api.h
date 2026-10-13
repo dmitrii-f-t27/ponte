@@ -49,6 +49,9 @@
 #define AU_AV_AUTHORIZED 3
 #define AU_METER_ATTACK 0.5
 #define AU_METER_RELEASE 0.1
+#define AU_RESTART_DELAY_MS 300
+#define AU_RESTART_MAX_DELAY_MS 5000
+#define AU_RESTART_ATTEMPTS 6
 #define AU_FORMAT_OTHER 0
 #define AU_FORMAT_FLOAT32 1
 #define AU_FORMAT_FLOAT64 2
@@ -107,6 +110,9 @@ int64_t au_conversion_path(bool same_format, bool same_rate);
 bool au_is_usable_tap_format(bool is_linear_pcm, bool is_float, int64_t bits_per_channel, double sample_rate);
 int64_t au_tap_action(bool attached, int64_t desired_count, bool same_set, bool is_global, bool force);
 int64_t au_mic_start_decision(int64_t authorization_status);
+int64_t au_restart_delay_ms(int64_t attempt);
+bool au_restart_failed(int64_t failures);
+bool au_mic_tap_ready(double input_rate, int64_t input_channels, double bus_rate, int64_t bus_channels);
 bool au_has_signal(float peak, float rms);
 bool au_tap_lists_processes(bool is_global);
 bool au_flushes_converter(int64_t index, int64_t count, bool next_format_differs);

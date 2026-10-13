@@ -70,6 +70,16 @@ pub const UI_SILENCE_SUSPECT_MS : i64 = 8000;
 ; CAPTURE_CHECK_MS: the wizard listens to all audio except Ponte this long.
 pub const UI_CAPTURE_CHECK_MS : i64 = 3000;
 
+; --- Microphone status (MIC_*), as MicSource.Status -----------------------------------------------------------
+; NONE: the outgoing source is not a microphone (a test file). RESTARTING: a device change stopped the
+; microphone and it is being rebuilt. FAILED: the rebuild failed AU_RESTART_ATTEMPTS times in a row (it
+; keeps trying). IDLE: not started or stopped.
+pub const UI_MIC_NONE : i32 = 0;
+pub const UI_MIC_CAPTURING : i32 = 1;
+pub const UI_MIC_RESTARTING : i32 = 2;
+pub const UI_MIC_FAILED : i32 = 3;
+pub const UI_MIC_IDLE : i32 = 4;
+
 ; --- Latency colour (LAT_*) -------------------------------------------------------------------------------------
 pub const UI_LAT_NONE : i32 = 0;
 ; At most 2 s: the target from SPEC.md.
@@ -217,17 +227,20 @@ pub fn ui_source_light(run_state: i32, lane_active: bool, tap_status: i32, ms_si
     return base;
 }
 
-; micLight: the microphone light. The outgoing lane asks for audio only while its capture gate is open
-; (mode auto, or the push-to-talk key held, and the voice pause off). ms_since_listen: time since the gate
-; last opened; < 0 while it is closed. With the gate closed missing buffers are no fault: the lane is
-; active only if its microphone started, so the light is OK. With the gate open it is audioLight, the
-; warm-up counted from the later of the start and the gate opening; a microphone that delivers nothing
-; past the thresholds while the gate is open is BAD. Not running, or no lane: audioLight.
+; micLight: the microphone light. Not running, or no lane: audioLight. A microphone whose rebuild after a
+; device change failed is BAD, one being rebuilt BUSY, whatever the gate. The outgoing lane asks for audio
+; only while its capture gate is open (mode auto, or the push-to-talk key held, and the voice pause off).
+; ms_since_listen: time since the gate last opened; < 0 while it is closed. With the gate closed missing
+; buffers are no fault: the lane is active only if its microphone started, so the light is OK. With the
+; gate open it is audioLight, the warm-up counted from the later of the start and the gate opening; a
+; microphone that delivers nothing past the thresholds while the gate is open is BAD.
 ; (Live test 2026-10-13: push-to-talk with the key up turned the light BAD within seconds.)
-pub fn ui_mic_light(run_state: i32, lane_active: bool, ms_since_start: i64, ms_since_listen: i64, ms_since_buffer: i64) -> i32 {
+pub fn ui_mic_light(run_state: i32, lane_active: bool, mic_status: i32, ms_since_start: i64, ms_since_listen: i64, ms_since_buffer: i64) -> i32 {
     if (run_state != UI_RUN_RUNNING or lane_active == false) {
         return ui_audio_light(run_state, lane_active, ms_since_start, ms_since_buffer);
     }
+    if (mic_status == UI_MIC_FAILED) { return UI_LIGHT_BAD; }
+    if (mic_status == UI_MIC_RESTARTING) { return UI_LIGHT_BUSY; }
     if (ms_since_listen < 0) { return UI_LIGHT_OK; }
     var warm: i64 = ms_since_start;
     if (ms_since_listen < warm) { warm = ms_since_listen; }
@@ -944,27 +957,35 @@ test ui_moved_rules {
 test ui_mic_light_gate {
     // Live test 2026-10-13: push-to-talk, key up, 10 s without a buffer. The microphone light was BAD.
     assert ui_audio_light(UI_RUN_RUNNING, true, 10000, -1) == UI_LIGHT_BAD;
-    assert ui_mic_light(UI_RUN_RUNNING, true, 10000, -1, -1) == UI_LIGHT_OK;
-    assert ui_mic_light(UI_RUN_RUNNING, true, 10000, -1, 8000) == UI_LIGHT_OK;
-    assert ui_mic_light(UI_RUN_RUNNING, true, 10000, -1, 100) == UI_LIGHT_OK;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 10000, -1, -1) == UI_LIGHT_OK;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 10000, -1, 8000) == UI_LIGHT_OK;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 10000, -1, 100) == UI_LIGHT_OK;
     // Key held: the warm-up counts from the press; nothing past the thresholds is BAD.
-    assert ui_mic_light(UI_RUN_RUNNING, true, 13999, 3999, 7999) == UI_LIGHT_BUSY;
-    assert ui_mic_light(UI_RUN_RUNNING, true, 14000, 4000, 8000) == UI_LIGHT_BAD;
-    assert ui_mic_light(UI_RUN_RUNNING, true, 15000, 5000, -1) == UI_LIGHT_BAD;
-    assert ui_mic_light(UI_RUN_RUNNING, true, 15000, 5000, 1999) == UI_LIGHT_OK;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 13999, 3999, 7999) == UI_LIGHT_BUSY;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 14000, 4000, 8000) == UI_LIGHT_BAD;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 15000, 5000, -1) == UI_LIGHT_BAD;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 15000, 5000, 1999) == UI_LIGHT_OK;
     // Mode auto: the gate opened at the start.
-    assert ui_mic_light(UI_RUN_RUNNING, true, 3999, 3000, -1) == UI_LIGHT_BUSY;
-    assert ui_mic_light(UI_RUN_RUNNING, true, 9000, 8000, 2000) == UI_LIGHT_BAD;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 3999, 3000, -1) == UI_LIGHT_BUSY;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_CAPTURING, 9000, 8000, 2000) == UI_LIGHT_BAD;
+    // Live crash 2026-10-13: a device change stops the microphone; rebuilding is BUSY, a failed rebuild BAD,
+    // also with the key up.
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_RESTARTING, 10000, -1, -1) == UI_LIGHT_BUSY;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_RESTARTING, 10000, 9000, 100) == UI_LIGHT_BUSY;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_FAILED, 10000, -1, -1) == UI_LIGHT_BAD;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_FAILED, 10000, 9000, 100) == UI_LIGHT_BAD;
+    assert ui_mic_light(UI_RUN_RUNNING, true, UI_MIC_NONE, 10000, -1, -1) == UI_LIGHT_OK;
+    assert ui_mic_light(UI_RUN_IDLE, true, UI_MIC_FAILED, 0, -1, -1) == UI_LIGHT_UNKNOWN;
     // A microphone that did not start, and the run states, as audioLight.
-    assert ui_mic_light(UI_RUN_RUNNING, false, 9000, -1, -1) == UI_LIGHT_BAD;
-    assert ui_mic_light(UI_RUN_STARTING, true, 0, -1, -1) == UI_LIGHT_BUSY;
-    assert ui_mic_light(UI_RUN_IDLE, true, 0, -1, -1) == UI_LIGHT_UNKNOWN;
-    assert ui_mic_light(UI_RUN_STOPPING, true, 9000, 5000, -1) == UI_LIGHT_UNKNOWN;
+    assert ui_mic_light(UI_RUN_RUNNING, false, UI_MIC_CAPTURING, 9000, -1, -1) == UI_LIGHT_BAD;
+    assert ui_mic_light(UI_RUN_STARTING, true, UI_MIC_CAPTURING, 0, -1, -1) == UI_LIGHT_BUSY;
+    assert ui_mic_light(UI_RUN_IDLE, true, UI_MIC_CAPTURING, 0, -1, -1) == UI_LIGHT_UNKNOWN;
+    assert ui_mic_light(UI_RUN_STOPPING, true, UI_MIC_CAPTURING, 9000, 5000, -1) == UI_LIGHT_UNKNOWN;
     assert ui_mic_shows_level(UI_LIGHT_OK, 1999) == true;
     assert ui_mic_shows_level(UI_LIGHT_OK, 2000) == false;
     assert ui_mic_shows_level(UI_LIGHT_OK, -1) == false;
     assert ui_mic_shows_level(UI_LIGHT_BUSY, 10) == false;
-    // Every run state, both lane flags and the threshold edges of the three times.
+    // Every run state, both lane flags, every microphone status and the threshold edges of the three times.
     var ms: [8]i64 = [0; 8];
     ms[0] = -1;
     ms[1] = 0;
@@ -986,20 +1007,28 @@ test ui_mic_light_gate {
                 while (j < 8) {
                     var k: i32 = 0;
                     while (k < 8) {
-                        var light: i32 = ui_mic_light(run, active, ms[i], ms[j], ms[k]);
-                        var fresh: bool = ms[k] >= 0 and ms[k] < UI_AUDIO_FRESH_MS;
-                        if (run != UI_RUN_RUNNING or active == false) {
-                            if (light != ui_audio_light(run, active, ms[i], ms[k])) { bad = bad + 1; }
-                        } else if (ms[j] < 0) {
-                            if (light != UI_LIGHT_OK) { bad = bad + 1; }
-                        } else {
-                            var warm: i64 = ms[i];
-                            if (ms[j] < warm) { warm = ms[j]; }
-                            if (light != ui_audio_light(run, active, warm, ms[k])) { bad = bad + 1; }
-                            if (light == UI_LIGHT_BAD and (fresh or warm < UI_AUDIO_WARMUP_MS)) { bad = bad + 1; }
+                        var mic: i32 = -1;
+                        while (mic <= 5) {
+                            var light: i32 = ui_mic_light(run, active, mic, ms[i], ms[j], ms[k]);
+                            var fresh: bool = ms[k] >= 0 and ms[k] < UI_AUDIO_FRESH_MS;
+                            if (run != UI_RUN_RUNNING or active == false) {
+                                if (light != ui_audio_light(run, active, ms[i], ms[k])) { bad = bad + 1; }
+                            } else if (mic == UI_MIC_FAILED) {
+                                if (light != UI_LIGHT_BAD) { bad = bad + 1; }
+                            } else if (mic == UI_MIC_RESTARTING) {
+                                if (light != UI_LIGHT_BUSY) { bad = bad + 1; }
+                            } else if (ms[j] < 0) {
+                                if (light != UI_LIGHT_OK) { bad = bad + 1; }
+                            } else {
+                                var warm: i64 = ms[i];
+                                if (ms[j] < warm) { warm = ms[j]; }
+                                if (light != ui_audio_light(run, active, warm, ms[k])) { bad = bad + 1; }
+                                if (light == UI_LIGHT_BAD and (fresh or warm < UI_AUDIO_WARMUP_MS)) { bad = bad + 1; }
+                            }
+                            if (light == UI_LIGHT_BAD and run == UI_RUN_RUNNING and active and ms[j] < 0 and mic != UI_MIC_FAILED) { bad = bad + 1; }
+                            if (ui_mic_shows_level(light, ms[k]) != (light == UI_LIGHT_OK and fresh)) { bad = bad + 1; }
+                            mic = mic + 1;
                         }
-                        if (light == UI_LIGHT_BAD and run == UI_RUN_RUNNING and active and ms[j] < 0) { bad = bad + 1; }
-                        if (ui_mic_shows_level(light, ms[k]) != (light == UI_LIGHT_OK and fresh)) { bad = bad + 1; }
                         k = k + 1;
                     }
                     j = j + 1;
