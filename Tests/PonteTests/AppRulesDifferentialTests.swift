@@ -228,6 +228,44 @@ private typealias L = AppRulesLegacy
         log.finish(minimumCases: 69_000)
     }
 
+    /// micLight and micShowsLevel (2026-10-13): every run state, both lane flags, the threshold edges of the
+    /// three times (and the Int64 extremes), every light code; then seeded random times.
+    @Test func micLight() {
+        let log = DiffLog("micLight, micShowsLevel")
+        var r = DiffRandom(seed: 1013)
+        let msValues: [Int64] = [.min, -5, -1, 0, 1, 1_999, 2_000, 2_001, 3_999, 4_000, 4_001, 7_999, 8_000, 13_999, 14_000, 100_000, .max]
+        for state in Int32(-1)...5 {
+            for active in [false, true] {
+                for start in msValues {
+                    for listen in msValues {
+                        for buffer in msValues {
+                            log.check(F.micLight(runState: state, laneActive: active, msSinceStart: start, msSinceListen: listen, msSinceBuffer: buffer),
+                                      L.micLight(runState: state, laneActive: active, msSinceStart: start, msSinceListen: listen, msSinceBuffer: buffer),
+                                      describe(state, active, start, listen, buffer))
+                        }
+                    }
+                }
+            }
+        }
+        for light in Int32(-2)...7 {
+            for buffer in msValues {
+                log.check(F.micShowsLevel(light: light, msSinceBuffer: buffer), L.micShowsLevel(light: light, msSinceBuffer: buffer), describe(light, buffer))
+            }
+        }
+        for _ in 0..<50_000 {
+            let state = r.int32(-1...5)
+            let active = r.bool()
+            let start = r.int64(-1_000...200_000)
+            let listen = r.int64(-1_000...200_000)
+            let buffer = r.int64(-1_000...200_000)
+            let light = F.micLight(runState: state, laneActive: active, msSinceStart: start, msSinceListen: listen, msSinceBuffer: buffer)
+            log.check(light, L.micLight(runState: state, laneActive: active, msSinceStart: start, msSinceListen: listen, msSinceBuffer: buffer),
+                      describe(state, active, start, listen, buffer))
+            log.check(F.micShowsLevel(light: light, msSinceBuffer: buffer), L.micShowsLevel(light: light, msSinceBuffer: buffer), describe(light, buffer))
+        }
+        log.finish(minimumCases: 168_000)
+    }
+
     @Test func pushToTalkWizardText() {
         let log = DiffLog("pttKeyDown, pttScope, wizard, font size, overlay")
         var r = DiffRandom(seed: 33)

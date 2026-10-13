@@ -387,6 +387,20 @@ enum AppRulesLegacy {
         return base
     }
 
+    /// «Микрофон» light (2026-10-13: was audioLight, which turned BAD in push-to-talk with the key up).
+    /// The outgoing lane asks for audio only while its capture gate is open; with it closed (key up,
+    /// «Пауза голоса в звонок») a started microphone is OK. With it open: audioLight, the warm-up from
+    /// the later of «Старт» and the gate opening. `msSinceListen` < 0 = the gate is closed.
+    static func micLight(runState: Int32, laneActive: Bool, msSinceStart: Int64, msSinceListen: Int64,
+                         msSinceBuffer: Int64) -> Int32 {
+        guard runState == RUN_RUNNING, laneActive else {
+            return audioLight(runState: runState, laneActive: laneActive, msSinceStart: msSinceStart, msSinceBuffer: msSinceBuffer)
+        }
+        guard msSinceListen >= 0 else { return LIGHT_OK }
+        return audioLight(runState: runState, laneActive: laneActive, msSinceStart: min(msSinceStart, msSinceListen),
+                          msSinceBuffer: msSinceBuffer)
+    }
+
     /// Setup wizard «Запись звука программ»: listen to all audio except Ponte for CAPTURE_CHECK_MS.
     static let CAPTURE_CHECK_MS: Int64 = 3_000
 
@@ -735,6 +749,11 @@ extension AppRulesLegacy {
     }
     /// pollAudioStats `sourceCode == LIGHT_OK ? level : 0`; StatusChip `check == .ok`.
     static func showsLevel(light: Int32) -> Bool { light == LIGHT_OK }
+    /// pollAudioStats, microphone (2026-10-13): the level only next to a green light and while the
+    /// last buffer is fresh (a closed gate keeps the light green without audio).
+    static func micShowsLevel(light: Int32, msSinceBuffer: Int64) -> Bool {
+        showsLevel(light: light) && msSinceBuffer >= 0 && msSinceBuffer < AUDIO_FRESH_MS
+    }
     /// pollAudioStats: 0 nothing, 1 only remember, 2 show the warning, 3 take the silence banner down
     /// (2026-10-13: the banner follows the source light; it stayed after real audio arrived).
     static func silenceBanner(sourceLight: Int32, alreadyWarned: Bool, errorShown: Bool, silenceShown: Bool) -> Int32 {

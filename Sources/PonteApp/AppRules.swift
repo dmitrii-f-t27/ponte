@@ -269,6 +269,14 @@ enum AppRules {
         ui_source_light(runState, laneActive, tapStatus, msSinceStart, msSinceBuffer, msSinceSignal)
     }
 
+    /// «Микрофон» light: OK while the capture gate is closed (push-to-talk key up, «Пауза голоса в звонок»);
+    /// with it open, audioLight with the warm-up from the later of Старт and the gate opening.
+    /// `msSinceListen` < 0 = the gate is closed.
+    static func micLight(runState: Int32, laneActive: Bool, msSinceStart: Int64, msSinceListen: Int64,
+                         msSinceBuffer: Int64) -> Int32 {
+        ui_mic_light(runState, laneActive, msSinceStart, msSinceListen, msSinceBuffer)
+    }
+
     /// Setup wizard «Запись звука программ»: listen to all audio except Ponte for CAPTURE_CHECK_MS.
     static let CAPTURE_CHECK_MS = Int64(UI_CAPTURE_CHECK_MS)
 
@@ -529,6 +537,8 @@ enum AppRules {
     }
 
     static func showsLevel(light: Int32) -> Bool { ui_shows_level(light) }
+    /// The microphone meter: a green light and a fresh buffer.
+    static func micShowsLevel(light: Int32, msSinceBuffer: Int64) -> Bool { ui_mic_shows_level(light, msSinceBuffer) }
 
     static let SB_NONE: Int32 = UI_SB_NONE
     static let SB_MARK: Int32 = UI_SB_MARK

@@ -96,6 +96,9 @@ struct LaneAudioStats: Sendable {
     var lastSignalAt: Date?
     /// RMS of the last buffer (AudioRules.rms).
     var level: Float = 0
+    /// When the capture gate last opened (a transcriber session began); nil while it is closed:
+    /// push-to-talk key up, «Пауза голоса в звонок», not running.
+    var listeningSince: Date?
 }
 
 func millis(_ seconds: TimeInterval) -> Int64 { AppRules.millis(seconds) }
@@ -564,7 +567,14 @@ final class AudioIntake: @unchecked Sendable {
 
     init(clock: @escaping @Sendable () -> Date) { self.clock = clock }
 
-    func setSegment(_ segment: Segment?) { lock.withLock { self.segment = segment } }
+    /// Set when the gate opens (AppRules.gateStep → GACT_OPEN_SEGMENT), cleared when it closes.
+    func setSegment(_ segment: Segment?) {
+        let now = clock()
+        lock.withLock {
+            self.segment = segment
+            current.listeningSince = segment == nil ? nil : now
+        }
+    }
     func setEchoGuard(_ echoGuard: EchoGuard?) { lock.withLock { self.echoGuard = echoGuard } }
 
     func stats() -> LaneAudioStats { lock.withLock { current } }

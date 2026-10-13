@@ -217,6 +217,23 @@ pub fn ui_source_light(run_state: i32, lane_active: bool, tap_status: i32, ms_si
     return base;
 }
 
+; micLight: the microphone light. The outgoing lane asks for audio only while its capture gate is open
+; (mode auto, or the push-to-talk key held, and the voice pause off). ms_since_listen: time since the gate
+; last opened; < 0 while it is closed. With the gate closed missing buffers are no fault: the lane is
+; active only if its microphone started, so the light is OK. With the gate open it is audioLight, the
+; warm-up counted from the later of the start and the gate opening; a microphone that delivers nothing
+; past the thresholds while the gate is open is BAD. Not running, or no lane: audioLight.
+; (Live test 2026-10-13: push-to-talk with the key up turned the light BAD within seconds.)
+pub fn ui_mic_light(run_state: i32, lane_active: bool, ms_since_start: i64, ms_since_listen: i64, ms_since_buffer: i64) -> i32 {
+    if (run_state != UI_RUN_RUNNING or lane_active == false) {
+        return ui_audio_light(run_state, lane_active, ms_since_start, ms_since_buffer);
+    }
+    if (ms_since_listen < 0) { return UI_LIGHT_OK; }
+    var warm: i64 = ms_since_start;
+    if (ms_since_listen < warm) { warm = ms_since_listen; }
+    return ui_audio_light(run_state, lane_active, warm, ms_since_buffer);
+}
+
 ; captureCheckLight: the wizard check. A failed tap or no audio at all is BAD; only exact zeros is WARN
 ; (nothing played, or the permission is missing); any non-zero sample is OK.
 pub fn ui_capture_check_light(tap_status: i32, frames_seen: bool, signal_seen: bool) -> i32 {
@@ -422,6 +439,13 @@ pub fn ui_models_light_all(run_state: i32, ever_started: bool, lanes_started: i3
 ; A level meter shows only next to a green light.
 pub fn ui_shows_level(light: i32) -> bool {
     return light == UI_LIGHT_OK;
+}
+
+; micShowsLevel: the microphone meter shows the last buffer's level only next to a green light and while
+; that buffer is fresh. With the gate closed the light is green without audio; the meter then stays empty
+; instead of holding the level of the last buffer.
+pub fn ui_mic_shows_level(light: i32, ms_since_buffer: i64) -> bool {
+    return ui_shows_level(light) and ms_since_buffer >= 0 and ms_since_buffer < UI_AUDIO_FRESH_MS;
 }
 
 ; The silence warning follows the source light. While the light is WARN the warning is given once per call;
@@ -915,4 +939,76 @@ test ui_moved_rules {
     assert ui_quit_waits(UI_RUN_RUNNING) == true;
     assert ui_quit_waits(UI_RUN_STOPPING) == false;
     assert UI_DEFAULT_TRANSLATOR == UI_TR_APPLE;
+}
+
+test ui_mic_light_gate {
+    // Live test 2026-10-13: push-to-talk, key up, 10 s without a buffer. The microphone light was BAD.
+    assert ui_audio_light(UI_RUN_RUNNING, true, 10000, -1) == UI_LIGHT_BAD;
+    assert ui_mic_light(UI_RUN_RUNNING, true, 10000, -1, -1) == UI_LIGHT_OK;
+    assert ui_mic_light(UI_RUN_RUNNING, true, 10000, -1, 8000) == UI_LIGHT_OK;
+    assert ui_mic_light(UI_RUN_RUNNING, true, 10000, -1, 100) == UI_LIGHT_OK;
+    // Key held: the warm-up counts from the press; nothing past the thresholds is BAD.
+    assert ui_mic_light(UI_RUN_RUNNING, true, 13999, 3999, 7999) == UI_LIGHT_BUSY;
+    assert ui_mic_light(UI_RUN_RUNNING, true, 14000, 4000, 8000) == UI_LIGHT_BAD;
+    assert ui_mic_light(UI_RUN_RUNNING, true, 15000, 5000, -1) == UI_LIGHT_BAD;
+    assert ui_mic_light(UI_RUN_RUNNING, true, 15000, 5000, 1999) == UI_LIGHT_OK;
+    // Mode auto: the gate opened at the start.
+    assert ui_mic_light(UI_RUN_RUNNING, true, 3999, 3000, -1) == UI_LIGHT_BUSY;
+    assert ui_mic_light(UI_RUN_RUNNING, true, 9000, 8000, 2000) == UI_LIGHT_BAD;
+    // A microphone that did not start, and the run states, as audioLight.
+    assert ui_mic_light(UI_RUN_RUNNING, false, 9000, -1, -1) == UI_LIGHT_BAD;
+    assert ui_mic_light(UI_RUN_STARTING, true, 0, -1, -1) == UI_LIGHT_BUSY;
+    assert ui_mic_light(UI_RUN_IDLE, true, 0, -1, -1) == UI_LIGHT_UNKNOWN;
+    assert ui_mic_light(UI_RUN_STOPPING, true, 9000, 5000, -1) == UI_LIGHT_UNKNOWN;
+    assert ui_mic_shows_level(UI_LIGHT_OK, 1999) == true;
+    assert ui_mic_shows_level(UI_LIGHT_OK, 2000) == false;
+    assert ui_mic_shows_level(UI_LIGHT_OK, -1) == false;
+    assert ui_mic_shows_level(UI_LIGHT_BUSY, 10) == false;
+    // Every run state, both lane flags and the threshold edges of the three times.
+    var ms: [8]i64 = [0; 8];
+    ms[0] = -1;
+    ms[1] = 0;
+    ms[2] = 1999;
+    ms[3] = 2000;
+    ms[4] = 3999;
+    ms[5] = 4000;
+    ms[6] = 10000;
+    ms[7] = 100000;
+    var bad: u32 = 0;
+    var run: i32 = -1;
+    while (run <= 4) {
+        var a: i32 = 0;
+        while (a < 2) {
+            var active: bool = a == 1;
+            var i: i32 = 0;
+            while (i < 8) {
+                var j: i32 = 0;
+                while (j < 8) {
+                    var k: i32 = 0;
+                    while (k < 8) {
+                        var light: i32 = ui_mic_light(run, active, ms[i], ms[j], ms[k]);
+                        var fresh: bool = ms[k] >= 0 and ms[k] < UI_AUDIO_FRESH_MS;
+                        if (run != UI_RUN_RUNNING or active == false) {
+                            if (light != ui_audio_light(run, active, ms[i], ms[k])) { bad = bad + 1; }
+                        } else if (ms[j] < 0) {
+                            if (light != UI_LIGHT_OK) { bad = bad + 1; }
+                        } else {
+                            var warm: i64 = ms[i];
+                            if (ms[j] < warm) { warm = ms[j]; }
+                            if (light != ui_audio_light(run, active, warm, ms[k])) { bad = bad + 1; }
+                            if (light == UI_LIGHT_BAD and (fresh or warm < UI_AUDIO_WARMUP_MS)) { bad = bad + 1; }
+                        }
+                        if (light == UI_LIGHT_BAD and run == UI_RUN_RUNNING and active and ms[j] < 0) { bad = bad + 1; }
+                        if (ui_mic_shows_level(light, ms[k]) != (light == UI_LIGHT_OK and fresh)) { bad = bad + 1; }
+                        k = k + 1;
+                    }
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+            a = a + 1;
+        }
+        run = run + 1;
+    }
+    assert bad == 0;
 }

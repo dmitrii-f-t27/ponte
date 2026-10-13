@@ -373,6 +373,77 @@ func appTestWait(_ what: String = "", timeout: Duration = .seconds(2),
     await rig.lane.stop()
 }
 
+/// The «Микрофон» light the window shows for this lane (AppModel.pollAudioStats), the call started at `startedAt`.
+@MainActor private func appTestMic(_ rig: AppTestRig, startedAt: Date) -> (light: Int32, level: Float) {
+    AppModel.micStatus(runState: R.RUN_RUNNING, stats: rig.lane.audioStats, callStartedAt: startedAt, now: rig.clock.now)
+}
+
+/// Live test 2026-10-13: push-to-talk, key up, the light «Микрофон» turned red within seconds although
+/// the microphone worked. Key up is no fault; a held key with no audio past the thresholds still is.
+@MainActor @Test func micLightPushToTalkKeyUpIsNotAnError() async throws {
+    let rig = AppTestRig(direction: .outgoing, mode: .pushToTalk)
+    let startedAt = rig.clock.now
+    try await rig.lane.start()
+    #expect(rig.lane.audioStats.listeningSince == nil)
+
+    rig.clock.advance(10)                          // key up, 10 s, no buffer at all
+    #expect(R.audioLight(runState: R.RUN_RUNNING, laneActive: true, msSinceStart: 10_000, msSinceBuffer: -1) == R.LIGHT_BAD)
+    #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_OK)
+    #expect(appTestMic(rig, startedAt: startedAt).level == 0)
+
+    rig.source.push(seconds: 0.1)                  // a buffer with the key up: green with its level
+    #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_OK)
+    #expect(appTestMic(rig, startedAt: startedAt).level > 0)
+    rig.clock.advance(5)                           // stale: still green, the meter empties
+    #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_OK)
+    #expect(appTestMic(rig, startedAt: startedAt).level == 0)
+
+    rig.lane.setKeyHeld(true)                      // key held, nothing comes
+    try await appTestWait("gate open") { rig.lane.audioStats.listeningSince != nil }
+    #expect(rig.lane.audioStats.listeningSince == rig.clock.now)
+    rig.clock.advance(1)
+    #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_BUSY)   // warm-up from the press
+    rig.clock.advance(4)
+    #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_BAD)
+
+    rig.source.push(seconds: 0.1)                  // audio while held: green
+    #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_OK)
+    #expect(appTestMic(rig, startedAt: startedAt).level > 0)
+
+    rig.lane.setKeyHeld(false)
+    try await appTestWait("gate closed") { rig.lane.audioStats.listeningSince == nil }
+    rig.clock.advance(10)
+    #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_OK)
+
+    // A microphone that did not start (no outgoing lane) is still BAD.
+    #expect(AppModel.micStatus(runState: R.RUN_RUNNING, stats: nil, callStartedAt: startedAt, now: rig.clock.now).light == R.LIGHT_BAD)
+    await rig.lane.stop()
+}
+
+/// «Пауза голоса в звонок» closes the gate in «Авто» too: no error while paused; after it, the usual thresholds.
+@MainActor @Test func micLightVoicePauseIsNotAnError() async throws {
+    let rig = AppTestRig(direction: .outgoing)
+    let startedAt = rig.clock.now
+    try await rig.lane.start()
+    try await appTestWait("listening") { rig.lane.audioStats.listeningSince != nil }
+    rig.clock.advance(5)
+    #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_BAD)    // «Авто», no audio: unchanged
+
+    rig.lane.isPaused = true
+    try await appTestWait("paused") { rig.lane.audioStats.listeningSince == nil }
+    rig.clock.advance(10)
+    #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_OK)
+
+    rig.lane.isPaused = false
+    try await appTestWait("listening again") { rig.lane.audioStats.listeningSince != nil }
+    rig.clock.advance(1)
+    #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_BUSY)
+    rig.clock.advance(4)
+    #expect(appTestMic(rig, startedAt: startedAt).light == R.LIGHT_BAD)
+    await rig.lane.stop()
+    #expect(rig.lane.audioStats.listeningSince == nil)
+}
+
 @MainActor @Test func lanesShareConversationContext() async throws {
     let memory = ConversationMemory()
     let incoming = AppTestRig(direction: .incoming, memory: memory)

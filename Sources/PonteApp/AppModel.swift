@@ -479,11 +479,10 @@ final class AppModel {
         sourceCheck = Check(light: sourceCode)
         sourceLevel = AppRules.showsLevel(light: sourceCode) ? incoming?.level ?? 0 : 0
 
-        let outgoing = outgoingLane?.audioStats
-        let micCode = AppRules.audioLight(runState: runState.code, laneActive: outgoingLane != nil,
-                                          msSinceStart: sinceStart, msSinceBuffer: since(outgoing?.lastBufferAt))
-        micCheck = Check(light: micCode)
-        micLevel = AppRules.showsLevel(light: micCode) ? outgoing?.level ?? 0 : 0
+        let mic = AppModel.micStatus(runState: runState.code, stats: outgoingLane?.audioStats,
+                                     callStartedAt: callStartedAt, now: now)
+        micCheck = Check(light: mic.light)
+        micLevel = mic.level
 
         if isRunning {
             translatorsFailed = Int32([incomingLane, outgoingLane].compactMap { $0 }.filter { $0.translatorError != nil }.count)
@@ -491,6 +490,18 @@ final class AppModel {
         // The silence banner follows the source light: it goes as soon as a non-zero sample turns the light OK.
         let next = silenceWarning.banner(after: banner, sourceLight: sourceCode, sourceName: activeSourceName)
         if next != banner { banner = next }
+    }
+
+    /// «Микрофон» light and meter level from the outgoing lane's stats (nil: no outgoing lane).
+    nonisolated static func micStatus(runState: Int32, stats: LaneAudioStats?, callStartedAt: Date?,
+                                      now: Date) -> (light: Int32, level: Float) {
+        func since(_ date: Date?) -> Int64 { date.map { millis(now.timeIntervalSince($0)) } ?? -1 }
+        let msSinceBuffer = since(stats?.lastBufferAt)
+        let light = AppRules.micLight(runState: runState, laneActive: stats != nil,
+                                      msSinceStart: callStartedAt.map { millis(now.timeIntervalSince($0)) } ?? 0,
+                                      msSinceListen: since(stats?.listeningSince), msSinceBuffer: msSinceBuffer)
+        let level = AppRules.micShowsLevel(light: light, msSinceBuffer: msSinceBuffer) ? stats?.level ?? 0 : 0
+        return (light, level)
     }
 
     // MARK: Process tap status
