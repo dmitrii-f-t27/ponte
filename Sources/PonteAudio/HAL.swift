@@ -131,7 +131,12 @@ enum HAL {
     // MARK: Processes
 
     static func processObjectIDs() -> [AudioObjectID] {
-        (try? array(system, address(kAudioHardwarePropertyProcessObjectList), of: AudioObjectID.self)) ?? []
+        listedProcessObjectIDs() ?? []
+    }
+
+    /// The HAL client processes; nil when the list cannot be read.
+    static func listedProcessObjectIDs() -> [AudioObjectID]? {
+        try? array(system, address(kAudioHardwarePropertyProcessObjectList), of: AudioObjectID.self)
     }
 
     static func processObject(for pid: pid_t) -> AudioObjectID? {
@@ -151,6 +156,22 @@ enum HAL {
 
     static func isRunningOutput(_ object: AudioObjectID) -> Bool {
         ((try? get(object, address(kAudioProcessPropertyIsRunningOutput), default: UInt32(0))) ?? 0) != 0
+    }
+
+    static func isRunningInput(_ object: AudioObjectID) -> Bool {
+        ((try? get(object, address(kAudioProcessPropertyIsRunningInput), default: UInt32(0))) ?? 0) != 0
+    }
+
+    /// Devices a client process uses for input (kAudioProcessPropertyDevices, input scope). The global scope
+    /// lists nothing on macOS 26/27 (checked 2026-10-13); the input and output scopes are filled.
+    static func inputDevices(ofProcess object: AudioObjectID) -> [AudioObjectID] {
+        (try? array(object, address(kAudioProcessPropertyDevices, kAudioObjectPropertyScopeInput), of: AudioObjectID.self)) ?? []
+    }
+
+    /// kAudioDevicePropertyDeviceIsRunningSomewhere in one direction: some process does IO on the device.
+    static func isRunningSomewhere(_ device: AudioObjectID, input: Bool) -> Bool {
+        let scope = input ? kAudioObjectPropertyScopeInput : kAudioObjectPropertyScopeOutput
+        return ((try? get(device, address(kAudioDevicePropertyDeviceIsRunningSomewhere, scope), default: UInt32(0))) ?? 0) != 0
     }
 
     // MARK: Errors
