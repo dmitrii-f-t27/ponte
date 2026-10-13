@@ -7,6 +7,7 @@
 #include "device_rules.h"
 #include "lane_rules.h"
 #include "segment_rules.h"
+#include "text_rules.h"
 #include "transcript_rules.h"
 #include "ui_rules.h"
 #include "voice_rules.h"
