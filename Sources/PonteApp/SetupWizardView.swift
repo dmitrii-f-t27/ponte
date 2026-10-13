@@ -383,6 +383,11 @@ struct SetupWizardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             VStack(alignment: .leading, spacing: 10) {
+                AppInstruction(name: "Google Meet в BrowserOS", bundleID: "com.browseros.BrowserClaw",
+                               text: "В звонке Meet: ⋮ → Настройки → Аудио: Микрофон — «BlackHole 2ch», Динамики — ваши наушники. "
+                                   + "В Ponte выберите источник «BrowserOS (Meet)». BrowserOS нужен доступ к микрофону в macOS "
+                                   + "(Системные настройки → Конфиденциальность и безопасность → Микрофон), иначе Meet не увидит BlackHole. "
+                                   + "Meet в Chrome или другом браузере на Chromium настраивается так же.")
                 AppInstruction(name: "Zoom", bundleID: "us.zoom.xos",
                                text: "Настройки → Звук: Динамик — наушники, Микрофон — BlackHole 2ch. Снимите «Автоматически регулировать громкость микрофона».")
                 AppInstruction(name: "Google Meet", bundleID: "com.google.Chrome",
