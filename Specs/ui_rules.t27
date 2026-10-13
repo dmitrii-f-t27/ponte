@@ -672,6 +672,135 @@ pub fn ui_quit_waits(run_state: i32) -> bool {
     return run_state == UI_RUN_RUNNING;
 }
 
+; --- The checklist "before the call" (owner 2026-10-13) ----------------------------------------------------------
+; A sheet with live marks that opens at launch (by default) and from the toolbar and the call menu. Its rows, in
+; the order shown: who listens to BlackHole; the call app's microphone is on (cannot be detected: a reminder);
+; headphones; Ponte's microphone; browser extensions that replace the microphone (a reminder); how to talk.
+pub const UI_CKI_LISTENER : i32 = 0;
+pub const UI_CKI_CALL_MIC : i32 = 1;
+pub const UI_CKI_HEADPHONES : i32 = 2;
+pub const UI_CKI_MY_MIC : i32 = 3;
+pub const UI_CKI_EXTENSIONS : i32 = 4;
+pub const UI_CKI_HOW_TO_TALK : i32 = 5;
+pub const UI_CKI_COUNT : i32 = 6;
+; Marks: unknown, done (green), check it (amber), broken (red), a reminder.
+pub const UI_CK_UNKNOWN : i32 = 0;
+pub const UI_CK_OK : i32 = 1;
+pub const UI_CK_WARN : i32 = 2;
+pub const UI_CK_BAD : i32 = 3;
+pub const UI_CK_INFO : i32 = 4;
+; Who listens to BlackHole (the same codes as DV_LISTEN_* in device_rules.t27).
+pub const UI_LISTEN_UNKNOWN : i32 = 0;
+pub const UI_LISTEN_OK : i32 = 1;
+pub const UI_LISTEN_NOBODY : i32 = 2;
+pub const UI_LISTEN_REAL_MIC : i32 = 3;
+pub const UI_LISTEN_BOTH : i32 = 4;
+pub const UI_LISTEN_NO_BLACKHOLE : i32 = 5;
+; Ponte's microphone: the one chosen in the settings, the automatic pick (dv_pick_auto_mic_index), or none found
+; (the system's default input).
+pub const UI_MICSRC_SAVED : i32 = 0;
+pub const UI_MICSRC_AUTO : i32 = 1;
+pub const UI_MICSRC_SYSTEM : i32 = 2;
+; Why the sheet would open: at launch, or asked for (toolbar, menu, banner).
+pub const UI_CKO_LAUNCH : i32 = 0;
+pub const UI_CKO_ASKED : i32 = 1;
+; "Show at launch" is on until the owner turns it off.
+pub const UI_DEFAULT_CHECKLIST_ON_LAUNCH : i32 = 1;
+; The sheet and a running call re-read who listens to BlackHole every 2nd poll (1 s).
+pub const UI_LISTENER_EVERY_TICKS : i64 = 2;
+; The red banner during a call waits this long after the call app stopped listening (switching the microphone in
+; Meet takes a moment).
+pub const UI_LISTENER_GRACE_MS : i64 = 3000;
+; The runtime listener banner: nothing, show (or keep) it, take it down.
+pub const UI_LB_NONE : i32 = 0;
+pub const UI_LB_SHOW : i32 = 1;
+pub const UI_LB_CLEAR : i32 = 2;
+; The one-time move of a stored microphone to "automatic": nothing, clear the setting and remember, only remember.
+pub const UI_MIGRATE_NONE : i32 = 0;
+pub const UI_MIGRATE_CLEAR : i32 = 1;
+pub const UI_MIGRATE_MARK : i32 = 2;
+
+; listenerMark: OK when a program other than Ponte reads BlackHole; amber when the call app reads BlackHole and a
+; real microphone; red when nobody listens, the call app reads a real microphone, or BlackHole is missing.
+pub fn ui_listener_mark(listen_status: i32) -> i32 {
+    if (listen_status == UI_LISTEN_OK) { return UI_CK_OK; }
+    if (listen_status == UI_LISTEN_BOTH) { return UI_CK_WARN; }
+    if (listen_status == UI_LISTEN_NOBODY or listen_status == UI_LISTEN_REAL_MIC or listen_status == UI_LISTEN_NO_BLACKHOLE) {
+        return UI_CK_BAD;
+    }
+    return UI_CK_UNKNOWN;
+}
+
+; checklistMark: the mark of one row. The call app's microphone, the extensions and how to talk are reminders;
+; headphones-like output is done, anything else (speakers, none) amber; Ponte's microphone is done when chosen or
+; picked, amber when only the system default is left.
+pub fn ui_checklist_mark(item: i32, listen_status: i32, headphones_like: bool, mic_source: i32) -> i32 {
+    if (item == UI_CKI_LISTENER) { return ui_listener_mark(listen_status); }
+    if (item == UI_CKI_CALL_MIC or item == UI_CKI_EXTENSIONS or item == UI_CKI_HOW_TO_TALK) { return UI_CK_INFO; }
+    if (item == UI_CKI_HEADPHONES) {
+        if (headphones_like) { return UI_CK_OK; }
+        return UI_CK_WARN;
+    }
+    if (item == UI_CKI_MY_MIC) {
+        if (mic_source == UI_MICSRC_SAVED or mic_source == UI_MICSRC_AUTO) { return UI_CK_OK; }
+        return UI_CK_WARN;
+    }
+    return UI_CK_UNKNOWN;
+}
+
+; micSource: a setting naming a connected device wins (ui_device_choice); else the automatic pick; else none.
+pub fn ui_mic_source(has_setting: bool, found: bool, has_auto: bool) -> i32 {
+    if (ui_device_choice(has_setting, found) == UI_DEV_SAVED) { return UI_MICSRC_SAVED; }
+    if (has_auto) { return UI_MICSRC_AUTO; }
+    return UI_MICSRC_SYSTEM;
+}
+
+; checklistOpens: never over the setup wizard; asked for, always; at launch when "show at launch" is on, outside
+; test mode and without autostart.
+pub fn ui_checklist_opens(reason: i32, show_on_launch: bool, wizard_shown: bool, test_mode: bool, autostart: bool) -> bool {
+    if (wizard_shown) { return false; }
+    if (reason == UI_CKO_ASKED) { return true; }
+    if (reason == UI_CKO_LAUNCH) { return show_on_launch and test_mode == false and autostart == false; }
+    return false;
+}
+
+; "Start" in the sheet starts translation only when Ponte is idle.
+pub fn ui_checklist_can_start(run_state: i32) -> bool {
+    return run_state == UI_RUN_IDLE;
+}
+
+; pollReadsListeners: while the sheet is open or a call runs, every UI_LISTENER_EVERY_TICKS-th poll.
+pub fn ui_poll_reads_listeners(tick: i64, sheet_open: bool, run_state: i32) -> bool {
+    return (sheet_open or run_state == UI_RUN_RUNNING) and tick % UI_LISTENER_EVERY_TICKS == 0;
+}
+
+; A red listener mark starts (or continues) the streak the banner waits on.
+pub fn ui_listener_streak(mark: i32) -> bool {
+    return mark == UI_CK_BAD;
+}
+
+; listenerBanner: during a call, the listener row's red text as a red banner, the most important runtime
+; warning. Shown once the row has been red for UI_LISTENER_GRACE_MS (ms_bad < 0: not red); it replaces other
+; banners. Closed by the owner, it stays down until the row stops being red. Taken down when the call stops or the
+; row is not red. shown: the banner on screen is this one.
+pub fn ui_listener_banner(run_state: i32, mark: i32, ms_bad: i64, shown: bool, dismissed: bool) -> i32 {
+    if (run_state != UI_RUN_RUNNING or ui_listener_streak(mark) == false) {
+        if (shown) { return UI_LB_CLEAR; }
+        return UI_LB_NONE;
+    }
+    if (dismissed) { return UI_LB_NONE; }
+    if (ms_bad < UI_LISTENER_GRACE_MS) { return UI_LB_NONE; }
+    return UI_LB_SHOW;
+}
+
+; micMigration: before 2026-10-13 the microphone setting had no "automatic" (the stored built-in microphone was
+; set by the lead, not the owner). Once: a stored microphone is cleared to automatic; either way it is remembered.
+pub fn ui_mic_migration(migrated: bool, has_setting: bool) -> i32 {
+    if (migrated) { return UI_MIGRATE_NONE; }
+    if (has_setting) { return UI_MIGRATE_CLEAR; }
+    return UI_MIGRATE_MARK;
+}
+
 test ui_run_and_buttons {
     // rulesRunStateBannersAndButtons
     assert ui_toggle_run(UI_RUN_IDLE) == UI_TOGGLE_START;
@@ -1040,4 +1169,110 @@ test ui_mic_light_gate {
         run = run + 1;
     }
     assert bad == 0;
+}
+
+test ui_checklist {
+    // Rows: the reminders never change; the listener row follows the listener status.
+    assert ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_OK, false, UI_MICSRC_SYSTEM) == UI_CK_OK;
+    assert ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_NOBODY, true, UI_MICSRC_AUTO) == UI_CK_BAD;
+    assert ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_REAL_MIC, true, UI_MICSRC_AUTO) == UI_CK_BAD;
+    assert ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_NO_BLACKHOLE, true, UI_MICSRC_AUTO) == UI_CK_BAD;
+    assert ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_BOTH, true, UI_MICSRC_AUTO) == UI_CK_WARN;
+    assert ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_UNKNOWN, true, UI_MICSRC_AUTO) == UI_CK_UNKNOWN;
+    assert ui_checklist_mark(UI_CKI_CALL_MIC, UI_LISTEN_NOBODY, false, UI_MICSRC_SYSTEM) == UI_CK_INFO;
+    assert ui_checklist_mark(UI_CKI_EXTENSIONS, UI_LISTEN_OK, true, UI_MICSRC_AUTO) == UI_CK_INFO;
+    assert ui_checklist_mark(UI_CKI_HOW_TO_TALK, UI_LISTEN_OK, true, UI_MICSRC_AUTO) == UI_CK_INFO;
+    assert ui_checklist_mark(UI_CKI_HEADPHONES, UI_LISTEN_OK, true, UI_MICSRC_AUTO) == UI_CK_OK;
+    assert ui_checklist_mark(UI_CKI_HEADPHONES, UI_LISTEN_OK, false, UI_MICSRC_AUTO) == UI_CK_WARN;
+    assert ui_checklist_mark(UI_CKI_MY_MIC, UI_LISTEN_OK, false, UI_MICSRC_SAVED) == UI_CK_OK;
+    assert ui_checklist_mark(UI_CKI_MY_MIC, UI_LISTEN_OK, false, UI_MICSRC_AUTO) == UI_CK_OK;
+    assert ui_checklist_mark(UI_CKI_MY_MIC, UI_LISTEN_OK, false, UI_MICSRC_SYSTEM) == UI_CK_WARN;
+    assert ui_checklist_mark(UI_CKI_COUNT, UI_LISTEN_OK, true, UI_MICSRC_AUTO) == UI_CK_UNKNOWN;
+    // Every row, status, flag and source: a mark is one of the five, and only the listener row is ever red.
+    var item: i32 = -1;
+    var bad: u32 = 0;
+    while (item <= UI_CKI_COUNT) {
+        var st: i32 = -1;
+        while (st <= 6) {
+            var h: i32 = 0;
+            while (h < 2) {
+                var src: i32 = -1;
+                while (src <= 3) {
+                    var m: i32 = ui_checklist_mark(item, st, h == 1, src);
+                    if (m < UI_CK_UNKNOWN or m > UI_CK_INFO) { bad = bad + 1; }
+                    if (m == UI_CK_BAD and item != UI_CKI_LISTENER) { bad = bad + 1; }
+                    if (m == UI_CK_INFO and (item == UI_CKI_LISTENER or item == UI_CKI_HEADPHONES or item == UI_CKI_MY_MIC)) { bad = bad + 1; }
+                    src = src + 1;
+                }
+                h = h + 1;
+            }
+            st = st + 1;
+        }
+        item = item + 1;
+    }
+    assert bad == 0;
+    assert ui_mic_source(true, true, true) == UI_MICSRC_SAVED;
+    assert ui_mic_source(true, false, true) == UI_MICSRC_AUTO;
+    assert ui_mic_source(false, true, true) == UI_MICSRC_AUTO;
+    assert ui_mic_source(true, false, false) == UI_MICSRC_SYSTEM;
+    assert ui_mic_source(false, false, false) == UI_MICSRC_SYSTEM;
+    // Opening: never over the wizard; at launch unless turned off, in test mode or with autostart.
+    assert ui_checklist_opens(UI_CKO_LAUNCH, true, false, false, false) == true;
+    assert ui_checklist_opens(UI_CKO_LAUNCH, false, false, false, false) == false;
+    assert ui_checklist_opens(UI_CKO_LAUNCH, true, true, false, false) == false;
+    assert ui_checklist_opens(UI_CKO_LAUNCH, true, false, true, false) == false;
+    assert ui_checklist_opens(UI_CKO_LAUNCH, true, false, false, true) == false;
+    assert ui_checklist_opens(UI_CKO_ASKED, false, false, true, true) == true;
+    assert ui_checklist_opens(UI_CKO_ASKED, true, true, false, false) == false;
+    assert ui_checklist_opens(7, true, false, false, false) == false;
+    assert UI_DEFAULT_CHECKLIST_ON_LAUNCH == 1;
+    assert ui_checklist_can_start(UI_RUN_IDLE) == true;
+    assert ui_checklist_can_start(UI_RUN_RUNNING) == false;
+    assert ui_checklist_can_start(UI_RUN_STARTING) == false;
+    assert ui_poll_reads_listeners(0, true, UI_RUN_IDLE) == true;
+    assert ui_poll_reads_listeners(1, true, UI_RUN_IDLE) == false;
+    assert ui_poll_reads_listeners(2, false, UI_RUN_RUNNING) == true;
+    assert ui_poll_reads_listeners(4, false, UI_RUN_IDLE) == false;
+    assert ui_poll_reads_listeners(4, false, UI_RUN_STARTING) == false;
+    // The runtime banner.
+    assert ui_listener_banner(UI_RUN_RUNNING, UI_CK_BAD, 3000, false, false) == UI_LB_SHOW;
+    assert ui_listener_banner(UI_RUN_RUNNING, UI_CK_BAD, 2999, false, false) == UI_LB_NONE;
+    assert ui_listener_banner(UI_RUN_RUNNING, UI_CK_BAD, -1, false, false) == UI_LB_NONE;
+    assert ui_listener_banner(UI_RUN_RUNNING, UI_CK_BAD, 9000, true, false) == UI_LB_SHOW;
+    assert ui_listener_banner(UI_RUN_RUNNING, UI_CK_BAD, 9000, false, true) == UI_LB_NONE;
+    assert ui_listener_banner(UI_RUN_RUNNING, UI_CK_OK, 9000, true, false) == UI_LB_CLEAR;
+    assert ui_listener_banner(UI_RUN_RUNNING, UI_CK_WARN, 9000, false, false) == UI_LB_NONE;
+    assert ui_listener_banner(UI_RUN_IDLE, UI_CK_BAD, 9000, true, false) == UI_LB_CLEAR;
+    assert ui_listener_banner(UI_RUN_STOPPING, UI_CK_BAD, 9000, false, false) == UI_LB_NONE;
+    assert ui_listener_streak(UI_CK_BAD) == true;
+    assert ui_listener_streak(UI_CK_WARN) == false;
+    // Every input: SHOW only during a call with a red row past the grace time, never after the owner closed it.
+    var run: i32 = -1;
+    while (run <= 4) {
+        var mark: i32 = -1;
+        while (mark <= 5) {
+            var f: i32 = 0;
+            while (f < 4) {
+                var ms: i64 = -1;
+                while (ms <= 4000) {
+                    var shown: bool = f % 2 == 1;
+                    var dismissed: bool = f >= 2;
+                    var lb: i32 = ui_listener_banner(run, mark, ms, shown, dismissed);
+                    var red: bool = run == UI_RUN_RUNNING and mark == UI_CK_BAD;
+                    if (lb == UI_LB_SHOW and (red == false or dismissed or ms < UI_LISTENER_GRACE_MS)) { bad = bad + 1; }
+                    if (lb == UI_LB_CLEAR and (red or shown == false)) { bad = bad + 1; }
+                    if (red == false and shown and lb != UI_LB_CLEAR) { bad = bad + 1; }
+                    ms = ms + 1000;
+                }
+                f = f + 1;
+            }
+            mark = mark + 1;
+        }
+        run = run + 1;
+    }
+    assert bad == 0;
+    assert ui_mic_migration(false, true) == UI_MIGRATE_CLEAR;
+    assert ui_mic_migration(false, false) == UI_MIGRATE_MARK;
+    assert ui_mic_migration(true, true) == UI_MIGRATE_NONE;
+    assert ui_mic_migration(true, false) == UI_MIGRATE_NONE;
 }

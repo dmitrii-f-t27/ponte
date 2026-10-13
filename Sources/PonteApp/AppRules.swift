@@ -671,4 +671,74 @@ enum AppRules {
 
     /// Quitting during a call stops it first (and saves the transcript).
     static func quitWaits(runState: Int32) -> Bool { ui_quit_waits(runState) }
+
+    // MARK: - The checklist «Перед звонком»
+
+    /// Rows, in the order the sheet shows them.
+    static let CKI_LISTENER: Int32 = UI_CKI_LISTENER          // «Meet слушает BlackHole»
+    static let CKI_CALL_MIC: Int32 = UI_CKI_CALL_MIC          // «Микрофон в Meet включён» (a reminder)
+    static let CKI_HEADPHONES: Int32 = UI_CKI_HEADPHONES
+    static let CKI_MY_MIC: Int32 = UI_CKI_MY_MIC              // «Ваш микрофон для Ponte»
+    static let CKI_EXTENSIONS: Int32 = UI_CKI_EXTENSIONS      // browser translators that replace the mic (a reminder)
+    static let CKI_HOW_TO_TALK: Int32 = UI_CKI_HOW_TO_TALK
+    static let CKI_COUNT: Int32 = UI_CKI_COUNT
+
+    /// Marks: ✓ green, ⚠ amber, ✗ red, a reminder, unknown.
+    static let CK_UNKNOWN: Int32 = UI_CK_UNKNOWN
+    static let CK_OK: Int32 = UI_CK_OK
+    static let CK_WARN: Int32 = UI_CK_WARN
+    static let CK_BAD: Int32 = UI_CK_BAD
+    static let CK_INFO: Int32 = UI_CK_INFO
+
+    /// Who listens to BlackHole (the AudioRules.listen* codes).
+    static let LISTEN_UNKNOWN: Int32 = UI_LISTEN_UNKNOWN
+    static let LISTEN_OK: Int32 = UI_LISTEN_OK
+    static let LISTEN_NOBODY: Int32 = UI_LISTEN_NOBODY
+    static let LISTEN_REAL_MIC: Int32 = UI_LISTEN_REAL_MIC
+    static let LISTEN_BOTH: Int32 = UI_LISTEN_BOTH
+    static let LISTEN_NO_BLACKHOLE: Int32 = UI_LISTEN_NO_BLACKHOLE
+
+    /// Ponte's microphone: from the settings, picked automatically, or the system default (none found).
+    static let MICSRC_SAVED: Int32 = UI_MICSRC_SAVED
+    static let MICSRC_AUTO: Int32 = UI_MICSRC_AUTO
+    static let MICSRC_SYSTEM: Int32 = UI_MICSRC_SYSTEM
+
+    static let CKO_LAUNCH: Int32 = UI_CKO_LAUNCH
+    static let CKO_ASKED: Int32 = UI_CKO_ASKED
+    static let DEFAULT_CHECKLIST_ON_LAUNCH = UI_DEFAULT_CHECKLIST_ON_LAUNCH != 0
+
+    static let LB_NONE: Int32 = UI_LB_NONE
+    static let LB_SHOW: Int32 = UI_LB_SHOW
+    static let LB_CLEAR: Int32 = UI_LB_CLEAR
+
+    static let MIGRATE_NONE: Int32 = UI_MIGRATE_NONE
+    static let MIGRATE_CLEAR: Int32 = UI_MIGRATE_CLEAR
+    static let MIGRATE_MARK: Int32 = UI_MIGRATE_MARK
+
+    static func listenerMark(listenStatus: Int32) -> Int32 { ui_listener_mark(listenStatus) }
+
+    static func checklistMark(item: Int32, listenStatus: Int32, headphonesLike: Bool, micSource: Int32) -> Int32 {
+        ui_checklist_mark(item, listenStatus, headphonesLike, micSource)
+    }
+
+    static func micSource(hasSetting: Bool, found: Bool, hasAuto: Bool) -> Int32 { ui_mic_source(hasSetting, found, hasAuto) }
+
+    static func checklistOpens(reason: Int32, showOnLaunch: Bool, wizardShown: Bool, testMode: Bool, autostart: Bool) -> Bool {
+        ui_checklist_opens(reason, showOnLaunch, wizardShown, testMode, autostart)
+    }
+
+    static func checklistCanStart(runState: Int32) -> Bool { ui_checklist_can_start(runState) }
+
+    static func pollReadsListeners(tick: Int64, sheetOpen: Bool, runState: Int32) -> Bool {
+        ui_poll_reads_listeners(tick, sheetOpen, runState)
+    }
+
+    static func listenerStreak(mark: Int32) -> Bool { ui_listener_streak(mark) }
+
+    /// The call's red banner when nobody (or the wrong microphone) feeds the call: LB_*.
+    static func listenerBanner(runState: Int32, mark: Int32, msBad: Int64, shown: Bool, dismissed: Bool) -> Int32 {
+        ui_listener_banner(runState, mark, msBad, shown, dismissed)
+    }
+
+    static func micMigration(migrated: Bool, hasSetting: Bool) -> Int32 { ui_mic_migration(migrated, hasSetting) }
 }

@@ -158,6 +158,38 @@ static const uint32_t UI_ROW_LENGTHS[5] = { 6, 4, 3, 4, 1 };
 #define UI_LINE_PENDING 2
 #define UI_WORD_MAX 64
 #define UI_KEY_MAX 4096
+#define UI_CKI_LISTENER 0
+#define UI_CKI_CALL_MIC 1
+#define UI_CKI_HEADPHONES 2
+#define UI_CKI_MY_MIC 3
+#define UI_CKI_EXTENSIONS 4
+#define UI_CKI_HOW_TO_TALK 5
+#define UI_CKI_COUNT 6
+#define UI_CK_UNKNOWN 0
+#define UI_CK_OK 1
+#define UI_CK_WARN 2
+#define UI_CK_BAD 3
+#define UI_CK_INFO 4
+#define UI_LISTEN_UNKNOWN 0
+#define UI_LISTEN_OK 1
+#define UI_LISTEN_NOBODY 2
+#define UI_LISTEN_REAL_MIC 3
+#define UI_LISTEN_BOTH 4
+#define UI_LISTEN_NO_BLACKHOLE 5
+#define UI_MICSRC_SAVED 0
+#define UI_MICSRC_AUTO 1
+#define UI_MICSRC_SYSTEM 2
+#define UI_CKO_LAUNCH 0
+#define UI_CKO_ASKED 1
+#define UI_DEFAULT_CHECKLIST_ON_LAUNCH 1
+#define UI_LISTENER_EVERY_TICKS 2
+#define UI_LISTENER_GRACE_MS 3000
+#define UI_LB_NONE 0
+#define UI_LB_SHOW 1
+#define UI_LB_CLEAR 2
+#define UI_MIGRATE_NONE 0
+#define UI_MIGRATE_CLEAR 1
+#define UI_MIGRATE_MARK 2
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -217,5 +249,14 @@ bool ui_is_yes(uint8_t text[static 64], int64_t len);
 int64_t ui_source_key_app_prefix(uint8_t text[static 4096], int64_t len);
 int64_t ui_row_bytes(int64_t row, uint8_t out[static 64]);
 bool ui_quit_waits(int32_t run_state);
+int32_t ui_listener_mark(int32_t listen_status);
+int32_t ui_checklist_mark(int32_t item, int32_t listen_status, bool headphones_like, int32_t mic_source);
+int32_t ui_mic_source(bool has_setting, bool found, bool has_auto);
+bool ui_checklist_opens(int32_t reason, bool show_on_launch, bool wizard_shown, bool test_mode, bool autostart);
+bool ui_checklist_can_start(int32_t run_state);
+bool ui_poll_reads_listeners(int64_t tick, bool sheet_open, int32_t run_state);
+bool ui_listener_streak(int32_t mark);
+int32_t ui_listener_banner(int32_t run_state, int32_t mark, int64_t ms_bad, bool shown, bool dismissed);
+int32_t ui_mic_migration(bool migrated, bool has_setting);
 /* Function bodies: see the full header. */
 #endif

@@ -667,6 +667,71 @@ public enum AudioRules {
 
     /// Listening on a loudspeaker: show «наденьте наушники».
     public static func needsHeadphones(kind: Int) -> Bool { dv_needs_headphones(Int64(kind)) }
+
+    // MARK: - The checklist «Перед звонком»: who listens to BlackHole, headphones, Ponte's microphone
+
+    /// The role of a process that reads an input device.
+    public static let readerPonte = Int(DV_READER_PONTE)      // this process, or any instance of Ponte
+    public static let readerCall = Int(DV_READER_CALL)        // the call app (the chosen source)
+    public static let readerOther = Int(DV_READER_OTHER)
+
+    /// What one (process, input device) pair means for the call.
+    public static let useNone = Int(DV_USE_NONE)
+    public static let useCallBlackHole = Int(DV_USE_CALL_BLACKHOLE)
+    public static let useOtherBlackHole = Int(DV_USE_OTHER_BLACKHOLE)
+    public static let useCallRealMic = Int(DV_USE_CALL_REAL_MIC)
+
+    /// Who listens to BlackHole.
+    public static let listenUnknown = Int(DV_LISTEN_UNKNOWN)          // the process list could not be read
+    public static let listenOK = Int(DV_LISTEN_OK)                    // a program other than Ponte reads BlackHole
+    public static let listenNobody = Int(DV_LISTEN_NOBODY)
+    public static let listenRealMic = Int(DV_LISTEN_REAL_MIC)         // the call app reads a real mic, not BlackHole
+    public static let listenBoth = Int(DV_LISTEN_BOTH)                // the call app reads BlackHole and a real mic
+    public static let listenNoBlackHole = Int(DV_LISTEN_NO_BLACKHOLE) // BlackHole is not installed
+
+    /// Ponte's own bundle ID (exact bytes).
+    public static func isPonteID(_ bundleID: String) -> Bool {
+        var t = DeviceText([bundleID])
+        return dv_is_ponte_id(&t.bytes, t.off(0), t.len(0))
+    }
+
+    /// The role of a process reading an input. `targetBundleID` nil: all Mac audio is the source.
+    public static func readerRole(ownerBundleID: String, targetBundleID: String?, pid: Int32, selfPID: Int32) -> Int {
+        var t = DeviceText([ownerBundleID, targetBundleID ?? ""])
+        return Int(dv_reader_role(&t.bytes, t.off(0), t.len(0), t.off(1), t.len(1), targetBundleID != nil, pid, selfPID))
+    }
+
+    /// A device a person speaks into (not BlackHole, Ponte's tap, other virtual drivers or aggregates).
+    public static func isRealMicKind(_ kind: Int) -> Bool { dv_is_real_mic_kind(Int64(kind)) }
+
+    public static func readerUse(role: Int, kind: Int, runningInput: Bool) -> Int {
+        Int(dv_reader_use(Int64(role), Int64(kind), runningInput))
+    }
+
+    /// `listed`: the HAL process list was read.
+    public static func listenStatus(uses: [Int], listed: Bool, blackHolePresent: Bool) -> Int {
+        var u = DeviceText.list(uses)
+        return Int(dv_listen_status(&u, DeviceText.listCount(uses.count), listed, blackHolePresent))
+    }
+
+    /// The pair the status names (the call app's real mic; the call app on BlackHole; another program on it), or -1.
+    public static func listenIndex(uses: [Int]) -> Int {
+        var u = DeviceText.list(uses)
+        return Int(dv_listen_index(&u, DeviceText.listCount(uses.count)))
+    }
+
+    /// Headphones or a headset: the headphone jack, Bluetooth, USB.
+    public static func isHeadphonesLike(kind: Int) -> Bool { dv_is_headphones_like(Int64(kind)) }
+
+    /// Ponte's microphone when the settings say «Автоматически»: the headset's own microphone when the listening
+    /// output (`outputIndex`, -1 for none) is one, else the built-in microphone, else the first real one; never
+    /// BlackHole, Ponte's tap or an iPhone. -1 if none.
+    public static func pickAutoMicIndex(names: [String], kinds: [Int], inputChannels: [Int], outputIndex: Int) -> Int {
+        var t = DeviceText(names)
+        var k = DeviceText.list(kinds)
+        var inputs = DeviceText.list(inputChannels)
+        return Int(dv_pick_auto_mic_index(&t.bytes, &t.offsets, &t.lengths, &k, &inputs, t.count, Int64(outputIndex)))
+    }
 }
 
 /// Strings packed for `device_rules`: one UTF-8 buffer of `DV_TEXT_MAX` bytes and offset/length tables of
