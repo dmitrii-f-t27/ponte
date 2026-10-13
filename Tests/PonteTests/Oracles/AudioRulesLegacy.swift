@@ -32,7 +32,8 @@ enum AudioRulesLegacy {
     static let reconcileDebounceSeconds: Double = 0.05
     /// UID prefix of Ponte's private tap aggregate devices (hidden from device pickers).
     static let ponteAggregateUIDPrefix = "ai.ponte.tap."
-    /// Frames per AVAudioEngine input-tap callback requested by MicSource (a hint).
+    /// Frames per AVAudioEngine input-tap callback requested by MicSource (a hint); since 2026-10-13 the most
+    /// frames one input-unit callback takes, unless the device's I/O cycle is longer.
     static let micTapBufferFrames = 2048
     /// How many parent processes to walk up when looking for a process's owning app.
     static let parentChainMaxDepth = 8
@@ -275,6 +276,28 @@ enum AudioRulesLegacy {
     /// installTap(format: nil) takes the bus's format; both it and the device side need a rate and channels.
     static func micTapReady(inputRate: Double, inputChannels: Int, busRate: Double, busChannels: Int) -> Bool {
         inputRate > 0 && inputChannels > 0 && busRate > 0 && busChannels > 0
+    }
+
+    // MARK: - The microphone listens to its input device only (2026-10-13, an output change stopped it)
+
+    /// MicSource rebuilt on every AVAudioEngineConfigurationChange that left the engine stopped, and output-side
+    /// changes stopped it. Now an input-only unit rebuilds on a failed render, a dead device, a stopped unit, a
+    /// changed format, or a new default input it follows.
+    static let micEventDefaultInput = 0, micEventAlive = 1, micEventFormat = 2, micEventRunning = 3, micEventRenderFailed = 4
+
+    static func micInputRebuilds(event: Int, followsDefault: Bool, sameDevice: Bool, deviceAlive: Bool,
+                                 sameFormat: Bool, unitRunning: Bool) -> Bool {
+        guard (micEventDefaultInput...micEventRenderFailed).contains(event) else { return false }
+        if event == micEventRenderFailed || !deviceAlive || !unitRunning { return true }
+        return event == micEventDefaultInput ? followsDefault && !sameDevice : !sameFormat
+    }
+
+    static func micMaxFrames(ioFrames: Int) -> Int { max(ioFrames, micTapBufferFrames) }
+
+    /// MicSource reset its failure count on every change; a render failing before any audio now counts on.
+    static func micFailuresAfter(event: Int, delivered: Bool, failures: Int64) -> Int64 {
+        guard event == micEventRenderFailed, !delivered else { return 0 }
+        return min(max(failures, 0), restartAttempts - 1) + 1
     }
 
     // MARK: - The call output heals itself (2026-10-13, phrases cut by engine stops)

@@ -3,17 +3,20 @@ import AVFoundation
 import CoreAudio
 import Foundation
 import PonteCore
-import PonteObjC
+import Synchronization
 
-/// Captures one input device (nil = system default input) with AVAudioEngine and delivers mono
-/// Float32 at the device's native rate. The host app needs the Microphone permission
-/// (`NSMicrophoneUsageDescription`); without it macOS delivers silence or refuses to start.
+/// Captures one input device (nil = system default input) and delivers mono Float32 at the device's
+/// native rate. The host app needs the Microphone permission (`NSMicrophoneUsageDescription`); without
+/// it macOS delivers silence or refuses to start.
 ///
-/// A device change (headphones plugged in, an iPhone's Continuity microphone appearing, a new
-/// default device or rate) stops AVAudioEngine and posts `AVAudioEngineConfigurationChange`.
-/// The engine is then rebuilt later on a private queue, never inside that notification: rebuilding
-/// there installed a tap with a stale format, AVAudioEngine raised an Objective-C exception and the
-/// app aborted (live crash 2026-10-13). The wait and the backoff come from AudioRules (audio_rules.t27).
+/// The capture is an input-only audio unit (AUHAL: input enabled, output disabled) on the device, so it
+/// has nothing on the output side. AVAudioEngine always owns an output node on the default output device,
+/// and changing the output volume or another engine starting output stopped it (live 2026-10-13: the
+/// 0.4 s rebuild cut half a sentence). The unit listens to its input device only: the device going away,
+/// its rate or channels changing, the default input moving (when the source follows the default), the
+/// unit stopping, a failed render. AudioRules.micInputRebuilds decides; a rebuild runs later on a private
+/// queue, never inside the notification, with the wait and backoff of AudioRules (audio_rules.t27).
+/// Buffers arrive once per device I/O cycle, on a private delivery queue, in order.
 public final class MicSource: AudioSource {
     public enum Status: Equatable, Sendable {
         case idle
@@ -29,7 +32,8 @@ public final class MicSource: AudioSource {
     /// Mono Float32 at the device's native rate. Predicted from the HAL before `start`, exact after.
     public private(set) var outputFormat: AVAudioFormat
 
-    /// Frames per tap callback requested from AVAudioEngine (a hint; the engine may differ).
+    /// The most frames one callback takes (the input unit's slice), unless the device's I/O cycle is longer
+    /// (AudioRules.micMaxFrames). Callbacks themselves follow the device's I/O cycle.
     public var bufferFrames = AVAudioFrameCount(AudioRules.micTapBufferFrames)
 
     /// Called on a private queue whenever `status` changes.
@@ -39,9 +43,9 @@ public final class MicSource: AudioSource {
 
     private let lock = NSLock()
     private let restartQueue = DispatchQueue(label: "app.ponte.mic.restart")
-    private var engine: AVAudioEngine?
+    private let delivery = DispatchQueue(label: "app.ponte.mic.delivery", qos: .userInteractive)
+    private var capture: InputCapture?
     private var handler: PCMHandler?
-    private var configObserver: NSObjectProtocol?
     /// True between `start` and `stop`: only then does a device change lead to a rebuild.
     private var running = false
     private var restartWork: DispatchWorkItem?
@@ -70,9 +74,8 @@ public final class MicSource: AudioSource {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
-    /// `start` refuses to run without permission: with an undecided permission
-    /// AVAudioEngine blocks inside `inputNode` until the user answers the prompt, and with a denied
-    /// one it records silence. Call `requestPermission()` first.
+    /// `start` refuses to run without permission: with an undecided permission the system blocks until the
+    /// user answers the prompt, and with a denied one it records silence. Call `requestPermission()` first.
     public func start(handler: @escaping PCMHandler) throws {
         switch AudioRules.micStartDecision(authorizationStatus: Self.permission.rawValue) {
         case AudioRules.micStart: break
@@ -86,7 +89,7 @@ public final class MicSource: AudioSource {
         }
         self.handler = handler
         do {
-            try startEngine()
+            try startCapture()
         } catch {
             self.handler = nil
             lock.unlock()
@@ -95,7 +98,7 @@ public final class MicSource: AudioSource {
         }
         running = true
         failures = 0
-        PonteDiagnostics.log("mic start ok device=\(device?.name ?? "default") format=\(outputFormat)")
+        PonteDiagnostics.log("mic start ok device=\(capture?.deviceName ?? "?") format=\(PCM.describe(outputFormat)) input unit")
         let changed = setStatus(.capturing)
         lock.unlock()
         notify(changed)
@@ -106,7 +109,7 @@ public final class MicSource: AudioSource {
         running = false
         restartWork?.cancel()
         restartWork = nil
-        stopEngine()
+        stopCapture()
         handler = nil
         failures = 0
         let changed = setStatus(.idle)
@@ -116,28 +119,29 @@ public final class MicSource: AudioSource {
 
     // MARK: Device changes
 
-    /// AVAudioEngineConfigurationChange: tear the engine down now, rebuild it later.
-    private func configurationChanged(of changedEngine: AVAudioEngine) {
+    /// On `restartQueue`: an input-side event of `changed`. AudioRules.micInputRebuilds decides from the facts
+    /// read now; a rebuild tears the capture down now and starts it again later.
+    private func inputEvent(_ event: Int, of changed: InputCapture) {
         lock.lock()
-        guard running, engine === changedEngine else {
+        guard running, capture === changed else {
             lock.unlock()
             return
         }
-        // AVAudioEngine also posts this right after its own start (the I/O unit settles); then the
-        // engine keeps running and tearing it down only starts the same cycle again (seen live:
-        // a rebuild every 0.47 s). Only a stopped engine needs a rebuild.
-        if changedEngine.isRunning {
+        let facts = changed.facts()
+        guard AudioRules.micInputRebuilds(event: event, followsDefault: device == nil, sameDevice: facts.sameDevice,
+                                          deviceAlive: facts.alive, sameFormat: facts.sameFormat, unitRunning: facts.unitRunning) else {
             lock.unlock()
-            PonteDiagnostics.log("mic configuration change ignored: engine still running")
+            PonteDiagnostics.log("mic input event \(event) ignored: capture unchanged")
             return
         }
-        stopEngine()
-        failures = 0
-        PonteDiagnostics.log("mic configuration change: engine stopped, rebuild scheduled")
-        let changed = setStatus(.restarting(failures: 0))
+        stopCapture()
+        failures = AudioRules.micFailuresAfter(event: event, delivered: changed.delivered, failures: failures)
+        PonteDiagnostics.log("mic input event \(event): alive=\(facts.alive) sameFormat=\(facts.sameFormat) sameDevice=\(facts.sameDevice) running=\(facts.unitRunning) render=\(changed.failedRenderStatus) failures=\(failures), rebuild scheduled")
+        let changedStatus = AudioRules.restartFailed(failures: failures)
+            ? setStatus(.failed("render \(changed.failedRenderStatus)")) : setStatus(.restarting(failures: Int(failures)))
         scheduleRestart()
         lock.unlock()
-        notify(changed)
+        notify(changedStatus)
     }
 
     /// Lock held. The next rebuild after AudioRules.restartDelayMs for the current failure count.
@@ -151,16 +155,16 @@ public final class MicSource: AudioSource {
 
     private func attemptRestart() {
         lock.lock()
-        guard running, engine == nil else {
+        guard running, capture == nil else {
             lock.unlock()
             return
         }
         restartWork = nil
         let changed: Status?
         do {
-            try startEngine()
-            PonteDiagnostics.log("mic rebuild ok after \(failures) failure(s) format=\(outputFormat)")
-            failures = 0
+            try startCapture()
+            // The count starts again at the next change once audio flows (AudioRules.micFailuresAfter).
+            PonteDiagnostics.log("mic rebuild ok after \(failures) failure(s) device=\(capture?.deviceName ?? "?") format=\(PCM.describe(outputFormat))")
             changed = setStatus(.capturing)
         } catch {
             failures += 1
@@ -176,74 +180,41 @@ public final class MicSource: AudioSource {
         notify(changed)
     }
 
-    // MARK: Engine (lock held)
+    // MARK: Capture (lock held)
 
-    /// Re-resolves the device by UID: device IDs can change after a reconnect.
-    private func resolvedDeviceID() throws -> AudioObjectID? {
-        guard let device else { return nil }
-        if let live = CoreAudioDeviceCatalog().device(uid: device.uid) { return live.id }
-        throw PonteAudioError.deviceNotFound(device.name)
+    /// Re-resolves the device by UID (device IDs can change after a reconnect); nil device = default input.
+    private func resolvedDeviceID() throws -> AudioObjectID {
+        if let device {
+            if let live = CoreAudioDeviceCatalog().device(uid: device.uid) { return live.id }
+            throw PonteAudioError.deviceNotFound(device.name)
+        }
+        guard let id = HAL.defaultDevice(input: true) else { throw PonteAudioError.deviceNotFound("default input") }
+        return id
     }
 
-    private func startEngine() throws {
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        // Setting the device on the input unit reconfigures it; skip that when the chosen device is
-        // already the system input, so the engine starts as configured.
-        if let id = try resolvedDeviceID(), id != HAL.defaultDevice(input: true) {
-            guard let au = input.audioUnit else { throw PonteAudioError.engine("input node has no audio unit") }
-            var deviceID = id
-            let status = AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-                                              &deviceID, UInt32(MemoryLayout<AudioDeviceID>.size))
-            try HAL.check(status, "set input device \(device?.name ?? "")")
+    private func startCapture() throws {
+        guard let handler else { throw PonteAudioError.engine("no handler") }
+        let id = try resolvedDeviceID()
+        let capture = try InputCapture(deviceID: id, followsDefault: device == nil, sliceHint: Int(bufferFrames),
+                                       delivery: delivery, handler: handler)
+        capture.onEvent = { [weak self, weak capture] event in
+            guard let self, let capture else { return }
+            // Never rebuild on the notifying thread; hop to our queue first.
+            self.restartQueue.async { self.inputEvent(event, of: capture) }
         }
-        // Both sides of the input node need a real format, or installTap raises (an Objective-C
-        // exception, caught below). The tap is given the bus format read after the device was set:
-        // `format: nil` made engine.start fail with -10868 (format not supported) on an explicit device.
-        let deviceFormat = input.inputFormat(forBus: 0)
-        let busFormat = input.outputFormat(forBus: 0)
-        guard AudioRules.micTapReady(inputRate: deviceFormat.sampleRate, inputChannels: Int(deviceFormat.channelCount),
-                                     busRate: busFormat.sampleRate, busChannels: Int(busFormat.channelCount)) else {
-            throw PonteAudioError.unsupportedFormat("input not ready (device \(deviceFormat), bus \(busFormat))")
-        }
-        outputFormat = PCM.monoFormat(sampleRate: busFormat.sampleRate)
-
-        let handler = self.handler
-        let frames = bufferFrames
-        if let reason = PonteCatchObjC({
-            input.installTap(onBus: 0, bufferSize: frames, format: busFormat) { buffer, time in
-                guard let handler, let mono = PCM.mono(buffer) else { return }
-                handler(mono, time)
-            }
-        }) {
-            throw PonteAudioError.engine("installTap: \(reason)")
-        }
-        engine.prepare()
         do {
-            try engine.start()
+            try capture.start()
         } catch {
-            input.removeTap(onBus: 0)
-            throw PonteAudioError.engine("start failed: \(error.localizedDescription)")
+            capture.stop()
+            throw error
         }
-        self.engine = engine
-        configObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-        ) { [weak self, weak engine] _ in
-            guard let self, let engine else { return }
-            // Never rebuild on the posting thread; hop to our queue first.
-            self.restartQueue.async { self.configurationChanged(of: engine) }
-        }
+        outputFormat = capture.monoFormat
+        self.capture = capture
     }
 
-    private func stopEngine() {
-        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
-        configObserver = nil
-        guard let engine else { return }
-        _ = PonteCatchObjC {
-            engine.inputNode.removeTap(onBus: 0)
-            engine.stop()
-        }
-        self.engine = nil
+    private func stopCapture() {
+        capture?.stop()
+        capture = nil
     }
 
     /// Lock held. Returns the new status when it changed, for `notify` after unlocking.
@@ -257,4 +228,183 @@ public final class MicSource: AudioSource {
         guard let changed, let onStatusChange else { return }
         restartQueue.async { onStatusChange(changed) }
     }
+}
+
+// MARK: - The input-only audio unit
+
+/// One input-only AUHAL on one device: renders every I/O cycle (into the unit's own buffers: a buffer list
+/// with our own memory made AudioUnitRender fail with -50), downmixes the device's channels to mono
+/// (PCM.downmixFloat32) and hands the buffer to the delivery queue. It reports the
+/// input-side events of its device through `onEvent` (on the listener queue, or on the I/O thread for a
+/// failed render, once).
+private final class InputCapture {
+    let deviceID: AudioObjectID
+    let deviceName: String
+    let followsDefault: Bool
+    let monoFormat: AVAudioFormat
+    var onEvent: ((Int) -> Void)?
+
+    private let unit: AudioUnit
+    private let rate: Double
+    private let channels: Int
+    private let list: UnsafeMutableAudioBufferListPointer
+    private let capacity: AVAudioFrameCount
+    private let delivery: DispatchQueue
+    private let handler: PCMHandler
+    private let renderStatus = Atomic<Int32>(0)
+    private let deliveredAny = Atomic<Bool>(false)
+    /// The status of the first render that failed (0 = none).
+    var failedRenderStatus: OSStatus { renderStatus.load(ordering: .relaxed) }
+    /// Whether any audio was delivered since the unit started.
+    var delivered: Bool { deliveredAny.load(ordering: .relaxed) }
+    private let listenerQueue = DispatchQueue(label: "app.ponte.mic.listen")
+    private var started = false
+    private var disposed = false
+    private var listeners: [(object: AudioObjectID, address: AudioObjectPropertyAddress, block: AudioObjectPropertyListenerBlock)] = []
+
+    init(deviceID: AudioObjectID, followsDefault: Bool, sliceHint: Int, delivery: DispatchQueue, handler: @escaping PCMHandler) throws {
+        self.deviceID = deviceID
+        self.deviceName = HAL.string(deviceID, HAL.address(kAudioObjectPropertyName)) ?? "device \(deviceID)"
+        self.followsDefault = followsDefault
+        self.delivery = delivery
+        self.handler = handler
+
+        var description = AudioComponentDescription(componentType: kAudioUnitType_Output, componentSubType: kAudioUnitSubType_HALOutput,
+                                                    componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0)
+        guard let component = AudioComponentFindNext(nil, &description) else { throw PonteAudioError.engine("no HAL audio unit") }
+        var instance: AudioUnit?
+        try HAL.check(AudioComponentInstanceNew(component, &instance), "new input unit")
+        guard let unit = instance else { throw PonteAudioError.engine("no input unit") }
+        self.unit = unit
+        do {
+            // Input on (element 1), output off (element 0): nothing on the output side to be reconfigured.
+            var on: UInt32 = 1
+            var off: UInt32 = 0
+            let flagSize = UInt32(MemoryLayout<UInt32>.size)
+            try HAL.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &on, flagSize), "enable input")
+            try HAL.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &off, flagSize), "disable output")
+            var device = deviceID
+            try HAL.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                               &device, UInt32(MemoryLayout<AudioDeviceID>.size)), "set input device \(deviceName)")
+            // The device side of the input element; the client side takes the same rate and channels as
+            // deinterleaved Float32 (the unit cannot change the input's rate).
+            var hardware = AudioStreamBasicDescription()
+            var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            try HAL.check(AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 1, &hardware, &size), "input format")
+            guard AudioRules.micTapReady(inputRate: hardware.mSampleRate, inputChannels: Int(hardware.mChannelsPerFrame),
+                                         busRate: hardware.mSampleRate, busChannels: Int(hardware.mChannelsPerFrame)) else {
+                throw PonteAudioError.unsupportedFormat("input not ready (\(hardware.mSampleRate) Hz, \(hardware.mChannelsPerFrame) ch)")
+            }
+            rate = hardware.mSampleRate
+            channels = Int(hardware.mChannelsPerFrame)
+            guard let client = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate,
+                                             channels: AVAudioChannelCount(channels), interleaved: false) else {
+                throw PonteAudioError.unsupportedFormat("\(rate) Hz, \(channels) ch")
+            }
+            var clientASBD = client.streamDescription.pointee
+            try HAL.check(AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &clientASBD,
+                                               UInt32(MemoryLayout<AudioStreamBasicDescription>.size)), "client format")
+            let ioFrames = (try? HAL.get(deviceID, HAL.address(kAudioDevicePropertyBufferFrameSize, kAudioObjectPropertyScopeInput),
+                                         default: UInt32(0))) ?? 0
+            var slice = UInt32(AudioRules.micMaxFrames(ioFrames: max(Int(ioFrames), sliceHint)))
+            try HAL.check(AudioUnitSetProperty(unit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0,
+                                               &slice, flagSize), "maximum frames")
+            capacity = AVAudioFrameCount(slice)
+            list = AudioBufferList.allocate(maximumBuffers: channels)
+            monoFormat = PCM.monoFormat(sampleRate: rate)
+        } catch {
+            AudioComponentInstanceDispose(unit)
+            throw error
+        }
+    }
+
+    deinit {
+        stop()
+        list.unsafeMutablePointer.deallocate()
+    }
+
+    /// Installs the render callback and the device listeners, then starts the unit.
+    func start() throws {
+        var callback = AURenderCallbackStruct(inputProc: micInputProc, inputProcRefCon: Unmanaged.passUnretained(self).toOpaque())
+        try HAL.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitScope_Global, 0,
+                                           &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)), "input callback")
+        try HAL.check(AudioUnitInitialize(unit), "initialize input unit")
+        listen(deviceID, kAudioDevicePropertyDeviceIsAlive, kAudioObjectPropertyScopeGlobal, AudioRules.micEventAlive)
+        listen(deviceID, kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal, AudioRules.micEventFormat)
+        listen(deviceID, kAudioDevicePropertyStreamConfiguration, kAudioObjectPropertyScopeInput, AudioRules.micEventFormat)
+        listen(deviceID, kAudioDevicePropertyDeviceIsRunning, kAudioObjectPropertyScopeGlobal, AudioRules.micEventRunning)
+        if followsDefault {
+            listen(HAL.system, kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, AudioRules.micEventDefaultInput)
+        }
+        try HAL.check(AudioOutputUnitStart(unit), "start input unit on \(deviceName)")
+        started = true
+    }
+
+    /// Stops the unit, removes the listeners and disposes of the unit. Safe to call twice.
+    func stop() {
+        // Removed with the queue they were added with; that queue only hops to MicSource's queue, so
+        // removing them from there cannot wait on ourselves.
+        for l in listeners {
+            var address = l.address
+            AudioObjectRemovePropertyListenerBlock(l.object, &address, listenerQueue, l.block)
+        }
+        listeners.removeAll()
+        guard !disposed else { return }
+        disposed = true
+        if started { AudioOutputUnitStop(unit) }
+        AudioUnitUninitialize(unit)
+        AudioComponentInstanceDispose(unit)
+        started = false
+    }
+
+    /// The facts AudioRules.micInputRebuilds takes, read now.
+    func facts() -> (alive: Bool, sameFormat: Bool, sameDevice: Bool, unitRunning: Bool) {
+        let alive = ((try? HAL.get(deviceID, HAL.address(kAudioDevicePropertyDeviceIsAlive), default: UInt32(0))) ?? 0) != 0
+        let sameFormat = HAL.nominalSampleRate(deviceID) == rate && HAL.channelCount(deviceID, input: true) == channels
+        let sameDevice = HAL.defaultDevice(input: true) == deviceID
+        var running: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let read = AudioUnitGetProperty(unit, kAudioOutputUnitProperty_IsRunning, kAudioUnitScope_Global, 0, &running, &size)
+        return (alive, sameFormat, sameDevice, read == noErr && running != 0)
+    }
+
+    private func listen(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ scope: AudioObjectPropertyScope, _ event: Int) {
+        var address = HAL.address(selector, scope)
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.onEvent?(event) }
+        if AudioObjectAddPropertyListenerBlock(object, &address, listenerQueue, block) == noErr {
+            listeners.append((object, address, block))
+        }
+    }
+
+    /// The I/O thread: one cycle of input.
+    fileprivate func renderInput(_ flags: UnsafeMutablePointer<AudioUnitRenderActionFlags>, _ timeStamp: UnsafePointer<AudioTimeStamp>,
+                                 _ bus: UInt32, _ frames: UInt32) -> OSStatus {
+        guard frames > 0, frames <= capacity else { return noErr }
+        for i in 0..<list.count {
+            list[i] = AudioBuffer(mNumberChannels: 1, mDataByteSize: frames * UInt32(MemoryLayout<Float>.size), mData: nil)
+        }
+        let status = AudioUnitRender(unit, flags, timeStamp, bus, frames, list.unsafeMutablePointer)
+        guard status == noErr else {
+            // Reported once: the first failure flips the status from 0.
+            if renderStatus.compareExchange(expected: 0, desired: status, ordering: .relaxed).exchanged {
+                onEvent?(AudioRules.micEventRenderFailed)
+            }
+            return status
+        }
+        guard let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: frames) else { return noErr }
+        let written = PCM.downmixFloat32(UnsafePointer(list.unsafeMutablePointer), into: mono.floatChannelData![0], maxFrames: Int(frames))
+        mono.frameLength = AVAudioFrameCount(written)
+        if !deliveredAny.load(ordering: .relaxed) { deliveredAny.store(true, ordering: .relaxed) }
+        var stamp = timeStamp.pointee
+        let time = AVAudioTime(audioTimeStamp: &stamp, sampleRate: rate)
+        let handler = self.handler
+        delivery.async { handler(mono, time) }
+        return noErr
+    }
+}
+
+/// The input unit's callback (I/O thread): the refCon is the InputCapture, kept alive by MicSource while the
+/// unit runs.
+private let micInputProc: AURenderCallback = { refCon, flags, timeStamp, bus, frames, _ in
+    Unmanaged<InputCapture>.fromOpaque(refCon).takeUnretainedValue().renderInput(flags, timeStamp, bus, frames)
 }

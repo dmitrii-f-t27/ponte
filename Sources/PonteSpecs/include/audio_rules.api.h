@@ -52,6 +52,11 @@
 #define AU_RESTART_DELAY_MS 300
 #define AU_RESTART_MAX_DELAY_MS 5000
 #define AU_RESTART_ATTEMPTS 6
+#define AU_MEV_DEFAULT_INPUT 0
+#define AU_MEV_ALIVE 1
+#define AU_MEV_FORMAT 2
+#define AU_MEV_RUNNING 3
+#define AU_MEV_RENDER_FAILED 4
 #define AU_PL_IDLE 0
 #define AU_PL_RUNNING 1
 #define AU_PL_REBUILDING 2
@@ -135,6 +140,9 @@ int64_t au_mic_start_decision(int64_t authorization_status);
 int64_t au_restart_delay_ms(int64_t attempt);
 bool au_restart_failed(int64_t failures);
 bool au_mic_tap_ready(double input_rate, int64_t input_channels, double bus_rate, int64_t bus_channels);
+bool au_mic_input_rebuilds(int64_t event, bool follows_default, bool same_device, bool device_alive, bool same_format, bool unit_running);
+int64_t au_mic_failures_after(int64_t event, bool delivered, int64_t failures);
+int64_t au_mic_max_frames(int64_t io_frames);
 int64_t au_player_step(int64_t state, int64_t event, bool engine_running, int64_t failures);
 int64_t au_player_keep(int64_t state);
 int64_t au_player_step_state(int64_t step);

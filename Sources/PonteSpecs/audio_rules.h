@@ -56,6 +56,11 @@
 #define AU_RESTART_DELAY_MS 300
 #define AU_RESTART_MAX_DELAY_MS 5000
 #define AU_RESTART_ATTEMPTS 6
+#define AU_MEV_DEFAULT_INPUT 0
+#define AU_MEV_ALIVE 1
+#define AU_MEV_FORMAT 2
+#define AU_MEV_RUNNING 3
+#define AU_MEV_RENDER_FAILED 4
 #define AU_PL_IDLE 0
 #define AU_PL_RUNNING 1
 #define AU_PL_REBUILDING 2
@@ -141,6 +146,9 @@ int64_t au_mic_start_decision(int64_t authorization_status);
 int64_t au_restart_delay_ms(int64_t attempt);
 bool au_restart_failed(int64_t failures);
 bool au_mic_tap_ready(double input_rate, int64_t input_channels, double bus_rate, int64_t bus_channels);
+bool au_mic_input_rebuilds(int64_t event, bool follows_default, bool same_device, bool device_alive, bool same_format, bool unit_running);
+int64_t au_mic_failures_after(int64_t event, bool delivered, int64_t failures);
+int64_t au_mic_max_frames(int64_t io_frames);
 int64_t au_player_step(int64_t state, int64_t event, bool engine_running, int64_t failures);
 int64_t au_player_keep(int64_t state);
 int64_t au_player_step_state(int64_t step);
@@ -571,6 +579,42 @@ bool au_restart_failed(int64_t failures) {
 
 bool au_mic_tap_ready(double input_rate, int64_t input_channels, double bus_rate, int64_t bus_channels) {
     return ((((input_rate > 0.0) && (input_channels > 0)) && (bus_rate > 0.0)) && (bus_channels > 0));
+}
+
+bool au_mic_input_rebuilds(int64_t event, bool follows_default, bool same_device, bool device_alive, bool same_format, bool unit_running) {
+    if ((event == AU_MEV_RENDER_FAILED)) {
+        return true;
+    }
+    if (((event < AU_MEV_DEFAULT_INPUT) || (event > AU_MEV_RENDER_FAILED))) {
+        return false;
+    }
+    if (((device_alive == false) || (unit_running == false))) {
+        return true;
+    }
+    if ((event == AU_MEV_DEFAULT_INPUT)) {
+        return (follows_default && (same_device == false));
+    }
+    return (same_format == false);
+}
+
+int64_t au_mic_failures_after(int64_t event, bool delivered, int64_t failures) {
+    if (((event != AU_MEV_RENDER_FAILED) || delivered)) {
+        return 0;
+    }
+    if ((failures < 0)) {
+        return 1;
+    }
+    if ((failures >= AU_RESTART_ATTEMPTS)) {
+        return AU_RESTART_ATTEMPTS;
+    }
+    return (failures + 1);
+}
+
+int64_t au_mic_max_frames(int64_t io_frames) {
+    if ((io_frames > AU_MIC_TAP_BUFFER_FRAMES)) {
+        return io_frames;
+    }
+    return AU_MIC_TAP_BUFFER_FRAMES;
 }
 
 int64_t au_player_step(int64_t state, int64_t event, bool engine_running, int64_t failures) {
@@ -1235,6 +1279,65 @@ void test_au_player_rules(void) {
     assert((au_player_replays(4) == false));
 }
 
+void test_au_mic_input_rules(void) {
+    assert((au_mic_input_rebuilds(AU_MEV_RENDER_FAILED, false, true, true, true, true) == true));
+    assert((au_mic_input_rebuilds(AU_MEV_DEFAULT_INPUT, true, false, true, true, true) == true));
+    assert((au_mic_input_rebuilds(AU_MEV_DEFAULT_INPUT, false, false, true, true, true) == false));
+    assert((au_mic_input_rebuilds(AU_MEV_DEFAULT_INPUT, true, true, true, true, true) == false));
+    assert((au_mic_input_rebuilds(AU_MEV_ALIVE, false, true, false, true, true) == true));
+    assert((au_mic_input_rebuilds(AU_MEV_ALIVE, false, true, true, true, true) == false));
+    assert((au_mic_input_rebuilds(AU_MEV_FORMAT, false, true, true, false, true) == true));
+    assert((au_mic_input_rebuilds(AU_MEV_FORMAT, false, true, true, true, true) == false));
+    assert((au_mic_input_rebuilds(AU_MEV_RUNNING, false, true, true, true, false) == true));
+    assert((au_mic_input_rebuilds(AU_MEV_RUNNING, false, true, true, true, true) == false));
+    assert((au_mic_input_rebuilds(-1, false, false, false, false, false) == false));
+    assert((au_mic_input_rebuilds(5, false, false, false, false, false) == false));
+    uint32_t bad = 0;
+    int64_t event = AU_MEV_DEFAULT_INPUT;
+    while ((event <= AU_MEV_RENDER_FAILED)) {
+        int64_t bits = 0;
+        while ((bits < 32)) {
+            bool follows = ((bits & 1) != 0);
+            bool same_device = ((bits & 2) != 0);
+            bool alive = ((bits & 4) != 0);
+            bool same_format = ((bits & 8) != 0);
+            bool running = ((bits & 16) != 0);
+            bool r = au_mic_input_rebuilds(event, follows, same_device, alive, same_format, running);
+            bool healthy = (((alive && running) && same_format) && (same_device || (follows == false)));
+            if ((((event != AU_MEV_RENDER_FAILED) && healthy) && r)) {
+                bad = (bad + 1);
+            }
+            if ((((alive == false) || (running == false)) && (r == false))) {
+                bad = (bad + 1);
+            }
+            if (((event == AU_MEV_RENDER_FAILED) && (r == false))) {
+                bad = (bad + 1);
+            }
+            bits = (bits + 1);
+        }
+        event = (event + 1);
+    }
+    assert((bad == 0));
+    assert((au_mic_failures_after(AU_MEV_RENDER_FAILED, false, 0) == 1));
+    assert((au_mic_failures_after(AU_MEV_RENDER_FAILED, false, 5) == 6));
+    assert((au_mic_failures_after(AU_MEV_RENDER_FAILED, false, 6) == 6));
+    assert((au_mic_failures_after(AU_MEV_RENDER_FAILED, false, -3) == 1));
+    assert((au_mic_failures_after(AU_MEV_RENDER_FAILED, true, 5) == 0));
+    assert((au_mic_failures_after(AU_MEV_FORMAT, false, 5) == 0));
+    assert((au_mic_failures_after(AU_MEV_ALIVE, false, 9223372036854775807) == 0));
+    int64_t f = 0;
+    int64_t n = 0;
+    while ((au_restart_failed(f) == false)) {
+        f = au_mic_failures_after(AU_MEV_RENDER_FAILED, false, f);
+        n = (n + 1);
+    }
+    assert((n == AU_RESTART_ATTEMPTS));
+    assert((au_mic_max_frames(512) == 2048));
+    assert((au_mic_max_frames(4096) == 4096));
+    assert((au_mic_max_frames(0) == 2048));
+    assert((au_mic_max_frames(-5) == 2048));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1250,7 +1353,8 @@ int main(void) {
     test_au_moved_rules();
     test_au_restart_backoff();
     test_au_player_rules();
-    printf("All %d tests passed.\n", 7);
+    test_au_mic_input_rules();
+    printf("All %d tests passed.\n", 8);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

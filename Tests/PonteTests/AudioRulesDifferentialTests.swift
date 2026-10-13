@@ -280,6 +280,36 @@ private typealias L = AudioRulesLegacy
         log.finish(minimumCases: 78_000)
     }
 
+    /// micInputRebuilds, micMaxFrames (2026-10-13, an output-side change stopped the microphone).
+    @Test func micInputRules() {
+        let log = DiffLog("micInputRebuilds, micMaxFrames, micFailuresAfter")
+        log.check([F.micEventDefaultInput, F.micEventAlive, F.micEventFormat, F.micEventRunning, F.micEventRenderFailed],
+                  [L.micEventDefaultInput, L.micEventAlive, L.micEventFormat, L.micEventRunning, L.micEventRenderFailed], "events")
+        for event in [Int.min, -2, -1, 0, 1, 2, 3, 4, 5, 6, 100, Int.max] {
+            for bits in 0..<32 {
+                let follows = bits & 1 != 0, same = bits & 2 != 0, alive = bits & 4 != 0, format = bits & 8 != 0, running = bits & 16 != 0
+                log.check(F.micInputRebuilds(event: event, followsDefault: follows, sameDevice: same, deviceAlive: alive, sameFormat: format, unitRunning: running),
+                          L.micInputRebuilds(event: event, followsDefault: follows, sameDevice: same, deviceAlive: alive, sameFormat: format, unitRunning: running),
+                          describe(event, bits))
+            }
+        }
+        var r = DiffRandom(seed: 2314)
+        var frames: [Int] = Array(-10...10) + [511, 512, 2047, 2048, 2049, 4096, 8192, 1 << 20, Int.min, Int.max]
+        for _ in 0..<2_000 { frames.append(r.int(Int.min...Int.max)) }
+        for f in frames { log.check(F.micMaxFrames(ioFrames: f), L.micMaxFrames(ioFrames: f), "\(f)") }
+        var counts: [Int64] = Array(-10...20) + [.min, .max, .max - 1]
+        for _ in 0..<500 { counts.append(r.int64(.min ... .max)) }
+        for event in -1...6 {
+            for delivered in [false, true] {
+                for c in counts {
+                    log.check(F.micFailuresAfter(event: event, delivered: delivered, failures: c),
+                              L.micFailuresAfter(event: event, delivered: delivered, failures: c), describe(event, delivered, c))
+                }
+            }
+        }
+        log.finish(minimumCases: 10_000)
+    }
+
     /// playerStep, playerEnqueue, playerCompletion, playerReplays (2026-10-13, phrases cut by engine stops).
     @Test func playerRules() {
         let log = DiffLog("playerStep, playerEnqueue, playerCompletion, playerReplays")

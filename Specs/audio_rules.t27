@@ -26,7 +26,8 @@ pub const AU_QUIET_THRESHOLD_DBFS : f32 = -60.0;
 pub const AU_CONVERSION_SLACK_FRAMES : i64 = 1024;
 ; reconcileDebounceSeconds: delay before re-reading the HAL process list after a change notification.
 pub const AU_RECONCILE_DEBOUNCE_SECONDS : f64 = 0.05;
-; micTapBufferFrames: frames per AVAudioEngine input-tap callback requested by MicSource (a hint).
+; micTapBufferFrames: the most frames one MicSource callback takes (the input unit's slice), unless the
+; device's I/O cycle is longer.
 pub const AU_MIC_TAP_BUFFER_FRAMES : i64 = 2048;
 ; int16FullScale, int32FullScale: PCM full scale (Float).
 pub const AU_INT16_FULL_SCALE : f32 = 32768.0;
@@ -489,6 +490,47 @@ pub fn au_restart_failed(failures: i64) -> bool {
 ; The tap takes the bus's own format; AVAudioEngine raises on a tap without one.
 pub fn au_mic_tap_ready(input_rate: f64, input_channels: i64, bus_rate: f64, bus_channels: i64) -> bool {
     return input_rate > 0.0 and input_channels > 0 and bus_rate > 0.0 and bus_channels > 0;
+}
+
+; --- The microphone listens to its input device only (MicSource) --------------------------------------------------
+; Seen live 2026-10-13 23:14:41: changing the output volume, or another engine starting output, stopped the
+; microphone's AVAudioEngine (it always owns an output node on the default output device); the 0.4 s rebuild
+; cut the second half of a sentence. MicSource now captures with an input-only audio unit (AUHAL, input
+; enabled, output disabled) and listens to its input device only. What it hears (MEV_*): the default input
+; changed; the device's alive flag changed; its rate or input channels changed; the unit's running flag
+; changed; a render into our buffer failed.
+pub const AU_MEV_DEFAULT_INPUT : i64 = 0;
+pub const AU_MEV_ALIVE : i64 = 1;
+pub const AU_MEV_FORMAT : i64 = 2;
+pub const AU_MEV_RUNNING : i64 = 3;
+pub const AU_MEV_RENDER_FAILED : i64 = 4;
+
+; micInputRebuilds: a capture is rebuilt (the backoff above) when a render failed, when the device is gone or
+; the unit stopped, when the device's rate or channels differ from the capture's (`same_format`), or when the
+; default input moved to another device while the capture follows the default. Anything else, and every
+; output-side change, leaves the capture running.
+pub fn au_mic_input_rebuilds(event: i64, follows_default: bool, same_device: bool, device_alive: bool, same_format: bool, unit_running: bool) -> bool {
+    if (event == AU_MEV_RENDER_FAILED) { return true; }
+    if (event < AU_MEV_DEFAULT_INPUT or event > AU_MEV_RENDER_FAILED) { return false; }
+    if (device_alive == false or unit_running == false) { return true; }
+    if (event == AU_MEV_DEFAULT_INPUT) { return follows_default and same_device == false; }
+    return same_format == false;
+}
+
+; micFailuresAfter: the failure count after an input event that rebuilds. A render that failed before the
+; capture delivered any audio counts as one more failed start, so a capture that never works backs off and
+; reports failed instead of rebuilding every 0.3 s; anything else is a new change and starts again from 0.
+pub fn au_mic_failures_after(event: i64, delivered: bool, failures: i64) -> i64 {
+    if (event != AU_MEV_RENDER_FAILED or delivered) { return 0; }
+    if (failures < 0) { return 1; }
+    if (failures >= AU_RESTART_ATTEMPTS) { return AU_RESTART_ATTEMPTS; }
+    return failures + 1;
+}
+
+; micMaxFrames: the input unit's slice: the larger of micTapBufferFrames and the device's I/O buffer.
+pub fn au_mic_max_frames(io_frames: i64) -> i64 {
+    if (io_frames > AU_MIC_TAP_BUFFER_FRAMES) { return io_frames; }
+    return AU_MIC_TAP_BUFFER_FRAMES;
 }
 
 ; --- The call output heals itself (DeviceAudioPlayer) ------------------------------------------------------------
@@ -1227,4 +1269,61 @@ test au_player_rules {
     assert au_player_replays(1) == true;
     assert au_player_replays(3) == true;
     assert au_player_replays(4) == false;
+}
+
+test au_mic_input_rules {
+    // Live 2026-10-13: an output-side change stopped the microphone. Only input-side facts rebuild it.
+    assert au_mic_input_rebuilds(AU_MEV_RENDER_FAILED, false, true, true, true, true) == true;
+    assert au_mic_input_rebuilds(AU_MEV_DEFAULT_INPUT, true, false, true, true, true) == true;
+    assert au_mic_input_rebuilds(AU_MEV_DEFAULT_INPUT, false, false, true, true, true) == false;
+    assert au_mic_input_rebuilds(AU_MEV_DEFAULT_INPUT, true, true, true, true, true) == false;
+    assert au_mic_input_rebuilds(AU_MEV_ALIVE, false, true, false, true, true) == true;
+    assert au_mic_input_rebuilds(AU_MEV_ALIVE, false, true, true, true, true) == false;
+    assert au_mic_input_rebuilds(AU_MEV_FORMAT, false, true, true, false, true) == true;
+    assert au_mic_input_rebuilds(AU_MEV_FORMAT, false, true, true, true, true) == false;
+    assert au_mic_input_rebuilds(AU_MEV_RUNNING, false, true, true, true, false) == true;
+    assert au_mic_input_rebuilds(AU_MEV_RUNNING, false, true, true, true, true) == false;
+    assert au_mic_input_rebuilds(-1, false, false, false, false, false) == false;
+    assert au_mic_input_rebuilds(5, false, false, false, false, false) == false;
+    // Every event and fact: a healthy capture on the same device and format is never rebuilt, except
+    // after a failed render; a dead device or a stopped unit always is.
+    var bad: u32 = 0;
+    var event: i64 = AU_MEV_DEFAULT_INPUT;
+    while (event <= AU_MEV_RENDER_FAILED) {
+        var bits: i64 = 0;
+        while (bits < 32) {
+            var follows: bool = (bits & 1) != 0;
+            var same_device: bool = (bits & 2) != 0;
+            var alive: bool = (bits & 4) != 0;
+            var same_format: bool = (bits & 8) != 0;
+            var running: bool = (bits & 16) != 0;
+            var r: bool = au_mic_input_rebuilds(event, follows, same_device, alive, same_format, running);
+            var healthy: bool = alive and running and same_format and (same_device or follows == false);
+            if (event != AU_MEV_RENDER_FAILED and healthy and r) { bad = bad + 1; }
+            if ((alive == false or running == false) and r == false) { bad = bad + 1; }
+            if (event == AU_MEV_RENDER_FAILED and r == false) { bad = bad + 1; }
+            bits = bits + 1;
+        }
+        event = event + 1;
+    }
+    assert bad == 0;
+    assert au_mic_failures_after(AU_MEV_RENDER_FAILED, false, 0) == 1;
+    assert au_mic_failures_after(AU_MEV_RENDER_FAILED, false, 5) == 6;
+    assert au_mic_failures_after(AU_MEV_RENDER_FAILED, false, 6) == 6;
+    assert au_mic_failures_after(AU_MEV_RENDER_FAILED, false, -3) == 1;
+    assert au_mic_failures_after(AU_MEV_RENDER_FAILED, true, 5) == 0;
+    assert au_mic_failures_after(AU_MEV_FORMAT, false, 5) == 0;
+    assert au_mic_failures_after(AU_MEV_ALIVE, false, 9223372036854775807) == 0;
+    // A render that keeps failing before any audio reaches failed after RESTART_ATTEMPTS rebuilds.
+    var f: i64 = 0;
+    var n: i64 = 0;
+    while (au_restart_failed(f) == false) {
+        f = au_mic_failures_after(AU_MEV_RENDER_FAILED, false, f);
+        n = n + 1;
+    }
+    assert n == AU_RESTART_ATTEMPTS;
+    assert au_mic_max_frames(512) == 2048;
+    assert au_mic_max_frames(4096) == 4096;
+    assert au_mic_max_frames(0) == 2048;
+    assert au_mic_max_frames(-5) == 2048;
 }

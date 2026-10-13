@@ -85,6 +85,29 @@ final class Meter {
     private var windowPeak: Float = 0
     private var peak: Float = 0
     private var firstFormat: AVAudioFormat?
+    // Timeline: buffers whose sample time does not follow the previous buffer, and the frames between.
+    private var nextSample: Int64?
+    private var gaps = 0
+    private var missing: Int64 = 0
+
+    /// A capture timestamp (sample time on the device's timeline), when the source gives one.
+    func timeline(_ time: AVAudioTime?, frames: Int) {
+        guard let time, time.isSampleTimeValid else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        if let expected = nextSample, time.sampleTime != expected {
+            gaps += 1
+            missing += time.sampleTime - expected
+        }
+        nextSample = time.sampleTime + Int64(frames)
+    }
+
+    func timelineReport() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard nextSample != nil else { return nil }
+        return "timeline: \(gaps) discontinuities, \(missing) frames missing between buffers"
+    }
 
     func add(_ buffer: AVAudioPCMBuffer) {
         let samples = PCM.samples(buffer)
@@ -168,7 +191,8 @@ func capture(source: AudioSource, seconds: Double, out: URL?, describeExtra: (()
     var formatError: String?
     let writerLock = NSLock()
 
-    try source.start { buffer, _ in
+    try source.start { buffer, time in
+        meter.timeline(time, frames: Int(buffer.frameLength))
         meter.add(buffer)
         writerLock.lock()
         defer { writerLock.unlock() }
@@ -197,6 +221,7 @@ func capture(source: AudioSource, seconds: Double, out: URL?, describeExtra: (()
     let rate = source.outputFormat.sampleRate
     print(String(format: "total: frames=%d (%.2f s at %.0f Hz) rms=%@ (%@) peak=%@",
                  total.frames, Double(total.frames) / rate, rate, fmt(total.rms), db(total.rms), fmt(total.peak)))
+    if let report = meter.timelineReport() { print(report) }
     if let formatError { throw ProbeError.failed("WAV writer: \(formatError)") }
     if let out {
         if total.frames > 0 { print("wrote \(out.path)") } else { print("no audio delivered; \(out.path) not written") }

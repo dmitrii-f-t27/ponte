@@ -32,7 +32,7 @@ public enum AudioRules {
     public static let reconcileDebounceSeconds: Double = AU_RECONCILE_DEBOUNCE_SECONDS
     /// UID prefix of Ponte's private tap aggregate devices (hidden from device pickers).
     public static let ponteAggregateUIDPrefix = DeviceText.row(Int64(DV_ROW_PONTE_PREFIX))
-    /// Frames per AVAudioEngine input-tap callback requested by MicSource (a hint).
+    /// The most frames one MicSource callback takes, unless the device's I/O cycle is longer.
     public static let micTapBufferFrames = Int(AU_MIC_TAP_BUFFER_FRAMES)
     /// How many parent processes to walk up when looking for a process's owning app.
     public static let parentChainMaxDepth = Int(DV_PARENT_CHAIN_MAX_DEPTH)
@@ -308,6 +308,31 @@ public enum AudioRules {
     public static func micTapReady(inputRate: Double, inputChannels: Int, busRate: Double, busChannels: Int) -> Bool {
         au_mic_tap_ready(inputRate, Int64(inputChannels), busRate, Int64(busChannels))
     }
+
+    // MARK: - The microphone listens to its input device only (MicSource)
+
+    /// What MicSource hears: the default input, the device's alive flag, its format, the unit's running flag
+    /// changed; a render failed.
+    public static let micEventDefaultInput = Int(AU_MEV_DEFAULT_INPUT)
+    public static let micEventAlive = Int(AU_MEV_ALIVE)
+    public static let micEventFormat = Int(AU_MEV_FORMAT)
+    public static let micEventRunning = Int(AU_MEV_RUNNING)
+    public static let micEventRenderFailed = Int(AU_MEV_RENDER_FAILED)
+
+    /// Whether an input-side event rebuilds the capture (output-side changes never reach MicSource).
+    public static func micInputRebuilds(event: Int, followsDefault: Bool, sameDevice: Bool, deviceAlive: Bool,
+                                        sameFormat: Bool, unitRunning: Bool) -> Bool {
+        au_mic_input_rebuilds(Int64(event), followsDefault, sameDevice, deviceAlive, sameFormat, unitRunning)
+    }
+
+    /// The failure count after an input event that rebuilds: a render that failed before any audio was
+    /// delivered is one more failed start; anything else starts again from 0.
+    public static func micFailuresAfter(event: Int, delivered: Bool, failures: Int64) -> Int64 {
+        au_mic_failures_after(Int64(event), delivered, failures)
+    }
+
+    /// The input unit's slice: the larger of micTapBufferFrames and the device's I/O buffer.
+    public static func micMaxFrames(ioFrames: Int) -> Int { Int(au_mic_max_frames(Int64(ioFrames))) }
 
     // MARK: - The call output heals itself (DeviceAudioPlayer)
 
