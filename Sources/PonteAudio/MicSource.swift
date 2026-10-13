@@ -3,11 +3,27 @@ import AVFoundation
 import CoreAudio
 import Foundation
 import PonteCore
+import PonteObjC
 
 /// Captures one input device (nil = system default input) with AVAudioEngine and delivers mono
 /// Float32 at the device's native rate. The host app needs the Microphone permission
 /// (`NSMicrophoneUsageDescription`); without it macOS delivers silence or refuses to start.
+///
+/// A device change (headphones plugged in, an iPhone's Continuity microphone appearing, a new
+/// default device or rate) stops AVAudioEngine and posts `AVAudioEngineConfigurationChange`.
+/// The engine is then rebuilt later on a private queue, never inside that notification: rebuilding
+/// there installed a tap with a stale format, AVAudioEngine raised an Objective-C exception and the
+/// app aborted (live crash 2026-10-13). The wait and the backoff come from AudioRules (audio_rules.t27).
 public final class MicSource: AudioSource {
+    public enum Status: Equatable, Sendable {
+        case idle
+        case capturing
+        /// Rebuilding after a device change; `failures` rebuilds in a row have failed so far.
+        case restarting(failures: Int)
+        /// AudioRules.restartFailed: still retrying, but the app should say the microphone is down.
+        case failed(String)
+    }
+
     public let device: AudioDevice?
 
     /// Mono Float32 at the device's native rate. Predicted from the HAL before `start`, exact after.
@@ -16,10 +32,21 @@ public final class MicSource: AudioSource {
     /// Frames per tap callback requested from AVAudioEngine (a hint; the engine may differ).
     public var bufferFrames = AVAudioFrameCount(AudioRules.micTapBufferFrames)
 
+    /// Called on a private queue whenever `status` changes.
+    public var onStatusChange: ((Status) -> Void)?
+
+    public var status: Status { lock.withLock { _status } }
+
     private let lock = NSLock()
+    private let restartQueue = DispatchQueue(label: "app.ponte.mic.restart")
     private var engine: AVAudioEngine?
     private var handler: PCMHandler?
     private var configObserver: NSObjectProtocol?
+    /// True between `start` and `stop`: only then does a device change lead to a rebuild.
+    private var running = false
+    private var restartWork: DispatchWorkItem?
+    private var failures: Int64 = 0
+    private var _status: Status = .idle
 
     public init(device: AudioDevice?) {
         self.device = device
@@ -53,24 +80,87 @@ public final class MicSource: AudioSource {
         default: throw PonteAudioError.permissionDenied(.microphone)
         }
         lock.lock()
-        defer { lock.unlock() }
-        guard engine == nil else { throw PonteAudioError.alreadyRunning }
+        guard !running else {
+            lock.unlock()
+            throw PonteAudioError.alreadyRunning
+        }
         self.handler = handler
         do {
             try startEngine()
         } catch {
             self.handler = nil
+            lock.unlock()
             throw error
         }
+        running = true
+        failures = 0
+        let changed = setStatus(.capturing)
+        lock.unlock()
+        notify(changed)
     }
 
     public func stop() {
         lock.lock()
-        defer { lock.unlock() }
-        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
-        configObserver = nil
+        running = false
+        restartWork?.cancel()
+        restartWork = nil
         stopEngine()
         handler = nil
+        failures = 0
+        let changed = setStatus(.idle)
+        lock.unlock()
+        notify(changed)
+    }
+
+    // MARK: Device changes
+
+    /// AVAudioEngineConfigurationChange: tear the engine down now, rebuild it later.
+    private func configurationChanged(of changedEngine: AVAudioEngine) {
+        lock.lock()
+        guard running, engine === changedEngine else {
+            lock.unlock()
+            return
+        }
+        stopEngine()
+        failures = 0
+        let changed = setStatus(.restarting(failures: 0))
+        scheduleRestart()
+        lock.unlock()
+        notify(changed)
+    }
+
+    /// Lock held. The next rebuild after AudioRules.restartDelayMs for the current failure count.
+    private func scheduleRestart() {
+        restartWork?.cancel()
+        let delay = AudioRules.restartDelayMs(attempt: failures)
+        let work = DispatchWorkItem { [weak self] in self?.attemptRestart() }
+        restartWork = work
+        restartQueue.asyncAfter(deadline: .now() + .milliseconds(Int(delay)), execute: work)
+    }
+
+    private func attemptRestart() {
+        lock.lock()
+        guard running, engine == nil else {
+            lock.unlock()
+            return
+        }
+        restartWork = nil
+        let changed: Status?
+        do {
+            try startEngine()
+            failures = 0
+            changed = setStatus(.capturing)
+        } catch {
+            failures += 1
+            if AudioRules.restartFailed(failures: failures) {
+                changed = setStatus(.failed(error.localizedDescription))
+            } else {
+                changed = setStatus(.restarting(failures: Int(failures)))
+            }
+            scheduleRestart()
+        }
+        lock.unlock()
+        notify(changed)
     }
 
     // MARK: Engine (lock held)
@@ -92,16 +182,25 @@ public final class MicSource: AudioSource {
                                               &deviceID, UInt32(MemoryLayout<AudioDeviceID>.size))
             try HAL.check(status, "set input device \(device?.name ?? "")")
         }
-        let hwFormat = input.outputFormat(forBus: 0)
-        guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
-            throw PonteAudioError.unsupportedFormat("input has no channels (\(hwFormat)); is the device an input?")
+        // Both sides of the input node need a real format, or installTap raises (an Objective-C
+        // exception Swift cannot catch). The tap then takes the bus's own format (format: nil).
+        let deviceFormat = input.inputFormat(forBus: 0)
+        let busFormat = input.outputFormat(forBus: 0)
+        guard AudioRules.micTapReady(inputRate: deviceFormat.sampleRate, inputChannels: Int(deviceFormat.channelCount),
+                                     busRate: busFormat.sampleRate, busChannels: Int(busFormat.channelCount)) else {
+            throw PonteAudioError.unsupportedFormat("input not ready (device \(deviceFormat), bus \(busFormat))")
         }
-        outputFormat = PCM.monoFormat(sampleRate: hwFormat.sampleRate)
+        outputFormat = PCM.monoFormat(sampleRate: busFormat.sampleRate)
 
         let handler = self.handler
-        input.installTap(onBus: 0, bufferSize: bufferFrames, format: hwFormat) { buffer, time in
-            guard let handler, let mono = PCM.mono(buffer) else { return }
-            handler(mono, time)
+        let frames = bufferFrames
+        if let reason = PonteCatchObjC({
+            input.installTap(onBus: 0, bufferSize: frames, format: nil) { buffer, time in
+                guard let handler, let mono = PCM.mono(buffer) else { return }
+                handler(mono, time)
+            }
+        }) {
+            throw PonteAudioError.engine("installTap: \(reason)")
         }
         engine.prepare()
         do {
@@ -111,26 +210,35 @@ public final class MicSource: AudioSource {
             throw PonteAudioError.engine("start failed: \(error.localizedDescription)")
         }
         self.engine = engine
-
-        // Device unplugged or its format changed: rebuild the engine on the same device.
         configObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.lock.lock()
-            defer { self.lock.unlock() }
-            guard self.engine != nil else { return }
-            if let configObserver = self.configObserver { NotificationCenter.default.removeObserver(configObserver) }
-            self.configObserver = nil
-            self.stopEngine()
-            try? self.startEngine()
+        ) { [weak self, weak engine] _ in
+            guard let self, let engine else { return }
+            // Never rebuild on the posting thread; hop to our queue first.
+            self.restartQueue.async { self.configurationChanged(of: engine) }
         }
     }
 
     private func stopEngine() {
+        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
+        configObserver = nil
         guard let engine else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        _ = PonteCatchObjC {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
         self.engine = nil
+    }
+
+    /// Lock held. Returns the new status when it changed, for `notify` after unlocking.
+    private func setStatus(_ new: Status) -> Status? {
+        guard new != _status else { return nil }
+        _status = new
+        return new
+    }
+
+    private func notify(_ changed: Status?) {
+        guard let changed, let onStatusChange else { return }
+        restartQueue.async { onStatusChange(changed) }
     }
 }

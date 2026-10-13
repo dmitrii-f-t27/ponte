@@ -146,6 +146,7 @@ final class AppModel {
     @ObservationIgnored private var cachedClaude: ClaudeTranslator?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
     @ObservationIgnored private var incomingTap: AppAudioTapSource?
+    @ObservationIgnored private var outgoingMic: MicSource?
     @ObservationIgnored private var terminationSignal: DispatchSourceSignal?
     @ObservationIgnored private var silenceWarning = SilenceWarning()
 
@@ -519,6 +520,16 @@ final class AppModel {
         }
     }
 
+    /// MicSource.Status → AppRules.MIC_*. Called on the source's queue.
+    nonisolated static func micCode(_ status: MicSource.Status) -> Int32 {
+        switch status {
+        case .idle: return AppRules.MIC_IDLE
+        case .capturing: return AppRules.MIC_CAPTURING
+        case .restarting: return AppRules.MIC_RESTARTING
+        case .failed: return AppRules.MIC_FAILED
+        }
+    }
+
     private func tapStatusChanged(_ code: Int32, _ detail: String?, from tap: AppAudioTapSource) {
         guard tap === incomingTap else { return }
         sourceTapStatus = code
@@ -609,9 +620,23 @@ final class AppModel {
         }
         let outgoingSource: AudioSource
         if !micIsLive, let url = launch.outgoingFile {
+            outgoingMic = nil
+            micSourceStatus = AppRules.MIC_NONE
             outgoingSource = fileSource(url, direction: .outgoing)
         } else {
-            outgoingSource = MicSource(device: micDevice)
+            let mic = MicSource(device: micDevice)
+            mic.onStatusChange = { [weak self, weak mic] status in
+                let code = AppModel.micCode(status)
+                Task { @MainActor in
+                    guard let self, let mic, mic === self.outgoingMic else { return }
+                    self.micSourceStatus = code
+                    self.log.info("mic status \(code, privacy: .public)")
+                    self.pollAudioStats()
+                }
+            }
+            outgoingMic = mic
+            micSourceStatus = AppRules.MIC_IDLE
+            outgoingSource = mic
         }
         func mode(_ direction: Direction) -> CaptureMode {
             CaptureMode(ruleCode: AppRules.laneMode(direction: AppRules.directionCode(direction), outgoingMode: outgoingMode.ruleCode))
@@ -673,6 +698,8 @@ final class AppModel {
             callStartedAt = nil
             incomingTap = nil
             sourceTapStatus = AppRules.TAP_IDLE
+            outgoingMic = nil
+            micSourceStatus = AppRules.MIC_NONE
         }
         pollAudioStats()
         updatePushToTalk()
@@ -718,6 +745,8 @@ final class AppModel {
         outgoingLane = nil
         incomingTap = nil
         sourceTapStatus = AppRules.TAP_IDLE
+        outgoingMic = nil
+        micSourceStatus = AppRules.MIC_NONE
         incomingSpeaking = false
         outgoingSpeaking = false
         incomingPartial = ""

@@ -3,6 +3,7 @@ import AVFoundation
 import CoreAudio
 import Foundation
 import PonteCore
+import PonteObjC
 
 /// Plays PCM to one fixed output device (nil = system default output): headphones, or
 /// "BlackHole 2ch" which the call app uses as its microphone.
@@ -84,7 +85,8 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
         lock.lock()
         player.stop()
         for (_, c) in converters { c.reset() }
-        if running { player.play() }
+        // A device change may have stopped the engine already; play() on it raises (uncatchable in Swift).
+        if running, engine.isRunning { _ = PonteCatchObjC { player.play() } }
         lock.unlock()
         releaseAll()
     }
@@ -176,7 +178,9 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
         } catch {
             throw PonteAudioError.engine("start failed on \(device?.name ?? "default output"): \(error.localizedDescription)")
         }
-        player.play()
+        if let reason = PonteCatchObjC({ player.play() }) {
+            throw PonteAudioError.engine("play failed on \(device?.name ?? "default output"): \(reason)")
+        }
         running = true
         lastError = nil
 
