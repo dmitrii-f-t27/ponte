@@ -48,7 +48,7 @@ struct StatusChip: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(Capsule().fill(Color.primary.opacity(0.06)))
-        .help(help)
+        .accessibilityHint(help)
     }
 
     @ViewBuilder private var indicator: some View {
@@ -117,7 +117,7 @@ struct BannerView: View {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.borderless)
-            .help("Скрыть")
+            .accessibilityHint("Скрыть")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 9)
@@ -143,7 +143,7 @@ struct LineRow: View {
                 Label("Перевод не получен", systemImage: "exclamationmark.triangle")
                     .font(.system(size: max(13, fontSize - 6)))
                     .foregroundStyle(.orange)
-                    .help(line.translationError ?? "")
+                    .accessibilityHint(line.translationError ?? "")
             default:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)

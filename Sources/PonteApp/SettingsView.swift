@@ -220,7 +220,7 @@ private struct GlossarySettings: View {
                             Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
                         }
                         .buttonStyle(.borderless)
-                        .help("Удалить")
+                        .accessibilityHint("Удалить")
                     }
                 }
             }

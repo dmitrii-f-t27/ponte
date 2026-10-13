@@ -47,14 +47,14 @@ private struct MainToolbar: ToolbarContent {
                 Label("Субтитры поверх окон",
                       systemImage: model.overlayVisible ? "captions.bubble.fill" : "captions.bubble")
             }
-            .help(model.overlayVisible ? "Скрыть плавающие субтитры" : "Показать плавающие субтитры поверх звонка")
+            .accessibilityHint(model.overlayVisible ? "Скрыть плавающие субтитры" : "Показать плавающие субтитры поверх звонка")
 
             Button {
                 model.saveTranscript()
             } label: {
                 Label("Сохранить стенограмму", systemImage: "square.and.arrow.down")
             }
-            .help("Сохранить стенограмму в ~/Documents/Ponte")
+            .accessibilityHint("Сохранить стенограмму в ~/Documents/Ponte")
             .disabled(!model.enabled(AppRules.BTN_SAVE_TRANSCRIPT))
 
             Button {
@@ -63,12 +63,12 @@ private struct MainToolbar: ToolbarContent {
             } label: {
                 Label("Мастер настройки", systemImage: "wand.and.stars")
             }
-            .help("Мастер настройки: разрешения, модели, BlackHole")
+            .accessibilityHint("Мастер настройки: разрешения, модели, BlackHole")
 
             SettingsLink {
                 Label("Настройки", systemImage: "gearshape")
             }
-            .help("Настройки")
+            .accessibilityHint("Настройки")
         }
     }
 }
@@ -86,7 +86,7 @@ private struct ControlBar: View {
                 SourcePicker()
                     .frame(width: 280)
                     .disabled(!model.enabled(AppRules.BTN_SOURCE))
-                    .help(model.enabled(AppRules.BTN_SOURCE) ? "Программа, в которой идёт звонок" : "Источник меняется после «Стоп»")
+                    .accessibilityHint(model.enabled(AppRules.BTN_SOURCE) ? "Программа, в которой идёт звонок" : "Источник меняется после «Стоп»")
                 Spacer()
                 StartStopButton()
             }
@@ -199,7 +199,7 @@ private struct StatusRow: View {
                 Label("Динамики Мака — нужны наушники", systemImage: "headphones")
                     .font(.callout)
                     .foregroundStyle(.orange)
-                    .help("Микрофон услышит собеседников из динамиков. Наденьте наушники.")
+                    .accessibilityHint("Микрофон услышит собеседников из динамиков. Наденьте наушники.")
             }
         }
     }
@@ -246,14 +246,14 @@ private struct IncomingColumn: View {
                     Label("Голос в наушники", systemImage: "headphones")
                 }
                 .toggleStyle(.button)
-                .help("Озвучивать русский перевод в наушники")
+                .accessibilityHint("Озвучивать русский перевод в наушники")
                 Button {
                     model.replayLast(.incoming)
                 } label: {
                     Label("Повторить", systemImage: "arrow.counterclockwise")
                 }
                 .disabled(!model.enabled(AppRules.BTN_REPLAY_INCOMING))
-                .help("Повторить последнюю фразу в наушники")
+                .accessibilityHint("Повторить последнюю фразу в наушники")
                 Spacer()
                 if model.incomingSpeaking {
                     SpeakingBadge(text: "в наушниках", tint: .blue)
@@ -283,14 +283,14 @@ private struct OutgoingColumn: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
-                .help("Авто: каждая фраза уходит в звонок. Push-to-talk: только пока держите клавишу.")
+                .accessibilityHint("Авто: каждая фраза уходит в звонок. Push-to-talk: только пока держите клавишу.")
                 Button {
                     model.replayLast(.outgoing)
                 } label: {
                     Label("Сказать заново", systemImage: "arrow.counterclockwise")
                 }
                 .disabled(!model.enabled(AppRules.BTN_REPLAY_OUTGOING))
-                .help("Повторить последнюю фразу в звонок")
+                .accessibilityHint("Повторить последнюю фразу в звонок")
                 Spacer(minLength: 0)
             }
             Divider().padding(.horizontal, 22)
@@ -336,7 +336,7 @@ private struct OutgoingFooter: View {
                 .controlSize(.large)
                 .tint(.orange)
                 .fixedSize()
-                .help("Не слушать микрофон и не говорить в звонок (⇧⌘P)")
+                .accessibilityHint("Не слушать микрофон и не говорить в звонок (⇧⌘P)")
             }
             if model.outgoingMode == .pushToTalk {
                 PushToTalkPad()
