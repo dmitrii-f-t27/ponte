@@ -992,8 +992,7 @@ final class AppModel {
             memory: memory,
             mode: mode(.outgoing),
             speechOutputEnabled: speaks(.outgoing))
-        let ownTalk = self.ownTalk
-        incoming.dropsPhrase = { _, start, end in ownTalk.drops(start: start, end: end) }
+        incoming.dropsPhrase = incomingPhraseFilter()
         for lane in [incoming, outgoing] {
             lane.glossary = glossary
             let direction = lane.direction
@@ -1213,9 +1212,27 @@ final class AppModel {
         return URL(string: text)
     }
 
-    /// The Meet code in the call app's window titles (needs the Accessibility permission Ponte asks for the
-    /// push-to-talk key); nil when none is found.
-    func detectMeetCode() -> String? {
+    /// The Meet code: in the call app's window titles (Accessibility, which Ponte has for the push-to-talk key),
+    /// else in the browser's local tab list (PeerRules.browserTabPorts; BrowserOS serves one); nil when none.
+    func detectMeetCode() async -> String? {
+        if let code = meetCodeInWindowTitles() { return code }
+        for port in PeerRules.browserTabPorts {
+            guard let url = URL(string: "http://127.0.0.1:\(port)/json/list") else { continue }
+            var request = URLRequest(url: url, timeoutInterval: Double(PeerRules.tabListTimeoutMs) / 1000)
+            request.httpMethod = "GET"
+            guard let (data, _) = try? await URLSession.shared.data(for: request),
+                  let tabs = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { continue }
+            for tab in tabs where (tab["type"] as? String) == "page" {
+                if let address = tab["url"] as? String, address.contains("meet.google.com"),
+                   let code = PeerRules.meetCode(in: address) {
+                    return code
+                }
+            }
+        }
+        return nil
+    }
+
+    private func meetCodeInWindowTitles() -> String? {
         guard case .app(let bundleID) = source else { return nil }
         for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID) {
             let element = AXUIElementCreateApplication(app.processIdentifier)
@@ -1259,6 +1276,10 @@ final class AppModel {
             }
             link.onVoice = { windows.record($0) }
             link.onAudio = { sender, buffer in voices.play(buffer, from: sender) }
+            link.onPeerGone = { sender in
+                windows.close(sender: sender)
+                voices.remove(sender)
+            }
             peerLink = link
             peerOn = true
             link.start()
@@ -1279,12 +1300,20 @@ final class AppModel {
     /// The running lanes follow the link: the incoming lane drops another Ponte's Portuguese voice, the outgoing
     /// lane's microphone also goes to the other Russians.
     private func attachPeer() {
-        let windows = peerWindows, mic = peerMic
-        incomingLane?.peerVoiceFilter = peerLink == nil ? nil : { text, start, end in
-            windows.isPeerVoice(text, start: start, end: end)
-        }
+        let mic = peerMic
+        incomingLane?.dropsPhrase = incomingPhraseFilter()
         outgoingLane?.setPeerSink(peerLink == nil ? nil : { buffer, signal in mic.push(buffer, hasSignal: signal) })
         updatePeerMic()
+    }
+
+    /// What the incoming lane must not translate: the owner's own voice coming back from the call
+    /// (lane_rules: ln_own_talk_drops) and, with «Русские в звонке», another Ponte's Portuguese voice (pe_is_peer_voice).
+    private func incomingPhraseFilter() -> (String, Date, Date) -> Bool {
+        let ownTalk = self.ownTalk
+        let windows: PeerWindows? = peerLink == nil ? nil : peerWindows
+        return { text, start, end in
+            ownTalk.drops(start: start, end: end) || (windows?.isPeerVoice(text, start: start, end: end) ?? false)
+        }
     }
 
     private func updatePeerMic() {

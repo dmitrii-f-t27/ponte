@@ -8,6 +8,8 @@ enum PeerRulesLegacy {
     static let sampleRate = 16_000.0
     static let frameMs = 40
     static let maxPeers = 6
+    static let browserTabPorts = [9111, 9222]
+    static let tabListTimeoutMs = 1500
 
     static let msgHello: UInt8 = 1
     static let msgAudio: UInt8 = 2

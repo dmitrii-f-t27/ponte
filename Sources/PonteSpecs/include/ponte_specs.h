@@ -4,6 +4,7 @@
 #include "context_rules.api.h"
 #include "device_rules.api.h"
 #include "lane_rules.api.h"
+#include "peer_rules.api.h"
 #include "segment_rules.api.h"
 #include "text_rules.api.h"
 #include "transcript_rules.api.h"

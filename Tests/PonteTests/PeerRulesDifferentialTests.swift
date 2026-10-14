@@ -18,6 +18,7 @@ private typealias L = PeerRulesLegacy
         log.check(F.sampleRate, L.sampleRate, "sampleRate")
         log.check([F.frameMs, F.maxPeers, F.helloEveryMs, F.peerTimeoutMs, F.vadHangoverMs, F.jitterWindow],
                   [L.frameMs, L.maxPeers, L.helloEveryMs, L.peerTimeoutMs, L.vadHangoverMs, L.jitterWindow], "Int constants")
+        log.check(F.browserTabPorts + [F.tabListTimeoutMs], L.browserTabPorts + [L.tabListTimeoutMs], "tab list")
         log.check([F.msgHello, F.msgAudio, F.msgVoice, F.msgBye], [L.msgHello, L.msgAudio, L.msgVoice, L.msgBye], "messages")
         log.check([F.voiceTTS, F.voiceOwn, F.voiceStart, F.voiceEnd], [L.voiceTTS, L.voiceOwn, L.voiceStart, L.voiceEnd], "voice codes")
         log.check([F.statusOff, F.statusConnecting, F.statusWaiting, F.statusLinked, F.statusFailed],

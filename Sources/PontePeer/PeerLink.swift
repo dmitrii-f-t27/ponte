@@ -28,6 +28,8 @@ public final class PeerLink: @unchecked Sendable {
     public var onVoice: ((VoiceEvent) -> Void)?
     /// A frame of another Russian's voice (16 kHz mono Float32); on the link queue.
     public var onAudio: ((UInt64, AVAudioPCMBuffer) -> Void)?
+    /// Another Russian left (bye) or went silent past PeerRules.peerTimeoutMs; on the link queue.
+    public var onPeerGone: ((UInt64) -> Void)?
 
     public let roomID: String
     public let sender = UInt64.random(in: 1...UInt64.max)
@@ -177,6 +179,7 @@ public final class PeerLink: @unchecked Sendable {
         connected = false
         self.task = nil
         failures += 1
+        for peer in peers.keys { onPeerGone?(peer) }
         peers.removeAll()
         reportStatus()
         let delay = PeerRules.reconnectDelayMs(attempt: failures - 1)
@@ -190,7 +193,11 @@ public final class PeerLink: @unchecked Sendable {
         guard running else { return }
         send(kind: PeerRules.msgHello, payload: Data())
         let now = Date()
-        peers = peers.filter { PeerRules.peerAlive(msSinceHello: Int64(now.timeIntervalSince($0.value) * 1000)) }
+        let gone = peers.filter { !PeerRules.peerAlive(msSinceHello: Int64(now.timeIntervalSince($0.value) * 1000)) }.keys
+        for peer in gone {
+            peers.removeValue(forKey: peer)
+            onPeerGone?(peer)
+        }
         reportStatus()
     }
 
@@ -220,6 +227,7 @@ public final class PeerLink: @unchecked Sendable {
         switch kind {
         case PeerRules.msgBye:
             peers.removeValue(forKey: peer)
+            onPeerGone?(peer)
             reportStatus()
             return
         default:

@@ -97,6 +97,15 @@ public final class PeerWindows: @unchecked Sendable {
         }
     }
 
+    /// A Russian left or went silent: his windows end now (an open «Свой голос» window would otherwise drop
+    /// every phrase of the other side).
+    public func close(sender: UInt64, at date: Date = Date()) {
+        let ms = Self.ms(date)
+        lock.withLock {
+            for i in windows.indices where windows[i].sender == sender && windows[i].endMs < 0 { windows[i].endMs = ms }
+        }
+    }
+
     public func removeAll() { lock.withLock { windows.removeAll() } }
 
     static func ms(_ date: Date) -> Int64 { Int64((date.timeIntervalSince1970 * 1000).rounded()) }

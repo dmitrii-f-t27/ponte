@@ -89,6 +89,11 @@ pub const PE_SIMILARITY_MIN_MILLI : i64 = 350;
 pub const PE_SIMILARITY_SURE_MILLI : i64 = 700;
 ; Ended windows are kept this long, then forgotten.
 pub const PE_WINDOW_KEEP_MS : i64 = 20000;
+; "Take from Meet": when the call window is not readable (another Space), the Meet code is read from the browser's
+; local tab list (DevTools /json/list) on these ports, waiting at most PE_TAB_LIST_TIMEOUT_MS. BrowserOS serves 9111.
+pub const PE_BROWSER_TAB_PORT_1 : i64 = 9111;
+pub const PE_BROWSER_TAB_PORT_2 : i64 = 9222;
+pub const PE_TAB_LIST_TIMEOUT_MS : i64 = 1500;
 
 ; --- Google Meet code -----------------------------------------------------------------------------------------------
 ; xxx-xxxx-xxx: 12 bytes, hyphens at 3 and 8.
@@ -434,6 +439,8 @@ pub fn pe_fixture_meet_code_is(text: i64, code: i64) -> bool {
 }
 
 test pe_link_rules {
+    assert PE_BROWSER_TAB_PORT_1 == 9111;
+    assert PE_TAB_LIST_TIMEOUT_MS > 0;
     // Status: off, linked, waiting, failed, connecting.
     assert pe_status(false, true, 2, 0) == PE_STATUS_OFF;
     assert pe_status(false, false, 0, 9) == PE_STATUS_OFF;

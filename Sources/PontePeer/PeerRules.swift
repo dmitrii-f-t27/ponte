@@ -21,6 +21,9 @@ public enum PeerRules {
     public static let frameMs = Int(PE_FRAME_MS)
     /// The most Pontes in one room besides this one.
     public static let maxPeers = Int(PE_MAX_PEERS)
+    /// «Взять из Meet»: the browser's local tab list ports and how long to wait for it.
+    public static let browserTabPorts = [Int(PE_BROWSER_TAB_PORT_1), Int(PE_BROWSER_TAB_PORT_2)]
+    public static let tabListTimeoutMs = Int(PE_TAB_LIST_TIMEOUT_MS)
 
     // MARK: - Messages (the first byte of a relay message)
 

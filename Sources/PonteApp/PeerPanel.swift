@@ -22,10 +22,13 @@ struct PeerPanel: View {
                     .frame(minWidth: 200)
                     .disabled(model.peerOn)
                 Button("Взять из Meet") {
-                    if let code = model.detectMeetCode() {
-                        model.peerCode = code
-                    } else {
-                        model.peerNotice = "Код в окне звонка не найден. Скопируйте его из адреса Meet: meet.google.com/abc-defg-hij."
+                    Task {
+                        if let code = await model.detectMeetCode() {
+                            model.peerCode = code
+                            model.peerNotice = nil
+                        } else {
+                            model.peerNotice = "Код встречи не найден. Скопируйте его из адреса Meet: meet.google.com/abc-defg-hij."
+                        }
                     }
                 }
                 .disabled(model.peerOn)
