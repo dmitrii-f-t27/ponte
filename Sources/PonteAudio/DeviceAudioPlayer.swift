@@ -62,6 +62,9 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
     private var streamEnd: Int64 = 0
     private var configObserver: NSObjectProtocol?
     private var rebuildWork: DispatchWorkItem?
+    /// Checks every second that the running engine really plays into its device (see `checkEngineAlive`).
+    private var watchdog: DispatchSourceTimer?
+    private var startedAt: Date?
     private var _lastError: Error?
     private var _volume: Float = 1
     private var book = PlayerBook<Payload>()
@@ -72,9 +75,24 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
     public init(device: AudioDevice?) {
         self.device = device
         self.name = device?.name ?? "default"
+        guard device != nil else { return }
+        // Live 2026-10-13 (0.1.4): the call output logged "phrase played" while the app's sound went to the
+        // MacBook speakers, not BlackHole, so the call heard nothing. Look every second and rebuild if so.
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let resume = self.checkEngineAlive()
+            self.lock.unlock()
+            resume.forEach { $0.resume() }
+        }
+        timer.resume()
+        watchdog = timer
     }
 
     deinit {
+        watchdog?.cancel()
         rebuildWork?.cancel()
         if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
         let player = player, engine = engine
@@ -329,9 +347,45 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
 
     /// Lock held. A stop that no notification reported (yet) is handled like the notification.
     private func checkEngineAlive() -> [CheckedContinuation<Void, Never>] {
-        guard book.state == AudioRules.playerRunning, let engine, !engine.isRunning else { return [] }
-        PonteDiagnostics.log("player \(name): engine found stopped")
-        return carryOut(book.configurationChanged(engineRunning: false))
+        guard book.state == AudioRules.playerRunning, let engine else { return [] }
+        if !engine.isRunning {
+            PonteDiagnostics.log("player \(name): engine found stopped")
+            return carryOut(book.configurationChanged(engineRunning: false))
+        }
+        if let wrong = wrongOutputDevice(engine) {
+            PonteDiagnostics.log("player \(name): engine plays into \(wrong), not \(name); rebuilding")
+            _ = PonteCatchObjC {
+                self.player?.stop()
+                engine.stop()
+            }
+            return carryOut(book.configurationChanged(engineRunning: false))
+        }
+        return []
+    }
+
+    /// Lock held. nil when the running engine plays into the player's device (or the player follows the
+    /// default output); otherwise where it plays. Checks the output unit's current device and, once the
+    /// engine has run for a second, that this process really does output into the device.
+    private func wrongOutputDevice(_ engine: AVAudioEngine) -> String? {
+        guard let device, let live = CoreAudioDeviceCatalog().device(uid: device.uid) else { return nil }
+        var current = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var read: OSStatus = noErr
+        _ = PonteCatchObjC {
+            if let au = engine.outputNode.audioUnit {
+                read = AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size)
+            }
+        }
+        if read == noErr, current != 0, current != live.id {
+            return HAL.device(current)?.name ?? "device \(current)"
+        }
+        if let startedAt, Date().timeIntervalSince(startedAt) >= 1 {
+            let outputs = RunningAudioAppCatalog.outputDevices(ofPID: getpid())
+            if !outputs.isEmpty, !outputs.contains(where: { $0.uid == device.uid }) {
+                return outputs.map(\.name).joined(separator: ", ")
+            }
+        }
+        return nil
     }
 
     /// Lock held. Starts the engine now (first start).
@@ -445,6 +499,23 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
                 engine.connect(player, to: engine.mainMixerNode, format: PCM.monoFormat(sampleRate: rate))
                 engine.prepare()
                 try engine.start()
+                // Make sure the unit really is on the device after the start; bind it once more if not.
+                if let device = self.device, let live = CoreAudioDeviceCatalog().device(uid: device.uid),
+                   let au = engine.outputNode.audioUnit {
+                    var current = AudioDeviceID(0)
+                    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+                    if AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size) == noErr,
+                       current != live.id {
+                        PonteDiagnostics.log("player \(self.name): started on device \(current), binding to \(device.name) again")
+                        engine.stop()
+                        var id = live.id
+                        try HAL.check(AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                                           &id, UInt32(MemoryLayout<AudioDeviceID>.size)),
+                                      "set output device \(device.name)")
+                        engine.prepare()
+                        try engine.start()
+                    }
+                }
                 player.play()
             } catch {
                 thrown = error
@@ -460,6 +531,7 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
         }
         self.engine = engine
         self.player = player
+        startedAt = Date()
         playFormat = PCM.monoFormat(sampleRate: rate)
         converters.removeAll()
         _lastError = nil
