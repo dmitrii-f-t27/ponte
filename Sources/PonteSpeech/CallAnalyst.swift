@@ -524,13 +524,22 @@ public enum CallAnalysisPrompts {
         return out
     }
 
+    /// One formatter per format and time zone, made once (a report formats every line on every pass).
+    /// DateFormatter formats safely from several threads.
     static func formatter(_ format: String, _ timeZone: TimeZone) -> DateFormatter {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = timeZone
-        f.dateFormat = format
-        return f
+        let key = format + "|" + timeZone.identifier
+        return formatterLock.withLock {
+            if let made = formatters[key] { return made }
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.timeZone = timeZone
+            f.dateFormat = format
+            formatters[key] = f
+            return f
+        }
     }
+    private static let formatterLock = NSLock()
+    nonisolated(unsafe) private static var formatters: [String: DateFormatter] = [:]
 }
 
 // MARK: - The agent

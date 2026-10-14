@@ -84,7 +84,7 @@ public final class PeerVoices: @unchecked Sendable {
 }
 
 /// When a Ponte speaks into the call, and what it says: the windows that let this Ponte drop that voice instead of
-/// translating it back into Russian (PeerRules.isPeerVoiceV2). Windows come from the other Russians' Pontes and, with
+/// translating it back into Russian (PeerRules.isPeerVoice). Windows come from the other Russians' Pontes and, with
 /// sender 0, from this Ponte itself (its own voice echoed back by the far side). A window still playing is renewed by
 /// every START (PeerRules.voiceRefreshMs); one that stopped being renewed ends by itself (PeerRules.windowEndMs).
 /// Thread-safe.
