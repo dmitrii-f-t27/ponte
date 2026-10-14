@@ -121,6 +121,10 @@
 #define LN_OUT_NONE 2
 #define LN_MIC_REQUEST_FIRST 1
 #define LN_SINK_PACE_SECONDS 0.05
+#define LN_OWN_TALK_HEAD_MS 300
+#define LN_OWN_TALK_TAIL_MS 1500
+#define LN_OWN_TALK_DROP_PERMILLE 600
+#define LN_PHRASE_FALLBACK_MS 3000
 
 /* -------------------------------------------------------
    Function prototypes
@@ -145,6 +149,7 @@ int64_t ln_latency_ms(int64_t end_ms, int64_t ready_ms);
 int32_t ln_context_overflow(int32_t count);
 bool ln_ptt_key_down(int32_t key, uint64_t flags);
 int32_t ln_ptt_scope(bool running, int32_t mode, bool accessibility_granted);
+bool ln_own_talk_drops(int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t talk_start_ms, int64_t talk_end_ms);
 int64_t ln_millis(double seconds);
 bool ln_echo_marks_time(bool was_speaking, bool now_speaking);
 bool ln_gate_running(int32_t state);
@@ -402,6 +407,37 @@ int32_t ln_ptt_scope(bool running, int32_t mode, bool accessibility_granted) {
         return LN_PTT_SCOPE_GLOBAL;
     }
     return LN_PTT_SCOPE_WINDOW;
+}
+
+bool ln_own_talk_drops(int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t talk_start_ms, int64_t talk_end_ms) {
+    int64_t start = phrase_start_ms;
+    int64_t end = phrase_end_ms;
+    if ((end < start)) {
+        start = phrase_end_ms;
+        end = phrase_start_ms;
+    }
+    int64_t duration = (end - start);
+    if ((duration < 1)) {
+        duration = 1;
+    }
+    end = (start + duration);
+    int64_t window_start = (talk_start_ms - LN_OWN_TALK_HEAD_MS);
+    int64_t from = start;
+    if ((from < window_start)) {
+        from = window_start;
+    }
+    int64_t to = end;
+    if ((talk_end_ms >= 0)) {
+        int64_t window_end = (talk_end_ms + LN_OWN_TALK_TAIL_MS);
+        if ((to > window_end)) {
+            to = window_end;
+        }
+    }
+    int64_t overlap = (to - from);
+    if ((overlap < 0)) {
+        overlap = 0;
+    }
+    return ((overlap * 1000) >= (LN_OWN_TALK_DROP_PERMILLE * duration));
 }
 
 int64_t ln_millis(double seconds) {
@@ -820,6 +856,17 @@ void test_ln_speech_control_rules(void) {
     assert((ln_ptt_scope(true, LN_MODE_PUSH_TO_TALK, true) == LN_PTT_SCOPE_GLOBAL));
 }
 
+void test_ln_own_talk(void) {
+    assert((ln_own_talk_drops(10200, 12400, 10000, 12000) == true));
+    assert((ln_own_talk_drops(10200, 12400, 10000, -1) == true));
+    assert((ln_own_talk_drops(14000, 16000, 10000, 12000) == false));
+    assert((ln_own_talk_drops(12500, 16000, 10000, 12000) == false));
+    assert((ln_own_talk_drops(5000, 8000, 10000, 12000) == false));
+    assert((ln_own_talk_drops(12400, 10200, 10000, 12000) == true));
+    assert((ln_own_talk_drops(11000, 11000, 10000, 12000) == true));
+    assert((LN_PHRASE_FALLBACK_MS > 0));
+}
+
 void test_ln_moved_rules(void) {
     assert((ln_millis(0.0015) == 2));
     assert((ln_millis(1.25) == 1250));
@@ -900,8 +947,9 @@ int main(void) {
     test_ln_gate_rules();
     test_ln_phrase_rules();
     test_ln_speech_control_rules();
+    test_ln_own_talk();
     test_ln_moved_rules();
-    printf("All %d tests passed.\n", 4);
+    printf("All %d tests passed.\n", 5);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

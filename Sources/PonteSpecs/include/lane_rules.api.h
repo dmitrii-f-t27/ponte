@@ -117,6 +117,10 @@
 #define LN_OUT_NONE 2
 #define LN_MIC_REQUEST_FIRST 1
 #define LN_SINK_PACE_SECONDS 0.05
+#define LN_OWN_TALK_HEAD_MS 300
+#define LN_OWN_TALK_TAIL_MS 1500
+#define LN_OWN_TALK_DROP_PERMILLE 600
+#define LN_PHRASE_FALLBACK_MS 3000
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -139,6 +143,7 @@ int64_t ln_latency_ms(int64_t end_ms, int64_t ready_ms);
 int32_t ln_context_overflow(int32_t count);
 bool ln_ptt_key_down(int32_t key, uint64_t flags);
 int32_t ln_ptt_scope(bool running, int32_t mode, bool accessibility_granted);
+bool ln_own_talk_drops(int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t talk_start_ms, int64_t talk_end_ms);
 int64_t ln_millis(double seconds);
 bool ln_echo_marks_time(bool was_speaking, bool now_speaking);
 bool ln_gate_running(int32_t state);

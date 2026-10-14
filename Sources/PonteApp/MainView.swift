@@ -545,16 +545,16 @@ private struct OwnVoiceBar: View {
 }
 
 /// «Голос Ж / М»: the Portuguese voice the other side hears. Applies from the next phrase.
-/// «Звук Meet ▾»: the output where the owner hears the call and the Russian voice.
+/// «Звук ▾»: the output where the owner hears the call and the Russian voice.
 private struct HearMenu: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         HStack(spacing: 6) {
-            Text("Звук Meet")
+            Text("Звук")
                 .foregroundStyle(.secondary)
                 .fixedSize()
-            Picker("Звук Meet", selection: Binding(get: { model.hearOutputUID }, set: { model.setHearOutput(uid: $0) })) {
+            Picker("Звук", selection: Binding(get: { model.hearOutputUID }, set: { model.setHearOutput(uid: $0) })) {
                 if !model.hearOutputs.contains(where: { $0.uid == model.hearOutputUID }) {
                     Text(model.defaultOutput?.name ?? "—").tag(model.hearOutputUID)
                 }

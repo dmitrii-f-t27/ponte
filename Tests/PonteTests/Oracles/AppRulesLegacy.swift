@@ -693,6 +693,16 @@ extension AppRulesLegacy {
     /// stop(): `waitForConsumer(timeout: 3)`, `Task.sleep(for: .seconds(8))`.
     static let STOP_SEGMENT_WAIT_MS: Int64 = 3_000
     static let STOP_TRANSLATE_WAIT_MS: Int64 = 8_000
+    /// The incoming phrase lies at least 60 % inside [talk start − 300 ms, talk end + 1500 ms] (open while held).
+    static func ownTalkDrops(phraseStartMs: Int64, phraseEndMs: Int64, talkStartMs: Int64, talkEndMs: Int64) -> Bool {
+        let start = min(phraseStartMs, phraseEndMs)
+        let duration = max(1, max(phraseStartMs, phraseEndMs) - start)
+        let end = start + duration
+        let from = max(start, talkStartMs - 300)
+        let to = talkEndMs >= 0 ? min(end, talkEndMs + 1_500) : end
+        return max(0, to - from) * 1000 >= 600 * duration
+    }
+    static let PHRASE_FALLBACK_MS: Int64 = 3_000
     static func millis(_ seconds: Double) -> Int64 { Int64((seconds * 1000).rounded()) }
     /// EchoGuard.setSpeaking: `if speaking || on`.
     static func echoMarksTime(wasSpeaking: Bool, nowSpeaking: Bool) -> Bool { wasSpeaking || nowSpeaking }
