@@ -334,6 +334,35 @@ public enum AudioRules {
     /// The input unit's slice: the larger of micTapBufferFrames and the device's I/O buffer.
     public static func micMaxFrames(ioFrames: Int) -> Int { Int(au_mic_max_frames(Int64(ioFrames))) }
 
+    // MARK: - Own voice: the microphone straight into the call (LiveRelay)
+
+    /// The jitter buffer filled before forwarding starts, and the most the output may still have to play.
+    public static let relayTargetMs: Double = AU_RELAY_TARGET_MS
+    public static let relayMaxMs: Double = AU_RELAY_MAX_MS
+    /// A queue that stayed above relayTargetMs + relaySlackMs for relayWindow buffers loses one buffer.
+    public static let relaySlackMs: Double = AU_RELAY_SLACK_MS
+    public static let relayWindow = Int(AU_RELAY_WINDOW)
+    /// Relay actions: keep in the jitter buffer, send everything kept, drop this buffer, keep only the newest
+    /// relayTargetMs, fill the jitter buffer again.
+    public static let relayKeep = Int(AU_RLA_KEEP)
+    public static let relaySend = Int(AU_RLA_SEND)
+    public static let relayDrop = Int(AU_RLA_DROP)
+    public static let relayTrim = Int(AU_RLA_TRIM)
+    public static let relayRefill = Int(AU_RLA_REFILL)
+
+    /// What the relay does with a new buffer (`pendingMs` includes it; `queuedMs`: what the output still has
+    /// to play, nil when the output is not running; `lowMs`, `lowCount`: the lowest queuedMs of the current
+    /// window and the buffers it has seen).
+    public static func relayAction(filling: Bool, pendingMs: Double, queuedMs: Double?, lowMs: Double, lowCount: Int) -> Int {
+        Int(au_relay_action(filling, pendingMs, queuedMs ?? 0, queuedMs != nil, lowMs, Int64(lowCount)))
+    }
+
+    /// A window of relayWindow buffers is complete.
+    public static func relayWindowEnds(lowCount: Int) -> Bool { au_relay_window_ends(Int64(lowCount)) }
+
+    /// While trimming, the oldest buffer goes as long as relayTargetMs stay without it.
+    public static func relayTrims(pendingMs: Double, oldestMs: Double) -> Bool { au_relay_trims(pendingMs, oldestMs) }
+
     // MARK: - The call output heals itself (DeviceAudioPlayer)
 
     /// Player states: no engine yet, running, stopped with a rebuild scheduled, rebuilds failing.

@@ -226,6 +226,14 @@ final class AppModel {
     var outgoingSpeaking = false
     /// «Пауза голоса в звонок»: the outgoing lane stops listening and speaking.
     var voicePaused = false { didSet { outgoingLane?.isPaused = voicePaused } }
+    /// «Свой голос»: the microphone goes into the call as it is; your speech is not translated.
+    var ownVoice = false {
+        didSet {
+            guard ownVoice != oldValue else { return }
+            outgoingLane?.setOwnVoice(ownVoice)
+            log.info("own voice \(self.ownVoice, privacy: .public)")
+        }
+    }
     var talkKeyHeld = false
     var pttIsGlobal = false
     var lastLatency: TimeInterval?
@@ -402,6 +410,16 @@ final class AppModel {
 
     /// AppRules.LAT_* for the last phrase.
     var latencyColorCode: Int32 { AppRules.latencyColor(ms: lastLatency.map { millis($0) } ?? -1) }
+
+    /// The «Свой голос» button works (AppRules.ownVoiceAvailable); pressing it asks AppRules.ownVoiceAfterToggle.
+    var ownVoiceAvailable: Bool { AppRules.ownVoiceAvailable(running: isRunning, hasCallOutput: hasLiveCallOutput) }
+    func toggleOwnVoice() {
+        ownVoice = AppRules.ownVoiceAfterToggle(ownVoice: ownVoice, running: isRunning, hasCallOutput: hasLiveCallOutput)
+    }
+    /// The outgoing lane runs with a call output.
+    private var hasLiveCallOutput: Bool {
+        outgoingLane != nil && AppRules.hasCallOutput(hasBlackHole: blackHoleDevice != nil, hasSink: launch.outgoingSink != nil)
+    }
 
     /// AppRules.buttonEnabled for one AppRules.BTN_* code.
     func enabled(_ button: Int32, busy: Bool = false) -> Bool {
@@ -586,6 +604,7 @@ final class AppModel {
         guard AppRules.toggleRun(runState: runState.code) == AppRules.TOGGLE_START else { return }
         runState = .starting
         banner = nil
+        ownVoice = false
         refreshCatalogs()
         lines.removeAll()
         incomingPartial = ""
@@ -742,6 +761,7 @@ final class AppModel {
     func stop() async {
         guard AppRules.toggleRun(runState: runState.code) == AppRules.TOGGLE_STOP else { return }
         runState = .stopping
+        ownVoice = false
         ptt.stop()
         talkKeyHeld = false
         pttIsGlobal = false

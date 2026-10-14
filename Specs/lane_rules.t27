@@ -91,6 +91,8 @@ pub const LN_PF_HAS_AUDIO : i32 = 128;
 pub const LN_SCE_PAUSE : i32 = 1;
 pub const LN_SCE_VOICE : i32 = 2;
 pub const LN_SCE_STOP : i32 = 3;
+; «Свой голос» switched on or off (2026-10-13).
+pub const LN_SCE_OWN_VOICE : i32 = 4;
 
 ; --- Replay (RPL_*) ----------------------------------------------------------------------------------------
 pub const LN_RPL_NONE : i32 = 0;
@@ -239,6 +241,7 @@ pub fn ln_cancels_speech(event: i32, value: bool) -> bool {
     if (event == LN_SCE_PAUSE) { return value; }
     if (event == LN_SCE_VOICE) { return value == false; }
     if (event == LN_SCE_STOP) { return true; }
+    if (event == LN_SCE_OWN_VOICE) { return true; }
     return false;
 }
 
@@ -477,6 +480,34 @@ pub fn ln_lane_speaks(direction: i32, speak_russian: bool) -> bool {
     return true;
 }
 
+; --- Own voice («Свой голос», the owner's request 2026-10-13) ----------------------------------------------------------
+; The owner presses «Свой голос» to say something to the other side himself. The outgoing lane stops listening
+; (no transcription, no translation, the push-to-talk key does nothing), the speech queued or playing is
+; cancelled (SCE_OWN_VOICE, both ways: switching it off also flushes what the relay still holds), and the
+; microphone goes straight into the call output through the relay of audio_rules.t27, which also keeps
+; forwarding across the output's rebuilds. The incoming lane keeps running.
+; ownVoiceAvailable: the button works while running with a call output.
+pub fn ln_own_voice_available(running: bool, has_call_output: bool) -> bool {
+    return running and has_call_output;
+}
+
+; ownVoiceAfterToggle: pressing it switches it off at any time, and on only when available.
+pub fn ln_own_voice_after_toggle(own_voice: bool, running: bool, has_call_output: bool) -> bool {
+    if (own_voice) { return false; }
+    return ln_own_voice_available(running, has_call_output);
+}
+
+; gateHeld: the capture gate stays closed (no transcription; the key does nothing) while paused or while the
+; own voice goes out; the gate machine takes this as its `paused` input.
+pub fn ln_gate_held(paused: bool, own_voice: bool) -> bool {
+    return paused or own_voice;
+}
+
+; speechAllowed: no translated speech (automatic or «Сказать заново») goes into the call with the own voice.
+pub fn ln_speech_allowed(own_voice: bool) -> bool {
+    return own_voice == false;
+}
+
 ; The call output (BlackHole, the outgoing lane's voice) starts with the lane and keeps running between phrases,
 ; so a phrase never waits for the engine and Meet always has a live microphone (2026-10-13). The headphones
 ; player of the incoming lane starts with its first phrase.
@@ -635,6 +666,35 @@ test ln_speech_control_rules {
     assert ln_cancels_speech(LN_SCE_VOICE, true) == false;
     assert ln_cancels_speech(LN_SCE_STOP, false) == true;
     assert ln_cancels_speech(99, true) == false;
+    assert ln_cancels_speech(LN_SCE_OWN_VOICE, true) == true;
+    assert ln_cancels_speech(LN_SCE_OWN_VOICE, false) == true;
+    // Own voice: available while running with a call output; the gate stays closed; no speech goes out.
+    assert ln_own_voice_available(true, true) == true;
+    assert ln_own_voice_available(true, false) == false;
+    assert ln_own_voice_available(false, true) == false;
+    assert ln_own_voice_after_toggle(false, true, true) == true;
+    assert ln_own_voice_after_toggle(false, false, true) == false;
+    assert ln_own_voice_after_toggle(true, true, true) == false;
+    assert ln_own_voice_after_toggle(true, false, false) == false;
+    assert ln_gate_held(false, true) == true;
+    assert ln_gate_held(true, false) == true;
+    assert ln_gate_held(false, false) == false;
+    assert ln_speech_allowed(true) == false;
+    assert ln_speech_allowed(false) == true;
+    // With the own voice on, no key, mode or pause opens the gate.
+    var bad: u32 = 0;
+    var mode: i32 = LN_MODE_CONTINUOUS;
+    while (mode <= LN_MODE_PUSH_TO_TALK) {
+        var k: i32 = 0;
+        while (k <= 3) {
+            var key: bool = (k & 1) != 0;
+            var paused: bool = (k & 2) != 0;
+            if (ln_gate_wants_open(mode, key, ln_gate_held(paused, true))) { bad = bad + 1; }
+            k = k + 1;
+        }
+        mode = mode + 1;
+    }
+    assert bad == 0;
     assert ln_replay_action(true, true, true) == LN_RPL_AUDIO;
     assert ln_replay_action(false, true, true) == LN_RPL_SYNTH;
     assert ln_replay_action(false, false, true) == LN_RPL_NONE;

@@ -57,6 +57,15 @@
 #define AU_MEV_FORMAT 2
 #define AU_MEV_RUNNING 3
 #define AU_MEV_RENDER_FAILED 4
+#define AU_RELAY_TARGET_MS 40.0
+#define AU_RELAY_MAX_MS 80.0
+#define AU_RELAY_SLACK_MS 10.0
+#define AU_RELAY_WINDOW 50
+#define AU_RLA_KEEP 0
+#define AU_RLA_SEND 1
+#define AU_RLA_DROP 2
+#define AU_RLA_TRIM 3
+#define AU_RLA_REFILL 4
 #define AU_PL_IDLE 0
 #define AU_PL_RUNNING 1
 #define AU_PL_REBUILDING 2
@@ -143,6 +152,9 @@ bool au_mic_tap_ready(double input_rate, int64_t input_channels, double bus_rate
 bool au_mic_input_rebuilds(int64_t event, bool follows_default, bool same_device, bool device_alive, bool same_format, bool unit_running);
 int64_t au_mic_failures_after(int64_t event, bool delivered, int64_t failures);
 int64_t au_mic_max_frames(int64_t io_frames);
+int64_t au_relay_action(bool filling, double pending_ms, double queued_ms, bool output_running, double low_ms, int64_t low_count);
+bool au_relay_window_ends(int64_t low_count);
+bool au_relay_trims(double pending_ms, double oldest_ms);
 int64_t au_player_step(int64_t state, int64_t event, bool engine_running, int64_t failures);
 int64_t au_player_keep(int64_t state);
 int64_t au_player_step_state(int64_t step);

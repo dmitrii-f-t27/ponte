@@ -129,8 +129,17 @@ private typealias L = AppRulesLegacy
     @Test func speechControlAndTiming() {
         let log = DiffLog("cancelsSpeech, replayAction, speechRatePercent, echo guard, phraseEndChoice, latency, context, prepare retry")
         var r = DiffRandom(seed: 32)
-        for event in Int32(-1)...5 {
+        for event in Int32(-1)...6 {
             for value in [false, true] { log.check(F.cancelsSpeech(event: event, value: value), L.cancelsSpeech(event: event, value: value), describe(event, value)) }
+        }
+        log.check(F.SCE_OWN_VOICE, L.SCE_OWN_VOICE, "SCE_OWN_VOICE")
+        for bits in 0..<8 {
+            let a = bits & 1 == 1, b = bits & 2 == 2, c = bits & 4 == 4
+            log.check(F.ownVoiceAvailable(running: a, hasCallOutput: b), L.ownVoiceAvailable(running: a, hasCallOutput: b), describe(a, b))
+            log.check(F.ownVoiceAfterToggle(ownVoice: a, running: b, hasCallOutput: c),
+                      L.ownVoiceAfterToggle(ownVoice: a, running: b, hasCallOutput: c), describe(a, b, c))
+            log.check(F.gateHeld(paused: a, ownVoice: b), L.gateHeld(paused: a, ownVoice: b), describe(a, b))
+            log.check(F.speechAllowed(ownVoice: a), L.speechAllowed(ownVoice: a), describe(a))
         }
         for bits in 0..<8 {
             let a = bits & 1 == 1, b = bits & 2 == 2, c = bits & 4 == 4

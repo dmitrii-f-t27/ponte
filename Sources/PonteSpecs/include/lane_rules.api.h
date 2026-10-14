@@ -71,6 +71,7 @@
 #define LN_SCE_PAUSE 1
 #define LN_SCE_VOICE 2
 #define LN_SCE_STOP 3
+#define LN_SCE_OWN_VOICE 4
 #define LN_RPL_NONE 0
 #define LN_RPL_AUDIO 1
 #define LN_RPL_SYNTH 2
@@ -157,6 +158,10 @@ bool ln_requests_mic_permission(bool mic_is_live, int64_t mic_decision);
 int32_t ln_call_output(bool has_sink, bool has_blackhole);
 int32_t ln_lane_mode(int32_t direction, int32_t outgoing_mode);
 bool ln_lane_speaks(int32_t direction, bool speak_russian);
+bool ln_own_voice_available(bool running, bool has_call_output);
+bool ln_own_voice_after_toggle(bool own_voice, bool running, bool has_call_output);
+bool ln_gate_held(bool paused, bool own_voice);
+bool ln_speech_allowed(bool own_voice);
 bool ln_lane_prepares_output(int32_t direction, bool speaks);
 bool ln_lane_voice_pause(int32_t direction);
 bool ln_lane_echo_guarded(int32_t direction);

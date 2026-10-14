@@ -27,7 +27,8 @@ struct MainView: View {
         .animation(.easeOut(duration: 0.2), value: model.banner)
         .toolbar { MainToolbar() }
         .navigationTitle("Ponte")
-        .navigationSubtitle(model.isRunning ? "Идёт перевод · \(model.activeSourceName ?? "")" : "PT-BR ⇄ RU")
+        .navigationSubtitle(model.ownVoice ? OwnVoiceBar.notice
+                            : model.isRunning ? "Идёт перевод · \(model.activeSourceName ?? "")" : "PT-BR ⇄ RU")
         .sheet(isPresented: $model.showWizard) {
             SetupWizardView()
                 .environment(model)
@@ -322,6 +323,15 @@ private struct OutgoingFooter: View {
                 }
                 .lineLimit(1)
                 Spacer(minLength: 8)
+                Toggle(isOn: Binding(get: { model.ownVoice }, set: { _ in model.toggleOwnVoice() })) {
+                    Label("Свой голос", systemImage: "person.wave.2")
+                }
+                .toggleStyle(.button)
+                .controlSize(.large)
+                .tint(OwnVoiceBar.amber)
+                .fixedSize()
+                .disabled(!model.ownVoiceAvailable)
+                .accessibilityHint("Выключить перевод и говорить в звонок своим голосом (⇧⌘V)")
                 Toggle(isOn: $model.voicePaused) {
                     Label("Пауза голоса в звонок", systemImage: model.voicePaused ? "pause.circle.fill" : "pause.circle")
                 }
@@ -331,7 +341,9 @@ private struct OutgoingFooter: View {
                 .fixedSize()
                 .accessibilityHint("Не слушать микрофон и не говорить в звонок (⇧⌘P)")
             }
-            if model.outgoingMode == .pushToTalk {
+            if model.ownVoice {
+                OwnVoiceBar()
+            } else if model.outgoingMode == .pushToTalk {
                 PushToTalkPad()
             }
         }
@@ -399,5 +411,33 @@ private struct SpeakingBadge: View {
         }
         .font(.callout.weight(.medium))
         .foregroundStyle(tint)
+    }
+}
+
+/// «Свой голос» is on: the microphone goes into the call as it is. Amber, in place of the push-to-talk bar.
+private struct OwnVoiceBar: View {
+    static let notice = "Сейчас вас слышно своим голосом — перевод выключен"
+    static let amber = Color(red: 1.0, green: 0.69, blue: 0.0)
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "person.wave.2.fill")
+                .font(.title2)
+                .symbolEffect(.pulse, isActive: true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Self.notice)
+                    .fontWeight(.semibold)
+                Text("Нажмите «Свой голос» ещё раз (⇧⌘V), чтобы вернуть перевод")
+                    .font(.caption)
+            }
+            Spacer()
+            Button("Вернуть перевод") { model.toggleOwnVoice() }
+                .controlSize(.large)
+        }
+        .foregroundStyle(.black)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Self.amber))
+        .accessibilityElement(children: .combine)
     }
 }

@@ -300,6 +300,26 @@ enum AudioRulesLegacy {
         return min(max(failures, 0), restartAttempts - 1) + 1
     }
 
+    // MARK: - Own voice (2026-10-13: the microphone straight into the call)
+
+    /// No relay existed. Fill 40 ms, then send as it comes; never more than 80 ms queued ahead of the output;
+    /// refill after the output ran dry; while the output is down keep only the newest 40 ms.
+    /// A queue that stayed above 50 ms for 50 buffers in a row loses one buffer.
+    static let relayTargetMs = 40.0, relayMaxMs = 80.0, relaySlackMs = 10.0, relayWindow = 50
+    static let relayKeep = 0, relaySend = 1, relayDrop = 2, relayTrim = 3, relayRefill = 4
+
+    static func relayAction(filling: Bool, pendingMs: Double, queuedMs: Double?, lowMs: Double, lowCount: Int) -> Int {
+        guard let queued = queuedMs else { return pendingMs > relayTargetMs ? relayTrim : relayKeep }
+        if filling { return pendingMs >= relayTargetMs ? relaySend : relayKeep }
+        if queued <= 0 { return relayRefill }
+        if queued + pendingMs > relayMaxMs { return relayDrop }
+        return relayWindowEnds(lowCount: lowCount) && lowMs > relayTargetMs + relaySlackMs ? relayDrop : relaySend
+    }
+
+    static func relayWindowEnds(lowCount: Int) -> Bool { lowCount >= relayWindow }
+
+    static func relayTrims(pendingMs: Double, oldestMs: Double) -> Bool { pendingMs - oldestMs >= relayTargetMs }
+
     // MARK: - The call output heals itself (2026-10-13, phrases cut by engine stops)
 
     /// DeviceAudioPlayer rebuilt lazily on the next phrase and completed a phrase cut by a stop as played.

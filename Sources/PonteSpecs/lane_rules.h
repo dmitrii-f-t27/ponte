@@ -75,6 +75,7 @@
 #define LN_SCE_PAUSE 1
 #define LN_SCE_VOICE 2
 #define LN_SCE_STOP 3
+#define LN_SCE_OWN_VOICE 4
 #define LN_RPL_NONE 0
 #define LN_RPL_AUDIO 1
 #define LN_RPL_SYNTH 2
@@ -163,6 +164,10 @@ bool ln_requests_mic_permission(bool mic_is_live, int64_t mic_decision);
 int32_t ln_call_output(bool has_sink, bool has_blackhole);
 int32_t ln_lane_mode(int32_t direction, int32_t outgoing_mode);
 bool ln_lane_speaks(int32_t direction, bool speak_russian);
+bool ln_own_voice_available(bool running, bool has_call_output);
+bool ln_own_voice_after_toggle(bool own_voice, bool running, bool has_call_output);
+bool ln_gate_held(bool paused, bool own_voice);
+bool ln_speech_allowed(bool own_voice);
 bool ln_lane_prepares_output(int32_t direction, bool speaks);
 bool ln_lane_voice_pause(int32_t direction);
 bool ln_lane_echo_guarded(int32_t direction);
@@ -294,6 +299,9 @@ bool ln_cancels_speech(int32_t event, bool value) {
         return (value == false);
     }
     if ((event == LN_SCE_STOP)) {
+        return true;
+    }
+    if ((event == LN_SCE_OWN_VOICE)) {
         return true;
     }
     return false;
@@ -548,6 +556,25 @@ bool ln_lane_speaks(int32_t direction, bool speak_russian) {
     return true;
 }
 
+bool ln_own_voice_available(bool running, bool has_call_output) {
+    return (running && has_call_output);
+}
+
+bool ln_own_voice_after_toggle(bool own_voice, bool running, bool has_call_output) {
+    if (own_voice) {
+        return false;
+    }
+    return ln_own_voice_available(running, has_call_output);
+}
+
+bool ln_gate_held(bool paused, bool own_voice) {
+    return (paused || own_voice);
+}
+
+bool ln_speech_allowed(bool own_voice) {
+    return (own_voice == false);
+}
+
 bool ln_lane_prepares_output(int32_t direction, bool speaks) {
     return ((direction == LN_DIR_OUTGOING) && speaks);
 }
@@ -714,6 +741,35 @@ void test_ln_speech_control_rules(void) {
     assert((ln_cancels_speech(LN_SCE_VOICE, true) == false));
     assert((ln_cancels_speech(LN_SCE_STOP, false) == true));
     assert((ln_cancels_speech(99, true) == false));
+    assert((ln_cancels_speech(LN_SCE_OWN_VOICE, true) == true));
+    assert((ln_cancels_speech(LN_SCE_OWN_VOICE, false) == true));
+    assert((ln_own_voice_available(true, true) == true));
+    assert((ln_own_voice_available(true, false) == false));
+    assert((ln_own_voice_available(false, true) == false));
+    assert((ln_own_voice_after_toggle(false, true, true) == true));
+    assert((ln_own_voice_after_toggle(false, false, true) == false));
+    assert((ln_own_voice_after_toggle(true, true, true) == false));
+    assert((ln_own_voice_after_toggle(true, false, false) == false));
+    assert((ln_gate_held(false, true) == true));
+    assert((ln_gate_held(true, false) == true));
+    assert((ln_gate_held(false, false) == false));
+    assert((ln_speech_allowed(true) == false));
+    assert((ln_speech_allowed(false) == true));
+    uint32_t bad = 0;
+    int32_t mode = LN_MODE_CONTINUOUS;
+    while ((mode <= LN_MODE_PUSH_TO_TALK)) {
+        int32_t k = 0;
+        while ((k <= 3)) {
+            bool key = ((k & 1) != 0);
+            bool paused = ((k & 2) != 0);
+            if (ln_gate_wants_open(mode, key, ln_gate_held(paused, true))) {
+                bad = (bad + 1);
+            }
+            k = (k + 1);
+        }
+        mode = (mode + 1);
+    }
+    assert((bad == 0));
     assert((ln_replay_action(true, true, true) == LN_RPL_AUDIO));
     assert((ln_replay_action(false, true, true) == LN_RPL_SYNTH));
     assert((ln_replay_action(false, false, true) == LN_RPL_NONE));

@@ -127,6 +127,8 @@ final class TranslationLane {
         }
     }
     var glossary: [GlossaryTerm] = []
+    /// «Свой голос» (outgoing lane): the microphone goes straight into the call; no listening, no speech.
+    private(set) var ownVoice = false
     /// Set on the outgoing lane: drops mic audio while the Russian voice plays through speakers.
     var echoGuard: EchoGuard? {
         didSet { intake.setEchoGuard(echoGuard) }
@@ -251,6 +253,8 @@ final class TranslationLane {
     func stop() async {
         guard isRunning else { return }
         isKeyHeld = false
+        ownVoice = false
+        intake.setRelay(nil)
         source.stop()
         await gateEvent(AppRules.GEV_STOP)
         for open in openSegments { await open.waitForConsumer(timeoutMs: AppRules.STOP_SEGMENT_WAIT_MS) }
@@ -270,6 +274,18 @@ final class TranslationLane {
 
     // MARK: Controls
 
+    /// «Свой голос» on or off. On: the speech queued or playing is cancelled, the gate closes (the key does
+    /// nothing) and the microphone is relayed to the player. Off: the relay stops at once, its jitter buffer
+    /// and what the player still holds are dropped, and the lane listens again.
+    func setOwnVoice(_ on: Bool) {
+        guard on != ownVoice else { return }
+        ownVoice = on
+        if !on { intake.setRelay(nil) }
+        if AppRules.cancelsSpeech(event: AppRules.SCE_OWN_VOICE, value: on) { cancelSpeech() }
+        if on, let player { intake.setRelay(LiveRelay(player: player)) }
+        Task { await gateEvent(AppRules.GEV_PAUSE) }
+    }
+
     /// Push-to-talk key state (the gate ignores it in «Авто»).
     func setKeyHeld(_ held: Bool) {
         guard held != isKeyHeld else { return }
@@ -282,7 +298,7 @@ final class TranslationLane {
         let translation = lastTranslatedLine?.translation ?? ""
         let action = AppRules.replayAction(hasCachedAudio: lastSpoken != nil,
                                            hasLastTranslation: !translation.isEmpty,
-                                           hasPlayer: player != nil)
+                                           hasPlayer: player != nil && AppRules.speechAllowed(ownVoice: ownVoice))
         guard action != AppRules.RPL_NONE else { return }
         ensureSpeechWorkers()
         if action == AppRules.RPL_AUDIO, let lastSpoken {
@@ -307,8 +323,8 @@ final class TranslationLane {
         let change = Task { [weak self] in
             await previous?.value
             guard let self else { return }
-            let step = AppRules.gateStep(state: self.gatePhase, event: event, mode: self.mode.ruleCode,
-                                         keyHeld: self.isKeyHeld, paused: self.isPaused)
+            let step = AppRules.gateStep(state: self.gatePhase, event: event, mode: self.mode.ruleCode, keyHeld: self.isKeyHeld,
+                                         paused: AppRules.gateHeld(paused: self.isPaused, ownVoice: self.ownVoice))
             self.gatePhase = AppRules.stepState(step)
             switch AppRules.stepAction(step) {
             case AppRules.GACT_OPEN_SEGMENT:
@@ -381,7 +397,8 @@ final class TranslationLane {
             onEvent(.phrase(line))
             let context = memory.snapshot()
             memory.add(phrase)
-            let speak = AppRules.speakRequested(speechEnabled: speechOutputEnabled, paused: isPaused)
+            let speak = AppRules.speakRequested(speechEnabled: speechOutputEnabled,
+                                                paused: AppRules.gateHeld(paused: isPaused, ownVoice: ownVoice))
             translateInput?.yield(PendingPhrase(line: line, context: context, end: end,
                                                 recognitionMs: timing.map { millis($0.recognitionLatency) },
                                                 speak: speak, generation: speechGeneration))
@@ -576,6 +593,7 @@ final class AudioIntake: @unchecked Sendable {
     private let lock = NSLock()
     private var segment: Segment?
     private var echoGuard: EchoGuard?
+    private var relay: LiveRelay?
     private var current = LaneAudioStats()
     private let clock: @Sendable () -> Date
 
@@ -591,19 +609,32 @@ final class AudioIntake: @unchecked Sendable {
     }
     func setEchoGuard(_ echoGuard: EchoGuard?) { lock.withLock { self.echoGuard = echoGuard } }
 
+    /// «Свой голос»: every buffer also goes to the relay. Replacing it stops the previous one at once.
+    func setRelay(_ relay: LiveRelay?) {
+        let old = lock.withLock { () -> LiveRelay? in
+            defer { self.relay = relay }
+            return self.relay
+        }
+        if let stats = old?.stop() {
+            PonteDiagnostics.log("own voice relay stopped: sent \(stats.sent), dropped \(stats.dropped), trimmed \(stats.trimmed), refills \(stats.refills), max queued \(Int(stats.maxQueuedMs)) ms")
+        }
+        if relay != nil { PonteDiagnostics.log("own voice relay started") }
+    }
+
     func stats() -> LaneAudioStats { lock.withLock { current } }
 
     func handle(_ buffer: AVAudioPCMBuffer) {
         let (rms, peak) = buffer.laneLevels
         let signal = AudioRules.hasSignal(peak: peak, rms: rms)
         let now = clock()
-        let (segment, echo): (Segment?, EchoGuard?) = lock.withLock {
+        let (segment, echo, relay): (Segment?, EchoGuard?, LiveRelay?) = lock.withLock {
             current.buffers += 1
             current.lastBufferAt = now
             current.level = rms
             if signal { current.lastSignalAt = now }
-            return (self.segment, self.echoGuard)
+            return (self.segment, self.echoGuard, self.relay)
         }
+        relay?.push(buffer)
         let blocks = echo?.blocksMic(at: now) ?? false
         guard AppRules.intakeForwards(hasSegment: segment != nil, echoBlocks: blocks), let segment else { return }
         segment.append(buffer)

@@ -114,8 +114,22 @@ enum AppRules {
     static let SCE_PAUSE: Int32 = LN_SCE_PAUSE                    // value = paused (new)
     static let SCE_VOICE: Int32 = LN_SCE_VOICE                    // value = automatic speech enabled (new)
     static let SCE_STOP: Int32 = LN_SCE_STOP
+    static let SCE_OWN_VOICE: Int32 = LN_SCE_OWN_VOICE            // value = own voice on (new)
 
     static func cancelsSpeech(event: Int32, value: Bool) -> Bool { ln_cancels_speech(event, value) }
+
+    // MARK: - Own voice («Свой голос»)
+
+    /// The button works while running with a call output.
+    static func ownVoiceAvailable(running: Bool, hasCallOutput: Bool) -> Bool { ln_own_voice_available(running, hasCallOutput) }
+    /// Pressing it: off at any time, on only when available.
+    static func ownVoiceAfterToggle(ownVoice: Bool, running: Bool, hasCallOutput: Bool) -> Bool {
+        ln_own_voice_after_toggle(ownVoice, running, hasCallOutput)
+    }
+    /// The gate machine's `paused` input: paused, or the own voice goes out.
+    static func gateHeld(paused: Bool, ownVoice: Bool) -> Bool { ln_gate_held(paused, ownVoice) }
+    /// No translated speech goes into the call with the own voice.
+    static func speechAllowed(ownVoice: Bool) -> Bool { ln_speech_allowed(ownVoice) }
 
     // MARK: - «Повторить» / «Сказать заново»
 

@@ -28,12 +28,14 @@ final class AppTestSource: AudioSource {
     var isStarted: Bool { handler != nil }
 
     /// Pushes `seconds` of audio; amplitude 0 is silence, 0.5 is clearly speech.
-    func push(seconds: Double = 0.1, amplitude: Float = 0.5) {
+    @discardableResult
+    func push(seconds: Double = 0.1, amplitude: Float = 0.5) -> AVAudioPCMBuffer {
         let frames = AVAudioFrameCount(seconds * 16_000)
         let buffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: frames)!
         buffer.frameLength = frames
         for i in 0..<Int(frames) { buffer.floatChannelData![0][i] = amplitude * sin(Float(i) * 0.3) }
         handler?(buffer, nil)
+        return buffer
     }
 }
 
@@ -146,6 +148,14 @@ final class AppTestPlayer: AudioPlayer {
         if let prepareError { throw prepareError }
     }
 
+    /// Live audio («Свой голос»), in the order it arrives; the output always has 10 ms left to play.
+    private(set) var streamed: [AVAudioPCMBuffer] = []
+    func stream(_ buffers: [AVAudioPCMBuffer]) -> Double? {
+        streamed += buffers
+        return 10
+    }
+    func streamQueuedMs() -> Double? { 10 }
+
     func play(_ buffer: AVAudioPCMBuffer) async {
         await play([buffer])
     }
@@ -257,6 +267,41 @@ func appTestWait(_ what: String = "", timeout: Duration = .seconds(2),
     try await quiet.lane.start()
     #expect(quiet.player.prepareCount == 0)
     await quiet.lane.stop()
+}
+
+/// «Свой голос» (2026-10-13): the gate closes and the key does nothing, speech is cancelled, the microphone
+/// goes to the player in order; switched off, forwarding stops at once and the lane listens again.
+@MainActor @Test func ownVoiceRelaysTheMicrophoneAndPausesTranslation() async throws {
+    let rig = AppTestRig(direction: .outgoing, mode: .pushToTalk)
+    try await rig.lane.start()
+    rig.lane.setKeyHeld(true)
+    try await appTestWait("listening") { rig.lane.audioStats.listeningSince != nil }
+    let stops = rig.player.stopCount
+    let transcribers = rig.allTranscribers.count
+
+    rig.lane.setOwnVoice(true)
+    #expect(rig.lane.ownVoice)
+    #expect(rig.player.stopCount == stops + 1)                         // queued and playing speech cancelled
+    try await appTestWait("gate closed") { rig.lane.audioStats.listeningSince == nil }
+    // 10 ms buffers, as the microphone delivers them: the first 40 ms fill the relay's jitter buffer.
+    let pushed = (1...6).map { rig.source.push(seconds: 0.01, amplitude: Float($0) / 10) }
+    #expect(rig.player.streamed.map(ObjectIdentifier.init) == pushed.map(ObjectIdentifier.init))
+    rig.lane.setKeyHeld(false)
+    rig.lane.setKeyHeld(true)                                           // the key does nothing
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(rig.lane.audioStats.listeningSince == nil)
+    #expect(rig.allTranscribers.count == transcribers)
+    rig.lane.replayLast()                                               // no speech into the call
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(rig.player.calls.isEmpty)
+
+    rig.lane.setOwnVoice(false)
+    #expect(!rig.lane.ownVoice)
+    #expect(rig.player.stopCount == stops + 2)                         // what the output still holds is dropped
+    rig.source.push(seconds: 0.01)
+    #expect(rig.player.streamed.count == pushed.count)                 // forwarding stopped at once
+    try await appTestWait("listening again") { rig.lane.audioStats.listeningSince != nil }
+    await rig.lane.stop()
 }
 
 @MainActor @Test func laneKeepsOrderWhenTranslationsTakeUnevenTime() async throws {

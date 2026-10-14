@@ -10,6 +10,9 @@
 //                  (--wait: the output runs S seconds before the phrase; --hold: S seconds after it;
 //                   --stop-engine-at: stops the engine S seconds into the phrase the way a device change does)
 //   AudioProbe file <path> [--realtime]
+//   AudioProbe passthrough [--seconds N] [--file path] [--stop-engine-at S] [--trace]   («Свой голос»: the microphone, or
+//                  the file in 10 ms buffers, relayed into BlackHole; BlackHole's input is recorded to measure
+//                  latency and gaps; --stop-engine-at stops the output engine as a device change does)
 //
 // Capture commands print the format, then frames and RMS once per second.
 import AVFoundation
@@ -27,7 +30,7 @@ struct Args {
     var flags: Set<String> = []
 
     static let valueOptions: Set<String> = ["--bundle", "--pid", "--seconds", "--out", "--device", "--self-play", "--volume",
-                                            "--wait", "--hold", "--stop-engine-at"]
+                                            "--wait", "--hold", "--stop-engine-at", "--file"]
 
     init(_ argv: [String]) throws {
         var i = 0
@@ -70,6 +73,7 @@ AudioProbe mic [--device <name>] --seconds N --out file.wav [--request]
 AudioProbe permissions
 AudioProbe play [--device <name substring>] [--volume 0..1] [--wait S] [--hold S] [--stop-engine-at S] <file>
 AudioProbe file <path> [--realtime]
+AudioProbe passthrough [--seconds N] [--file path] [--stop-engine-at S] [--trace]
 """
 
 // MARK: Level meter
@@ -452,6 +456,173 @@ extension ISO8601DateFormatter {
     }()
 }
 
+// MARK: Own voice
+
+/// Mono samples with the host time of their first sample, gathered from a capture handler.
+final class TimedRecording: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var samples: [Float] = []
+    private(set) var startSeconds: Double?
+    private(set) var rate: Double = 0
+    private(set) var discontinuities = 0
+    private var nextSample: Int64?
+
+    func add(_ buffer: AVAudioPCMBuffer, _ time: AVAudioTime?) {
+        let mono = PCM.samples(buffer)
+        lock.withLock {
+            if startSeconds == nil, let time, time.isHostTimeValid {
+                startSeconds = AVAudioTime.seconds(forHostTime: time.hostTime)
+                rate = buffer.format.sampleRate
+            }
+            guard startSeconds != nil else { return }
+            if let time, time.isSampleTimeValid {
+                if let expected = nextSample, time.sampleTime != expected { discontinuities += 1 }
+                nextSample = time.sampleTime + Int64(buffer.frameLength)
+            }
+            samples += mono
+        }
+    }
+}
+
+/// Feeds a file as a microphone would: 10 ms buffers (480 frames at 48 kHz) in real time, stamped with the
+/// host time.
+final class FileMic: AudioSource {
+    let outputFormat: AVAudioFormat
+    private let samples: [Float]
+    private var thread: Thread?
+    private var running = false
+
+    init(url: URL) throws {
+        let mono = try FileSource.readMono(url: url)
+        outputFormat = mono.format
+        samples = PCM.samples(mono)
+    }
+
+    func start(handler: @escaping PCMHandler) throws {
+        running = true
+        let samples = samples, format = outputFormat
+        let chunk = Int(format.sampleRate / 100)
+        let t = Thread { [weak self] in
+            let start = Date()
+            var k = 0
+            while self?.running == true, k * chunk < samples.count {
+                let due = start.addingTimeInterval(Double(k * chunk) / format.sampleRate)
+                let wait = due.timeIntervalSinceNow
+                if wait > 0 { Thread.sleep(forTimeInterval: wait) }
+                let n = min(chunk, samples.count - k * chunk)
+                let b = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(n))!
+                b.frameLength = AVAudioFrameCount(n)
+                samples.withUnsafeBufferPointer { b.floatChannelData![0].update(from: $0.baseAddress! + k * chunk, count: n) }
+                handler(b, AVAudioTime(hostTime: mach_absolute_time(), sampleTime: AVAudioFramePosition(k * chunk), atRate: format.sampleRate))
+                k += 1
+            }
+        }
+        t.qualityOfService = .userInteractive
+        thread = t
+        t.start()
+    }
+
+    func stop() { running = false }
+}
+
+/// «Свой голос» end to end: the microphone (or a file fed like one) → LiveRelay → DeviceAudioPlayer on BlackHole,
+/// while BlackHole's own input is recorded in this process. The lag between the two recordings, found by
+/// cross-correlation on the host clock, is the latency a call app reading BlackHole gets.
+func cmdPassthrough(_ args: Args) async throws {
+    let seconds = args.value("--seconds").flatMap(Double.init) ?? 6
+    let catalog = CoreAudioDeviceCatalog()
+    guard let blackHole = BlackHoleCheck.find(in: catalog) else { throw ProbeError.failed("BlackHole is not installed") }
+    let source: AudioSource = try args.value("--file").map { try FileMic(url: URL(fileURLWithPath: $0)) } ?? MicSource(device: nil)
+    print("source: \(args.value("--file") ?? "microphone \(catalog.defaultInput()?.name ?? "?")"), into \(blackHole.name); pid \(getpid())")
+    let player = DeviceAudioPlayer(device: blackHole)
+    try player.prepare()
+    let recorder = MicSource(device: blackHole)
+    let heard = TimedRecording()
+    let said = TimedRecording()
+    try recorder.start { buffer, time in heard.add(buffer, time) }
+    try? await Task.sleep(nanoseconds: 300_000_000)
+    let relay = LiveRelay(player: player)
+    try source.start { buffer, time in
+        said.add(buffer, time)
+        relay.push(buffer)
+    }
+    if args.flags.contains("--trace") {
+        Thread.detachNewThread {
+            let start = Date()
+            var line = ""
+            while Date().timeIntervalSince(start) < seconds {
+                line += player.streamQueuedMs().map { String(format: " %.0f", $0) } ?? " -"
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            print("queued every 50 ms:" + line)
+        }
+    }
+    if let at = args.value("--stop-engine-at").flatMap(Double.init), at >= 0, at < seconds {
+        try? await Task.sleep(nanoseconds: UInt64(at * 1e9))
+        print(String(format: "stopping the output engine at %.1f s, as a device change does", at))
+        player.simulateDeviceStop()
+        try? await Task.sleep(nanoseconds: UInt64((seconds - at) * 1e9))
+    } else {
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
+    }
+    source.stop()
+    let stats = relay.stop()
+    player.stopAll()
+    try? await Task.sleep(nanoseconds: 300_000_000)
+    recorder.stop()
+    print("relay: sent \(stats.sent), dropped \(stats.dropped), trimmed \(stats.trimmed), refills \(stats.refills), max queued \(String(format: "%.1f", stats.maxQueuedMs)) ms")
+    print("recorded: said \(said.samples.count) frames at \(Int(said.rate)) Hz (\(said.discontinuities) discontinuities), heard \(heard.samples.count) frames at \(Int(heard.rate)) Hz (\(heard.discontinuities) discontinuities)")
+    guard let s0 = said.startSeconds, let h0 = heard.startSeconds, said.rate == heard.rate, said.rate > 0 else {
+        throw ProbeError.failed("no common timeline (rates \(said.rate) and \(heard.rate))")
+    }
+    let rate = said.rate
+    // Lag in samples between "said" sample n and "heard" sample n + offset + lag, for lags 0...300 ms.
+    let offset = Int(((s0 - h0) * rate).rounded())
+    let s = said.samples, h = heard.samples
+    let maxLag = Int(0.3 * rate)
+    let window = Int(1.0 * rate)
+    func lag(from: Int) -> (lag: Int, score: Double) {
+        var best = (lag: 0, score: -Double.infinity)
+        guard from >= 0, from + window <= s.count else { return best }
+        var energyS = 0.0
+        for n in from..<(from + window) { energyS += Double(s[n]) * Double(s[n]) }
+        for lag in 0...maxLag {
+            var dot = 0.0, energyH = 0.0
+            let base = from + offset + lag
+            guard base >= 0, base + window <= h.count else { continue }
+            for n in 0..<window {
+                let a = Double(s[from + n]), b = Double(h[base + n])
+                dot += a * b
+                energyH += b * b
+            }
+            let score = dot / max(sqrt(energyS * energyH), 1e-30)
+            if score > best.score { best = (lag, score) }
+        }
+        return best
+    }
+    let from = Int(0.5 * rate)
+    let best = lag(from: from)
+    print(String(format: "latency microphone → BlackHole input: %.1f ms (correlation %.3f) from 0.5 s", Double(best.lag) / rate * 1000, best.score))
+    let late = lag(from: Int((seconds - 1.3) * rate))
+    print(String(format: "latency microphone → BlackHole input: %.1f ms (correlation %.3f) from %.1f s",
+                 Double(late.lag) / rate * 1000, late.score, seconds - 1.3))
+    // Gaps: runs of exact zeros in what BlackHole heard while the relay ran (from the first relayed audio).
+    let heardStart = max(from + offset + best.lag, 0)
+    let heardEnd = min(heardStart + Int((seconds - 1) * rate), h.count)
+    var gaps = 0, longest = 0, run = 0
+    if heardStart < heardEnd {
+        for n in heardStart..<heardEnd {
+            if h[n] == 0 { run += 1 } else {
+                if run >= Int(rate / 1000) { gaps += 1; longest = max(longest, run) }
+                run = 0
+            }
+        }
+        if run >= Int(rate / 1000) { gaps += 1; longest = max(longest, run) }
+    }
+    print(String(format: "dropouts (≥ 1 ms of exact zeros) over %.1f s: %d, longest %.1f ms",
+                 Double(heardEnd - heardStart) / rate, gaps, Double(longest) / rate * 1000))
+}
+
 /// Slices any deinterleaved Float32 buffer; other layouts are first downmixed to mono.
 func sliceAny(_ buffer: AVAudioPCMBuffer, _ range: Range<Int>) -> AVAudioPCMBuffer? {
     if let s = PCM.slice(buffer, range) { return s }
@@ -487,6 +658,7 @@ do {
     case "permissions": cmdPermissions()
     case "play": try await cmdPlay(args)
     case "file": try cmdFile(args)
+    case "passthrough": try await cmdPassthrough(args)
     default: throw ProbeError.usage("unknown command")
     }
 } catch {

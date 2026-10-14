@@ -115,6 +115,12 @@ public protocol AudioPlayer: AnyObject {
     /// Starts the output now and keeps it running between phrases (otherwise the first `play` starts it).
     /// Throws the reason the device cannot be used.
     func prepare() throws
+    /// Live audio («Свой голос»): schedules the buffers right after what the output holds, without waiting for
+    /// them and without playing them again after a device change. Returns the milliseconds the output still
+    /// has to play afterwards, or nil when it is not running (the buffers are dropped).
+    func stream(_ buffers: [AVAudioPCMBuffer]) -> Double?
+    /// Milliseconds of live audio the output still has to play; nil when it is not running.
+    func streamQueuedMs() -> Double?
 }
 
 extension AudioPlayer {
@@ -125,6 +131,10 @@ extension AudioPlayer {
 
     /// Default: nothing to start ahead.
     public func prepare() throws {}
+
+    /// Default: no live audio.
+    public func stream(_ buffers: [AVAudioPCMBuffer]) -> Double? { nil }
+    public func streamQueuedMs() -> Double? { nil }
 }
 
 // MARK: - Speech

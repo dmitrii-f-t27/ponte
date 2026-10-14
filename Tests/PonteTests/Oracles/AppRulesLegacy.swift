@@ -165,15 +165,26 @@ enum AppRulesLegacy {
     static let SCE_PAUSE: Int32 = 1              // value = paused (new)
     static let SCE_VOICE: Int32 = 2              // value = automatic speech enabled (new)
     static let SCE_STOP: Int32 = 3
+    static let SCE_OWN_VOICE: Int32 = 4          // «Свой голос» on or off (2026-10-13)
 
     static func cancelsSpeech(event: Int32, value: Bool) -> Bool {
         switch event {
         case SCE_PAUSE: return value
         case SCE_VOICE: return !value
-        case SCE_STOP: return true
+        case SCE_STOP, SCE_OWN_VOICE: return true
         default: return false
         }
     }
+
+    // MARK: - Own voice («Свой голос», 2026-10-13: the microphone straight into the call)
+
+    static func ownVoiceAvailable(running: Bool, hasCallOutput: Bool) -> Bool { running && hasCallOutput }
+    static func ownVoiceAfterToggle(ownVoice: Bool, running: Bool, hasCallOutput: Bool) -> Bool {
+        !ownVoice && ownVoiceAvailable(running: running, hasCallOutput: hasCallOutput)
+    }
+    /// TranslationLane passed `isPaused` to gateStep; the own voice holds the gate closed too.
+    static func gateHeld(paused: Bool, ownVoice: Bool) -> Bool { paused || ownVoice }
+    static func speechAllowed(ownVoice: Bool) -> Bool { !ownVoice }
 
     // MARK: - «Повторить» / «Сказать заново»
 

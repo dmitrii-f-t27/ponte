@@ -57,6 +57,9 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
     private var player: AVAudioPlayerNode?
     private var playFormat: AVAudioFormat?
     private var converters: [(format: AVAudioFormat, converter: PCM.Converter)] = []
+    /// Live audio: its own resamplers (never flushed), and where it ends on the node's timeline.
+    private var streamConverters: [(format: AVAudioFormat, converter: PCM.Converter)] = []
+    private var streamEnd: Int64 = 0
     private var configObserver: NSObjectProtocol?
     private var rebuildWork: DispatchWorkItem?
     private var _lastError: Error?
@@ -123,6 +126,8 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
         lock.lock()
         let dropped = book.dropAll()
         for (_, c) in converters { c.reset() }
+        for (_, c) in streamConverters { c.reset() }
+        streamEnd = 0
         // The node's completions that this stop calls belong to the previous generation: ignored.
         if let player, let engine, engine.isRunning {
             _ = PonteCatchObjC {
@@ -133,6 +138,65 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
         let resume = dropped.compactMap { finish($0.id) }
         lock.unlock()
         resume.forEach { $0.resume() }
+    }
+
+    /// Live audio («Свой голос»): scheduled right after what the node holds, no completion, no replay.
+    /// A stopped engine drops it (the player rebuilds itself; the relay keeps the newest audio meanwhile), and
+    /// so does a node that has not rendered yet: whatever was queued before it starts would stay as latency.
+    public func stream(_ buffers: [AVAudioPCMBuffer]) -> Double? {
+        lock.lock()
+        var resume = checkEngineAlive()
+        if book.state == AudioRules.playerIdle { resume += startNow() }
+        var queued: Double?
+        if book.state == AudioRules.playerRunning, let player, let target = playFormat, let position = Self.renderedFrames(player) {
+            var frames: Int64 = 0
+            var ready: [AVAudioPCMBuffer] = []
+            for b in buffers where b.frameLength > 0 {
+                guard let out = try? convertStream(b, to: target), out.frameLength > 0 else { continue }
+                ready.append(out)
+                frames += Int64(out.frameLength)
+            }
+            let failure = PonteCatchObjC {
+                for b in ready { player.scheduleBuffer(b, completionHandler: nil) }
+            }
+            if failure == nil {
+                streamEnd = max(streamEnd, position) + frames
+                queued = Double(streamEnd - position) / target.sampleRate * 1000
+            }
+        }
+        lock.unlock()
+        resume.forEach { $0.resume() }
+        return queued
+    }
+
+    public func streamQueuedMs() -> Double? {
+        lock.withLock {
+            guard book.state == AudioRules.playerRunning, let player, let engine, engine.isRunning, let target = playFormat,
+                  let position = Self.renderedFrames(player) else { return nil }
+            return Double(max(streamEnd - position, 0)) / target.sampleRate * 1000
+        }
+    }
+
+    /// Lock held. Live audio to the playback format; its resampler keeps its state between buffers.
+    private func convertStream(_ buffer: AVAudioPCMBuffer, to target: AVAudioFormat) throws -> AVAudioPCMBuffer {
+        switch AudioRules.conversionPath(sameFormat: buffer.format.isEqual(target),
+                                         sameRate: buffer.format.sampleRate == target.sampleRate) {
+        case AudioRules.convertNone:
+            return buffer
+        case AudioRules.convertDownmix:
+            guard let mono = PCM.mono(buffer) else { throw PonteAudioError.unsupportedFormat("\(buffer.format)") }
+            return mono
+        default:
+            break   // convertResample
+        }
+        if let entry = streamConverters.first(where: { $0.format.isEqual(buffer.format) }) {
+            return try entry.converter.convert(buffer, final: false)
+        }
+        guard let c = PCM.Converter(from: buffer.format, to: target) else {
+            throw PonteAudioError.unsupportedFormat("\(buffer.format) → \(target)")
+        }
+        streamConverters.append((buffer.format, c))
+        return try c.convert(buffer, final: false)
     }
 
     /// For AudioProbe: stops the running engine the way a device change does (AVAudioEngine stops it,
@@ -422,6 +486,8 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
         self.player = nil
         playFormat = nil
         converters.removeAll()
+        streamConverters.removeAll()
+        streamEnd = 0
     }
 
     /// Frames the node has rendered on its timeline; nil when it reports none (not playing, no render yet).

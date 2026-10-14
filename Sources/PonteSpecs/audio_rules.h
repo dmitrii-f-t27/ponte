@@ -61,6 +61,15 @@
 #define AU_MEV_FORMAT 2
 #define AU_MEV_RUNNING 3
 #define AU_MEV_RENDER_FAILED 4
+#define AU_RELAY_TARGET_MS 40.0
+#define AU_RELAY_MAX_MS 80.0
+#define AU_RELAY_SLACK_MS 10.0
+#define AU_RELAY_WINDOW 50
+#define AU_RLA_KEEP 0
+#define AU_RLA_SEND 1
+#define AU_RLA_DROP 2
+#define AU_RLA_TRIM 3
+#define AU_RLA_REFILL 4
 #define AU_PL_IDLE 0
 #define AU_PL_RUNNING 1
 #define AU_PL_REBUILDING 2
@@ -149,6 +158,9 @@ bool au_mic_tap_ready(double input_rate, int64_t input_channels, double bus_rate
 bool au_mic_input_rebuilds(int64_t event, bool follows_default, bool same_device, bool device_alive, bool same_format, bool unit_running);
 int64_t au_mic_failures_after(int64_t event, bool delivered, int64_t failures);
 int64_t au_mic_max_frames(int64_t io_frames);
+int64_t au_relay_action(bool filling, double pending_ms, double queued_ms, bool output_running, double low_ms, int64_t low_count);
+bool au_relay_window_ends(int64_t low_count);
+bool au_relay_trims(double pending_ms, double oldest_ms);
 int64_t au_player_step(int64_t state, int64_t event, bool engine_running, int64_t failures);
 int64_t au_player_keep(int64_t state);
 int64_t au_player_step_state(int64_t step);
@@ -615,6 +627,39 @@ int64_t au_mic_max_frames(int64_t io_frames) {
         return io_frames;
     }
     return AU_MIC_TAP_BUFFER_FRAMES;
+}
+
+int64_t au_relay_action(bool filling, double pending_ms, double queued_ms, bool output_running, double low_ms, int64_t low_count) {
+    if ((output_running == false)) {
+        if ((pending_ms > AU_RELAY_TARGET_MS)) {
+            return AU_RLA_TRIM;
+        }
+        return AU_RLA_KEEP;
+    }
+    if (filling) {
+        if ((pending_ms >= AU_RELAY_TARGET_MS)) {
+            return AU_RLA_SEND;
+        }
+        return AU_RLA_KEEP;
+    }
+    if ((queued_ms <= 0.0)) {
+        return AU_RLA_REFILL;
+    }
+    if (((queued_ms + pending_ms) > AU_RELAY_MAX_MS)) {
+        return AU_RLA_DROP;
+    }
+    if ((au_relay_window_ends(low_count) && (low_ms > (AU_RELAY_TARGET_MS + AU_RELAY_SLACK_MS)))) {
+        return AU_RLA_DROP;
+    }
+    return AU_RLA_SEND;
+}
+
+bool au_relay_window_ends(int64_t low_count) {
+    return (low_count >= AU_RELAY_WINDOW);
+}
+
+bool au_relay_trims(double pending_ms, double oldest_ms) {
+    return ((pending_ms - oldest_ms) >= AU_RELAY_TARGET_MS);
 }
 
 int64_t au_player_step(int64_t state, int64_t event, bool engine_running, int64_t failures) {
@@ -1338,6 +1383,91 @@ void test_au_mic_input_rules(void) {
     assert((au_mic_max_frames(-5) == 2048));
 }
 
+void test_au_relay_rules(void) {
+    assert((au_relay_action(true, 10.0, 0.0, true, 0.0, 0) == AU_RLA_KEEP));
+    assert((au_relay_action(true, 40.0, 0.0, true, 0.0, 0) == AU_RLA_SEND));
+    assert((au_relay_action(false, 10.0, 40.0, true, 40.0, 1) == AU_RLA_SEND));
+    assert((au_relay_action(false, 10.0, 70.0, true, 30.0, 50) == AU_RLA_SEND));
+    assert((au_relay_action(false, 10.0, 71.0, true, 30.0, 10) == AU_RLA_DROP));
+    assert((au_relay_action(false, 10.0, 0.0, true, 0.0, 3) == AU_RLA_REFILL));
+    assert((au_relay_action(false, 10.0, -5.0, true, -5.0, 3) == AU_RLA_REFILL));
+    assert((au_relay_action(false, 40.0, 0.0, false, 0.0, 0) == AU_RLA_KEEP));
+    assert((au_relay_action(true, 50.0, 0.0, false, 0.0, 0) == AU_RLA_TRIM));
+    assert((au_relay_action(false, 10.0, 60.0, true, 50.1, 50) == AU_RLA_DROP));
+    assert((au_relay_action(false, 10.0, 60.0, true, 50.0, 50) == AU_RLA_SEND));
+    assert((au_relay_action(false, 10.0, 60.0, true, 55.0, 49) == AU_RLA_SEND));
+    assert((au_relay_window_ends(49) == false));
+    assert((au_relay_window_ends(50) == true));
+    assert((au_relay_trims(50.0, 10.0) == true));
+    assert((au_relay_trims(40.0, 10.0) == false));
+    bool filling = true;
+    double pending = 0.0;
+    double queued = 0.0;
+    int64_t sends = 0;
+    int64_t other = 0;
+    double low = 1000000.0;
+    int64_t count = 0;
+    int64_t i = 0;
+    while ((i < 1000)) {
+        pending = (pending + 10.0);
+        if ((filling == false)) {
+            if ((queued < low)) {
+                low = queued;
+            }
+            count = (count + 1);
+        }
+        int64_t a = au_relay_action(filling, pending, queued, true, low, count);
+        if (au_relay_window_ends(count)) {
+            low = 1000000.0;
+            count = 0;
+        }
+        if ((a == AU_RLA_SEND)) {
+            queued = (queued + pending);
+            pending = 0.0;
+            filling = false;
+            sends = (sends + 1);
+        } else if ((a != AU_RLA_KEEP)) {
+            other = (other + 1);
+        }
+        if ((queued > AU_RELAY_MAX_MS)) {
+            other = (other + 1);
+        }
+        if ((filling == false)) {
+            queued = (queued - 10.0);
+        }
+        i = (i + 1);
+    }
+    assert((other == 0));
+    assert((sends == 997));
+    queued = 70.0;
+    low = 1000000.0;
+    count = 0;
+    int64_t drops = 0;
+    i = 0;
+    while ((i < 1000)) {
+        pending = 10.0;
+        if ((queued < low)) {
+            low = queued;
+        }
+        count = (count + 1);
+        int64_t b = au_relay_action(false, pending, queued, true, low, count);
+        if (au_relay_window_ends(count)) {
+            low = 1000000.0;
+            count = 0;
+        }
+        if ((b == AU_RLA_SEND)) {
+            queued = (queued + pending);
+        }
+        if ((b == AU_RLA_DROP)) {
+            drops = (drops + 1);
+        }
+        queued = (queued - 10.0);
+        i = (i + 1);
+    }
+    assert((drops == 2));
+    assert((queued == 50.0));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1354,7 +1484,8 @@ int main(void) {
     test_au_restart_backoff();
     test_au_player_rules();
     test_au_mic_input_rules();
-    printf("All %d tests passed.\n", 8);
+    test_au_relay_rules();
+    printf("All %d tests passed.\n", 9);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

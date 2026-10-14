@@ -310,6 +310,41 @@ private typealias L = AudioRulesLegacy
         log.finish(minimumCases: 10_000)
     }
 
+    /// relayAction, relayTrims (2026-10-13, the own voice).
+    @Test func relayRules() {
+        let log = DiffLog("relayAction, relayTrims")
+        log.check([F.relayTargetMs, F.relayMaxMs, F.relaySlackMs], [L.relayTargetMs, L.relayMaxMs, L.relaySlackMs], "relay ms")
+        log.check(F.relayWindow, L.relayWindow, "relayWindow")
+        for count in [Int.min, -1, 0, 1, 48, 49, 50, 51, 1000, Int.max] {
+            log.check(F.relayWindowEnds(lowCount: count), L.relayWindowEnds(lowCount: count), "\(count)")
+        }
+        log.check([F.relayKeep, F.relaySend, F.relayDrop, F.relayTrim, F.relayRefill],
+                  [L.relayKeep, L.relaySend, L.relayDrop, L.relayTrim, L.relayRefill], "relay actions")
+        var r = DiffRandom(seed: 4040)
+        var values: [Double] = [0, -0.0, -1, 1, 5, 10, 10.6667, 21.333, 30, 39.999, 40, 40.001, 50, 79.999, 80, 80.001,
+                                110, 119.999, 120, 120.001, 200, 1e9, -1e9, .infinity, -.infinity, .nan, .leastNonzeroMagnitude]
+        for _ in 0..<60 { values.append(r.double()) }
+        let lows: [Double] = [0, 30, 49.999, 50, 50.001, 70, .nan, .infinity]
+        let counts = [0, 49, 50, 51]
+        for pending in values {
+            for queued in values + [nil] as [Double?] {
+                for filling in [false, true] {
+                    for low in lows {
+                        for count in counts {
+                            log.check(F.relayAction(filling: filling, pendingMs: pending, queuedMs: queued, lowMs: low, lowCount: count),
+                                      L.relayAction(filling: filling, pendingMs: pending, queuedMs: queued, lowMs: low, lowCount: count),
+                                      describe(filling, pending, queued as Any, low, count))
+                        }
+                    }
+                }
+            }
+            for oldest in values {
+                log.check(F.relayTrims(pendingMs: pending, oldestMs: oldest), L.relayTrims(pendingMs: pending, oldestMs: oldest), describe(pending, oldest))
+            }
+        }
+        log.finish(minimumCases: 490_000)
+    }
+
     /// playerStep, playerEnqueue, playerCompletion, playerReplays (2026-10-13, phrases cut by engine stops).
     @Test func playerRules() {
         let log = DiffLog("playerStep, playerEnqueue, playerCompletion, playerReplays")

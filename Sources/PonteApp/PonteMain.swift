@@ -22,6 +22,9 @@ struct PonteMain: App {
                 Toggle("Пауза голоса в звонок", isOn: Binding(get: { model.voicePaused },
                                                                set: { model.voicePaused = $0 }))
                     .keyboardShortcut("p", modifiers: [.command, .shift])
+                Toggle("Свой голос", isOn: Binding(get: { model.ownVoice }, set: { _ in model.toggleOwnVoice() }))
+                    .keyboardShortcut("v", modifiers: [.command, .shift])
+                    .disabled(!model.ownVoiceAvailable)
                 Divider()
                 Button("Сохранить стенограмму") { model.saveTranscript() }
                     .keyboardShortcut("s", modifiers: .command)
