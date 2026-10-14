@@ -349,6 +349,42 @@ pub const LN_MIC_REQUEST_FIRST : i64 = 1;
 ; WAVFileSink paces a phrase in steps of at most 50 ms.
 pub const LN_SINK_PACE_SECONDS : f64 = 0.05;
 
+; --- The owner's own voice coming back from the call (owner 2026-10-14) -----------------------------------------
+; Live 2026-10-14: the test Mac sat next to the owner; its microphone heard the owner's Russian and Meet sent it back,
+; so the incoming lane "translated" it as the other side ("Quem e de la" -> a Russian phrase) into the owner's
+; headphones while he spoke. An incoming phrase that lies mostly inside the time the owner held the talk key (from
+; HEAD_MS before it to TAIL_MS after it, for the call's delay) is his own voice and is dropped. A phrase of the other
+; side that only partly overlaps (an interruption) stays.
+pub const LN_OWN_TALK_HEAD_MS : i64 = 300;
+pub const LN_OWN_TALK_TAIL_MS : i64 = 1500;
+pub const LN_OWN_TALK_DROP_PERMILLE : i64 = 600;
+; When the transcriber gives no timing, a phrase is taken to have started this long before its end.
+pub const LN_PHRASE_FALLBACK_MS : i64 = 3000;
+
+; ownTalkDrops: talk_end_ms < 0 while the key is still held. Times in ms on one clock.
+pub fn ln_own_talk_drops(phrase_start_ms: i64, phrase_end_ms: i64, talk_start_ms: i64, talk_end_ms: i64) -> bool {
+    var start: i64 = phrase_start_ms;
+    var end: i64 = phrase_end_ms;
+    if (end < start) {
+        start = phrase_end_ms;
+        end = phrase_start_ms;
+    }
+    var duration: i64 = end - start;
+    if (duration < 1) { duration = 1; }
+    end = start + duration;
+    var window_start: i64 = talk_start_ms - LN_OWN_TALK_HEAD_MS;
+    var from: i64 = start;
+    if (from < window_start) { from = window_start; }
+    var to: i64 = end;
+    if (talk_end_ms >= 0) {
+        var window_end: i64 = talk_end_ms + LN_OWN_TALK_TAIL_MS;
+        if (to > window_end) { to = window_end; }
+    }
+    var overlap: i64 = to - from;
+    if (overlap < 0) { overlap = 0; }
+    return overlap * 1000 >= LN_OWN_TALK_DROP_PERMILLE * duration;
+}
+
 ; Seconds to whole milliseconds, rounded half away from zero (TranslationLane.millis).
 pub fn ln_millis(seconds: f64) -> i64 {
     return cast_i64(round(seconds * LN_MS_PER_SECOND));
@@ -745,6 +781,23 @@ test ln_speech_control_rules {
     assert ln_ptt_scope(true, LN_MODE_CONTINUOUS, true) == LN_PTT_SCOPE_NONE;
     assert ln_ptt_scope(true, LN_MODE_PUSH_TO_TALK, false) == LN_PTT_SCOPE_WINDOW;
     assert ln_ptt_scope(true, LN_MODE_PUSH_TO_TALK, true) == LN_PTT_SCOPE_GLOBAL;
+}
+
+test ln_own_talk {
+    // The owner held the key from 10000 to 12000; his voice came back through the call 10200..12400.
+    assert ln_own_talk_drops(10200, 12400, 10000, 12000) == true;
+    // Still holding the key.
+    assert ln_own_talk_drops(10200, 12400, 10000, -1) == true;
+    // The other side spoke after the owner let go and the call's delay passed.
+    assert ln_own_talk_drops(14000, 16000, 10000, 12000) == false;
+    // An interruption: mostly after the owner's turn.
+    assert ln_own_talk_drops(12500, 16000, 10000, 12000) == false;
+    // Before the owner pressed the key.
+    assert ln_own_talk_drops(5000, 8000, 10000, 12000) == false;
+    // Reversed and empty phrases do not crash.
+    assert ln_own_talk_drops(12400, 10200, 10000, 12000) == true;
+    assert ln_own_talk_drops(11000, 11000, 10000, 12000) == true;
+    assert LN_PHRASE_FALLBACK_MS > 0;
 }
 
 test ln_moved_rules {

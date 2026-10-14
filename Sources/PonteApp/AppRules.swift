@@ -475,6 +475,13 @@ enum AppRules {
     static let STOP_SEGMENT_WAIT_MS = Int64(LN_STOP_SEGMENT_WAIT_MS)
     static let STOP_TRANSLATE_WAIT_MS = Int64(LN_STOP_TRANSLATE_WAIT_MS)
 
+    /// The owner's own voice came back from the call: an incoming phrase mostly inside a talk-key interval
+    /// (talkEndMs < 0 while held). A phrase without transcriber timing started PHRASE_FALLBACK_MS before its end.
+    static func ownTalkDrops(phraseStartMs: Int64, phraseEndMs: Int64, talkStartMs: Int64, talkEndMs: Int64) -> Bool {
+        ln_own_talk_drops(phraseStartMs, phraseEndMs, talkStartMs, talkEndMs)
+    }
+    static let PHRASE_FALLBACK_MS = Int64(LN_PHRASE_FALLBACK_MS)
+
     /// Seconds to whole milliseconds, rounded half away from zero (finite input).
     static func millis(_ seconds: Double) -> Int64 { ln_millis(seconds) }
 

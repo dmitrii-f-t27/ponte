@@ -244,6 +244,8 @@ final class AppModel {
             liveSynth?.voiceIdentifiers = voiceMap   // the next phrase already speaks with the new voice
         }
     }
+    /// When the owner held the talk key (the incoming lane drops his own voice coming back from the call).
+    @ObservationIgnored private let ownTalk = OwnTalkLog()
     /// The synthesizer of the running call, so a voice change applies at once.
     @ObservationIgnored private var liveSynth: SystemSpeechSynth?
 
@@ -522,7 +524,7 @@ final class AppModel {
     /// Where the user hears things: chosen headphones or the system output.
     var listeningDevice: AudioDevice? { headphonesDevice ?? defaultOutput }
 
-    /// «Звук Meet»: the outputs the owner can pick (device_rules: dv_is_hear_output).
+    /// «Звук»: the outputs the owner can pick (device_rules: dv_is_hear_output).
     var hearOutputs: [AudioDevice] {
         devices.filter {
             AudioRules.isHearOutput(kind: deviceCatalog.kind(of: $0), outputChannels: $0.outputChannels,
@@ -990,6 +992,8 @@ final class AppModel {
             memory: memory,
             mode: mode(.outgoing),
             speechOutputEnabled: speaks(.outgoing))
+        let ownTalk = self.ownTalk
+        incoming.dropsPhrase = { _, start, end in ownTalk.drops(start: start, end: end) }
         for lane in [incoming, outgoing] {
             lane.glossary = glossary
             let direction = lane.direction
@@ -1069,6 +1073,7 @@ final class AppModel {
         ownVoice = false
         ptt.stop()
         talkKeyHeld = false
+        ownTalk.setHeld(false, at: Date())
         pttIsGlobal = false
         await incomingLane?.stop()
         await outgoingLane?.stop()
@@ -1316,6 +1321,7 @@ final class AppModel {
     func setTalkKey(_ held: Bool) {
         guard talkKeyHeld != held else { return }
         talkKeyHeld = held
+        ownTalk.setHeld(held, at: Date())
         outgoingLane?.setKeyHeld(held)
         updatePeerMic()
     }

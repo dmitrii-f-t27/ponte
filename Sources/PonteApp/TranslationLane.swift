@@ -43,6 +43,33 @@ enum LaneEvent {
     case voiceOut(text: String?, playing: Bool)
 }
 
+/// When the owner held the talk key: the incoming lane drops his own voice coming back from the call
+/// (AppRules.ownTalkDrops, lane_rules.t27). Thread-safe.
+final class OwnTalkLog: @unchecked Sendable {
+    private let lock = NSLock()
+    /// Recent talk-key intervals in ms since 1970; end -1 while the key is held.
+    private var intervals: [(start: Int64, end: Int64)] = []
+
+    func setHeld(_ held: Bool, at date: Date) {
+        let ms = Int64((date.timeIntervalSince1970 * 1000).rounded())
+        lock.withLock {
+            if held {
+                if intervals.last?.end != -1 { intervals.append((ms, -1)) }
+                if intervals.count > 20 { intervals.removeFirst(intervals.count - 20) }
+            } else if let last = intervals.indices.last, intervals[last].end == -1 {
+                intervals[last].end = ms
+            }
+        }
+    }
+
+    func drops(start: Date, end: Date) -> Bool {
+        let s = Int64((start.timeIntervalSince1970 * 1000).rounded())
+        let e = Int64((end.timeIntervalSince1970 * 1000).rounded())
+        let snapshot = lock.withLock { intervals }
+        return snapshot.contains { AppRules.ownTalkDrops(phraseStartMs: s, phraseEndMs: e, talkStartMs: $0.start, talkEndMs: $0.end) }
+    }
+}
+
 /// The last phrases of the whole conversation (both lanes), oldest first.
 final class ConversationMemory: @unchecked Sendable {
     private let lock = NSLock()
@@ -131,6 +158,9 @@ final class TranslationLane {
         }
     }
     var glossary: [GlossaryTerm] = []
+    /// Incoming lane: true when a final phrase heard between the two dates is not the other side's speech (the owner's
+    /// own voice coming back from the call, AppRules.ownTalkDrops); such a phrase is dropped, not translated.
+    var dropsPhrase: ((String, Date, Date) -> Bool)?
     /// «Свой голос» (outgoing lane): the microphone goes straight into the call; no listening, no speech.
     private(set) var ownVoice = false
     /// Set on the outgoing lane: drops mic audio while the Russian voice plays through speakers.
@@ -416,6 +446,15 @@ final class TranslationLane {
             guard finalTranslates(phrase) else { return }
             let timing = transcriber.timing(for: id)
             let end = phraseEnd(timing: timing, lastPartialAt: partialAt)
+            if let dropsPhrase {
+                let start = timing.map { $0.audioEndArrivedAt.addingTimeInterval(-max(0, $0.audioEnd - $0.audioStart)) }
+                    ?? end.addingTimeInterval(-Double(AppRules.PHRASE_FALLBACK_MS) / 1000)
+                if dropsPhrase(phrase, start, end) {
+                    log.info("dropped a phrase that was not the other side: \(phrase, privacy: .public)")
+                    PonteDiagnostics.log("incoming phrase dropped (own voice from the call)")
+                    return
+                }
+            }
             enqueue(ConversationLine(id: id, direction: direction, at: end, original: phrase), end: end,
                     recognitionMs: timing.map { millis($0.recognitionLatency) })
         }

@@ -262,4 +262,20 @@ private typealias L = AppRulesLegacy
         case .app(let id): id
         }
     }
+
+    @Test func ownTalkGuard() {
+        let log = DiffLog("ownTalkDrops")
+        log.check(F.PHRASE_FALLBACK_MS, L.PHRASE_FALLBACK_MS, "PHRASE_FALLBACK_MS")
+        var r = DiffRandom(seed: 1410)
+        for _ in 0..<50_000 {
+            let talkStart = Int64(r.int(0...20_000))
+            let talkEnd: Int64 = r.int(0...4) == 0 ? -1 : talkStart + Int64(r.int(0...8_000))
+            let phraseStart = Int64(r.int(0...30_000))
+            let phraseEnd = phraseStart + Int64(r.int(-500...6_000))
+            log.check(F.ownTalkDrops(phraseStartMs: phraseStart, phraseEndMs: phraseEnd, talkStartMs: talkStart, talkEndMs: talkEnd),
+                      L.ownTalkDrops(phraseStartMs: phraseStart, phraseEndMs: phraseEnd, talkStartMs: talkStart, talkEndMs: talkEnd),
+                      "\(phraseStart)..\(phraseEnd) talk \(talkStart)..\(talkEnd)")
+        }
+        log.finish(minimumCases: 50_000)
+    }
 }
