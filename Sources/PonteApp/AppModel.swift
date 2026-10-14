@@ -1219,7 +1219,7 @@ final class AppModel {
     /// The code only the Russians share (PeerRules.secretNormalized, shown as abcd-efgh-jkmn); the room and the key
     /// of the link come from it. Never the Meet code: every participant of the call has that one.
     /// Kept only while Ponte runs (never stored): a code is for one call, «Создать код» makes the next one.
-    var peerSecret = 
+    var peerSecret = ""
     /// The link is on (the owner pressed «Подключиться»).
     private(set) var peerOn = false
     /// «Мой голос русским» off: the other Russians do not hear the owner.
