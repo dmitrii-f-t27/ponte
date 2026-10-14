@@ -80,7 +80,13 @@ private typealias PL = AppRulesLegacy
         for kind in -5...20 {
             log.check(AF.isRealMicKind(kind), AL.isRealMicKind(kind), "\(kind)")
             log.check(AF.isHeadphonesLike(kind: kind), AL.isHeadphonesLike(kind: kind), "\(kind)")
-            log.check(AF.hearChoice(kind: kind), AL.hearChoice(kind: kind), "hear \(kind)")
+            for channels in [0, 2] {
+                for selectable in [false, true] {
+                    log.check(AF.isHearOutput(kind: kind, outputChannels: channels, selectable: selectable),
+                              AL.isHearOutput(kind: kind, outputChannels: channels, selectable: selectable),
+                              "hear \(kind) \(channels) \(selectable)")
+                }
+            }
             for role in -2...4 {
                 for running in [false, true] {
                     log.check(AF.readerUse(role: role, kind: kind, runningInput: running),
@@ -209,28 +215,5 @@ private typealias PL = AppRulesLegacy
                       describe(run, mark, ms, open, dismissed))
         }
         log.finish(minimumCases: 200_000)
-    }
-
-    @Test func hearSwitchPicks() {
-        let log = DiffLog("pickHearIndex")
-        let pool = [AF.kindBuiltInSpeaker, AF.kindBuiltInHeadphones, AF.kindBluetooth, AF.kindUSB, AF.kindBlackHole,
-                    AF.kindDisplay, AF.kindAirPlay, AF.kindAggregate, AF.kindUnknown]
-        var seed: UInt64 = 0x5EED
-        func next(_ n: Int) -> Int {
-            seed = seed &* 6364136223846793005 &+ 1442695040888963407
-            return Int((seed >> 33) % UInt64(n))
-        }
-        for _ in 0..<2000 {
-            let count = next(6)
-            let kinds = (0..<count).map { _ in pool[next(pool.count)] }
-            let outputs = (0..<count).map { _ in next(3) == 0 ? 0 : 2 }
-            let selectable = (0..<count).map { _ in next(4) != 0 }
-            for target in [AF.hearHeadphones, AF.hearMac] {
-                log.check(AF.pickHearIndex(kinds: kinds, outputChannels: outputs, selectable: selectable, target: target),
-                          AL.pickHearIndex(kinds: kinds, outputChannels: outputs, selectable: selectable, target: target),
-                          "\(kinds) \(outputs) \(selectable) \(target)")
-            }
-        }
-        log.finish(minimumCases: 4000)
     }
 }

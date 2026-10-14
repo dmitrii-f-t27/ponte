@@ -514,39 +514,36 @@ final class AppModel {
     /// Where the user hears things: chosen headphones or the system output.
     var listeningDevice: AudioDevice? { headphonesDevice ?? defaultOutput }
 
-    /// «Слушать: Наушники | Мак» (device_rules: dv_hear_choice), from the output the owner hears now.
-    var hearChoice: Int {
-        AudioRules.hearChoice(kind: listeningDevice.map { deviceCatalog.kind(of: $0) } ?? AudioRules.kindUnknown)
+    /// «Звук Meet»: the outputs the owner can pick (device_rules: dv_is_hear_output).
+    var hearOutputs: [AudioDevice] {
+        devices.filter {
+            AudioRules.isHearOutput(kind: deviceCatalog.kind(of: $0), outputChannels: $0.outputChannels,
+                                    selectable: deviceCatalog.isSelectableOutput($0))
+        }
     }
 
-    /// The output for a switch position among the connected devices (device_rules: dv_pick_hear_index).
-    func hearDevice(_ target: Int) -> AudioDevice? {
-        let i = AudioRules.pickHearIndex(kinds: devices.map { deviceCatalog.kind(of: $0) },
-                                         outputChannels: devices.map(\.outputChannels),
-                                         selectable: devices.map { deviceCatalog.isSelectableOutput($0) }, target: target)
-        return i >= 0 ? devices[i] : nil
+    /// The output the owner hears now: the system output.
+    var hearOutputUID: String { defaultOutput?.uid ?? "" }
+
+    /// Headphones get a headphones icon in the menu, the Mac's speakers a laptop, anything else a speaker.
+    func hearIcon(_ device: AudioDevice) -> String {
+        let kind = deviceCatalog.kind(of: device)
+        if AudioRules.isHeadphonesLike(kind: kind) { return "headphones" }
+        return kind == AudioRules.kindBuiltInSpeaker ? "laptopcomputer" : "hifispeaker"
     }
 
-    func canHear(_ target: Int) -> Bool { hearDevice(target) != nil }
-
-    /// Why «Наушники» or «Мак» could not be switched on (shown as an alert); nil when nothing to say.
+    /// Why the sound could not be moved (shown as an alert); nil when nothing to say.
     var hearNotice: String?
 
-    /// Moves everything the owner hears to headphones or the Mac: the chosen output becomes the system output
-    /// (the call app follows it), and the Russian voice follows the system output.
-    func setHear(_ target: Int) {
-        guard let device = hearDevice(target) else {
-            hearNotice = target == AudioRules.hearHeadphones
-                ? "Наушники не подключены к этому Маку. Наденьте их и выберите в Пункте управления → Звук, затем нажмите «Наушники» снова."
-                : "Динамики Мака недоступны."
-            refreshCatalogs()
-            return
-        }
+    /// Moves the call and the Russian voice to the output: it becomes the system output (the call app follows it),
+    /// and the Russian voice follows the system output.
+    func setHearOutput(uid: String) {
+        guard let device = hearOutputs.first(where: { $0.uid == uid }), device.uid != hearOutputUID else { return }
         do {
             try deviceCatalog.setDefaultOutput(device)
-            log.info("listen on \(device.name, privacy: .public)")
+            log.info("hear on \(device.name, privacy: .public)")
         } catch {
-            log.error("listen on \(device.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            log.error("hear on \(device.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
         }
         if !headphonesUID.isEmpty { headphonesUID = "" }
         refreshCatalogs()

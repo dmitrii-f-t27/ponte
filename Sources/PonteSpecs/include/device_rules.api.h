@@ -205,8 +205,6 @@ static const uint32_t DV_FX_LENGTHS[73] = { 20, 20, 19, 28, 22, 23, 3, 1, 13, 16
 #define DV_LISTEN_REAL_MIC 3
 #define DV_LISTEN_BOTH 4
 #define DV_LISTEN_NO_BLACKHOLE 5
-#define DV_HEAR_HEADPHONES 1
-#define DV_HEAR_MAC 2
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -263,8 +261,7 @@ int64_t dv_listen_status(int64_t uses[static 256], int64_t count, bool listed, b
 int64_t dv_first_use(int64_t uses[static 256], int64_t count, int64_t wanted);
 int64_t dv_listen_index(int64_t uses[static 256], int64_t count);
 bool dv_is_headphones_like(int64_t kind);
-int64_t dv_hear_choice(int64_t kind);
-int64_t dv_pick_hear_index(int64_t kinds[static 256], int64_t output_channels[static 256], int64_t selectable[static 256], int64_t count, int64_t target);
+bool dv_is_hear_output(int64_t kind, int64_t output_channels, bool selectable);
 bool dv_auto_mic_allowed(int64_t kind, int64_t channels);
 bool dv_headset_mic_matches(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t i, int64_t output);
 int64_t dv_pick_auto_mic_index(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t input_channels[static 256], int64_t count, int64_t output_index);

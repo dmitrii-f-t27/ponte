@@ -956,38 +956,13 @@ pub fn dv_is_headphones_like(kind: i64) -> bool {
     return kind == DV_KIND_BUILT_IN_HEADPHONES or kind == DV_KIND_BLUETOOTH or kind == DV_KIND_USB;
 }
 
-; --- The "Listen" switch: headphones or the Mac (owner 2026-10-13) --------------------------------------------------
-; Where the owner hears Ponte's Russian voice and the call app. Ponte makes the chosen output the Mac's system
-; output, so the call app follows it too. HEADPHONES: the first connected headphones-like output in
-; DV_LISTEN_PRIORITY order (headphone jack, Bluetooth, USB). MAC: the built-in speakers.
-pub const DV_HEAR_HEADPHONES : i64 = 1;
-pub const DV_HEAR_MAC : i64 = 2;
-
-; The switch position shown for the system output's kind: headphones-like is HEADPHONES, anything else MAC.
-pub fn dv_hear_choice(kind: i64) -> i64 {
-    if (dv_is_headphones_like(kind)) { return DV_HEAR_HEADPHONES; }
-    return DV_HEAR_MAC;
-}
-
-; The output for a switch position, -1 when none is connected (the button is then disabled). Only outputs macOS
-; lets become the system output count (selectable 1): AirPods that play to another device stay listed, hidden,
-; and setting them as the output is silently ignored (live 2026-10-13).
-pub fn dv_pick_hear_index(kinds: [256]i64, output_channels: [256]i64, selectable: [256]i64, count: i64, target: i64) -> i64 {
-    var n: i64 = dv_list_count(count);
-    var p: i64 = 0;
-    while (p < 4) {
-        var wanted: bool = dv_is_headphones_like(DV_LISTEN_PRIORITY[p]);
-        if (target == DV_HEAR_MAC) { wanted = DV_LISTEN_PRIORITY[p] == DV_KIND_BUILT_IN_SPEAKER; }
-        if (wanted) {
-            var i: i64 = 0;
-            while (i < n) {
-                if (dv_usable(kinds[i], output_channels[i]) and selectable[i] != 0 and kinds[i] == DV_LISTEN_PRIORITY[p]) { return i; }
-                i = i + 1;
-            }
-        }
-        p = p + 1;
-    }
-    return -1;
+; --- The "Meet sound" menu (owner 2026-10-14) -------------------------------------------------------------------------
+; Where the owner hears the call app and Ponte's Russian voice. Ponte makes the chosen output the Mac's system output,
+; so the call app and the Russian voice follow it. Offered: every output macOS lets become the system output
+; (selectable: not hidden, allowed as default), except the call's virtual mic and Ponte's tap. AirPods that play to
+; another device stay listed hidden, and setting them as the output is silently ignored (live 2026-10-13).
+pub fn dv_is_hear_output(kind: i64, output_channels: i64, selectable: bool) -> bool {
+    return selectable and dv_usable(kind, output_channels);
 }
 
 ; Never Ponte's microphone: BlackHole, Ponte's tap, an iPhone (Continuity).
@@ -1640,35 +1615,13 @@ test dv_auto_mic {
     assert bad == 0;
 }
 
-test dv_hear_switch {
-    var kinds: [256]i64 = [0; 256];
-    var outs: [256]i64 = [0; 256];
-    var sel: [256]i64 = [1; 256];
-    // This Mac on 2026-10-13: AirPods (Bluetooth), BlackHole, the MacBook speakers.
-    kinds[0] = DV_KIND_BLUETOOTH;
-    kinds[1] = DV_KIND_BLACKHOLE;
-    kinds[2] = DV_KIND_BUILT_IN_SPEAKER;
-    outs[0] = 2;
-    outs[1] = 2;
-    outs[2] = 2;
-    assert dv_pick_hear_index(kinds, outs, sel, 3, DV_HEAR_HEADPHONES) == 0;
-    assert dv_pick_hear_index(kinds, outs, sel, 3, DV_HEAR_MAC) == 2;
-    // AirPods that play to another device are hidden: not a choice.
-    sel[0] = 0;
-    assert dv_pick_hear_index(kinds, outs, sel, 3, DV_HEAR_HEADPHONES) == -1;
-    sel[0] = 1;
-    // The headphone jack comes before Bluetooth.
-    kinds[1] = DV_KIND_BUILT_IN_HEADPHONES;
-    assert dv_pick_hear_index(kinds, outs, sel, 3, DV_HEAR_HEADPHONES) == 1;
-    // No headphones connected: the button has no device.
-    kinds[0] = DV_KIND_BLACKHOLE;
-    kinds[1] = DV_KIND_DISPLAY;
-    assert dv_pick_hear_index(kinds, outs, sel, 3, DV_HEAR_HEADPHONES) == -1;
-    outs[2] = 0;
-    assert dv_pick_hear_index(kinds, outs, sel, 3, DV_HEAR_MAC) == -1;
-    assert dv_hear_choice(DV_KIND_BLUETOOTH) == DV_HEAR_HEADPHONES;
-    assert dv_hear_choice(DV_KIND_USB) == DV_HEAR_HEADPHONES;
-    assert dv_hear_choice(DV_KIND_BUILT_IN_HEADPHONES) == DV_HEAR_HEADPHONES;
-    assert dv_hear_choice(DV_KIND_BUILT_IN_SPEAKER) == DV_HEAR_MAC;
-    assert dv_hear_choice(DV_KIND_DISPLAY) == DV_HEAR_MAC;
+test dv_hear_menu {
+    // This Mac on 2026-10-13: the MacBook speakers, BlackHole, hidden AirPods, Ponte's tap.
+    assert dv_is_hear_output(DV_KIND_BUILT_IN_SPEAKER, 2, true) == true;
+    assert dv_is_hear_output(DV_KIND_BLACKHOLE, 2, true) == false;
+    assert dv_is_hear_output(DV_KIND_BLUETOOTH, 2, false) == false;
+    assert dv_is_hear_output(DV_KIND_BLUETOOTH, 2, true) == true;
+    assert dv_is_hear_output(DV_KIND_PONTE_AGGREGATE, 2, true) == false;
+    assert dv_is_hear_output(DV_KIND_DISPLAY, 2, true) == true;
+    assert dv_is_hear_output(DV_KIND_BUILT_IN_MIC, 0, true) == false;
 }
