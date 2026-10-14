@@ -15,13 +15,13 @@ Where the sound goes is fixed:
 
 Recognition, translation and speech run on the device: SpeechAnalyzer, the Translation framework and AVSpeechSynthesizer. Claude (`claude-haiku-5-5`) is an optional translator. It is used only when its key is in the macOS Keychain under the item `ponte-anthropic-key`.
 
-**Russians in the call.** When several Russians each run Ponte in one call, they hear each other's own voices without translation, and the Portuguese side does not hear them. One of them presses «Русские в звонке» → «Создать код» and sends the code to the other Russians, not to the Portuguese side. Everyone enters it and presses «Подключиться». Up to six people fit in one room.
+**Russians in the call.** When several Russians each run Ponte in one call, they hear each other's own voices without translation, and the Portuguese side does not hear them. One of them presses «Русские в звонке» → «Создать код» and sends the code to the other Russians, not to the Portuguese side. Everyone enters it and presses «Подключиться». Up to six people fit in one room. A code is for one call: Ponte does not store it, and «Создать код» makes the next one. If the room is full, Ponte tries again every 15 seconds, because the relay may still count a Mac that went to sleep. If the relay counts more connections than Pontes that announced themselves, the panel warns that someone may be listening.
 
 Ponte apps meet through a small relay, `relay/`, which runs on Railway. The code is the only secret; the Meet code is never used, because every participant has it. PBKDF2 derives the room and the AES-GCM key from the code, so the relay forwards only encrypted frames.
 
-Each Ponte also announces when it speaks into the call, so no Ponte translates another Ponte's Portuguese voice back into Russian. With headphones your voice goes to the other Russians all the time; without them, only while you hold the talk key, so they do not hear themselves as an echo.
+Each Ponte also announces when it speaks into the call, so no Ponte translates another Ponte's Portuguese voice back into Russian. With headphones your voice goes to the other Russians whenever you speak; without them, only while you hold the talk key, so they do not hear themselves as an echo. Only speech is sent, not the quiet noise of the room. When another Russian's voice plays on speakers, your microphone stays out of the call for 0.7 s after it, so the Portuguese side does not hear him.
 
-The call analysis is optional too. In Settings → «Анализ звонка» you pick a chat service (Z.ai GLM, DeepSeek, or any OpenAI-compatible one), paste its API key (kept only in the Keychain as `ponte-analysis-<id>`) and check it. During a call an agent sends the new lines (who spoke, original and translation) to that service about every two minutes and keeps notes. After «Стоп», or from the toolbar button «Отчёт по звонку», it writes a report: summary, participants, important data, agreements, tasks, open questions, risks and next steps. «Сохранить в TXT» writes the report and the whole transcript to `~/Documents/Ponte/Ponte-report-YYYY-MM-DD-HHmm.txt`. Nothing is sent until a key is saved.
+The call analysis is optional too. In Settings → «Анализ звонка» you pick a chat service (Z.ai GLM, DeepSeek, or any OpenAI-compatible one), paste its API key (kept only in the Keychain as `ponte-analysis-<id>`) and check it. During a call an agent sends the new lines (who spoke, original and translation) to that service about every two minutes and keeps notes. After «Стоп», or from the toolbar button «Отчёт по звонку», it writes a report: summary, participants, important data, agreements, tasks, open questions, risks and next steps. «Сохранить в TXT» writes the report and the whole transcript to `~/Documents/Ponte/Ponte-report-YYYY-MM-DD-HHmm.txt`. Nothing is sent until a key is saved. The key is saved for one address and is sent only there: change the address and Ponte asks for the key again. Plain `http://` is allowed only for this Mac (`localhost`, `127.0.0.1`). A reply cut short by the service is never used as notes or as a report. A report you did not save is written to a file before the next call, and also when you quit Ponte; quitting waits up to 10 s for a report still being written.
 
 ## Written in t27
 
@@ -48,7 +48,7 @@ T27C=/path/to/t27c Specs/generate.sh
 
 `Specs/T27C_PIN` names the compiler release, which is t27c v0.5.1. `Specs/README.md` maps each spec to the Swift that calls it.
 
-The Swift facades `AudioRules`, `SpeechRules` and `AppRules` only pass values to the generated C and back. Swift keeps only what t27 cannot reach: SwiftUI views and their texts, Core Audio, AVFoundation, Speech, Translation, Keychain, URLSession, Unicode text handling, the Claude prompt and JSON, and concurrency. `Specs/README.md` lists what stays in Swift and why.
+The Swift facades `AudioRules`, `SpeechRules`, `AppRules`, `TextRules`, `PeerRules` and `AnalysisRules` only pass values to the generated C and back. Swift keeps only what t27 cannot reach: SwiftUI views and their texts, Core Audio, AVFoundation, Speech, Translation, Keychain, URLSession, Unicode text handling, the Claude prompt and JSON, and concurrency. `Specs/README.md` lists what stays in Swift and why.
 
 ## Requirements
 
@@ -84,8 +84,8 @@ This is a work in progress. These parts are verified on a Mac:
 - Excluding Ponte's own sound.
 - On-device recognition of pt-BR and ru-RU, 0.35–0.8 s after the speaker stops.
 - Speech synthesis.
-- Every decision runs in the C generated from the t27 specs. The three Swift rules facades only pass values to it. The Swift they replaced is kept as a test oracle. 49 differential tests compare the two bit for bit over about 24.9 million inputs.
-- The full app, built and signed, with 196 tests passing and no build warnings.
+- Every decision runs in the C generated from the t27 specs (11 specs, 71 spec tests). The Swift rules facades only pass values to it. The Swift they replaced, or a separate plain-Swift version, is kept as a test oracle. 87 differential tests compare the two bit for bit over about 27.9 million inputs.
+- The full app, built and signed, with 308 tests passing.
 - An end-to-end run with test files, one phrase each way, from the end of the phrase to the translation on screen:
   - Ru → Pt took 0.6 s.
   - Pt → Ru took 0.4 s.
