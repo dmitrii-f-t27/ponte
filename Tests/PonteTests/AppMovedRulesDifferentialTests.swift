@@ -16,7 +16,8 @@ private typealias L = AppRulesLegacy
         let log = DiffLog("moved app constants and codes")
         log.check([F.directionCode(.incoming), F.directionCode(.outgoing)], [L.DIR_INCOMING, L.DIR_OUTGOING], "direction codes")
         log.check([F.DEFAULT_MODE, F.DEFAULT_PTT_KEY, F.DEFAULT_TRANSLATOR], [L.DEFAULT_MODE, L.DEFAULT_PTT_KEY, L.DEFAULT_TRANSLATOR], "defaults")
-        log.check([F.DEFAULT_SPEAK_RUSSIAN, F.DEFAULT_OVERLAY_VISIBLE], [L.DEFAULT_SPEAK_RUSSIAN, L.DEFAULT_OVERLAY_VISIBLE], "default flags")
+        log.check([F.DEFAULT_SPEAK_RUSSIAN, F.DEFAULT_OVERLAY_VISIBLE, F.DEFAULT_HEAR_ORIGINAL],
+                  [L.DEFAULT_SPEAK_RUSSIAN, L.DEFAULT_OVERLAY_VISIBLE, L.DEFAULT_HEAR_ORIGINAL], "default flags")
         log.check([F.STOP_SEGMENT_WAIT_MS, F.STOP_TRANSLATE_WAIT_MS, F.POLL_INTERVAL_MS, F.COPIED_FEEDBACK_MS],
                   [L.STOP_SEGMENT_WAIT_MS, L.STOP_TRANSLATE_WAIT_MS, L.POLL_INTERVAL_MS, L.COPIED_FEEDBACK_MS], "times")
         log.check(F.FIRST_ATTEMPT, L.FIRST_ATTEMPT, "FIRST_ATTEMPT")

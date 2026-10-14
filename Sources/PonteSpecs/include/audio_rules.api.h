@@ -42,6 +42,9 @@
 #define AU_TAP_WAIT 1
 #define AU_TAP_UPDATE 2
 #define AU_TAP_REBUILD 3
+#define AU_TAP_MUTE_UNMUTED 0
+#define AU_TAP_MUTE_MUTED 1
+#define AU_TAP_MUTE_WHEN_TAPPED 2
 #define AU_MIC_START 0
 #define AU_MIC_REQUEST_FIRST 1
 #define AU_MIC_DENIED 2
@@ -164,6 +167,7 @@ int64_t au_player_completion(bool same_generation, bool engine_running, bool has
 bool au_player_replays(int64_t cuts);
 bool au_has_signal(float peak, float rms);
 bool au_tap_lists_processes(bool is_global);
+int64_t au_tap_mute_behavior(bool is_global, bool hear_original);
 bool au_flushes_converter(int64_t index, int64_t count, bool next_format_differs);
 bool au_uses_buffer(bool has_data, int64_t channels);
 int64_t au_buffer_list_frames(int64_t byte_sizes[static 64], int64_t channels[static 64], int64_t count, int64_t max_frames);

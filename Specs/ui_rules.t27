@@ -366,10 +366,12 @@ pub fn ui_overlay_line_count(available: i32, panel_height: i32, font_size: i32) 
 }
 
 ; --- Rules moved here from AppModel, the views, LaunchOptions, Preferences and PonteMain (2026-10-11) ------------
-; Defaults of the settings: the translator, the Russian voice-over (off), the floating subtitles (off).
+; Defaults of the settings: the translator, the Russian voice-over (on: the owner hears the translation),
+; the floating subtitles (off), the other side's own voices (off: muted while Ponte listens, "Hear them" turns them on).
 pub const UI_DEFAULT_TRANSLATOR : i32 = 0;
-pub const UI_DEFAULT_SPEAK_RUSSIAN : i32 = 0;
+pub const UI_DEFAULT_SPEAK_RUSSIAN : i32 = 1;
 pub const UI_DEFAULT_OVERLAY_VISIBLE : i32 = 0;
+pub const UI_DEFAULT_HEAR_ORIGINAL : i32 = 0;
 ; The status row polls every 500 ms and re-reads the device and app catalogs every 6th poll (3 s).
 pub const UI_POLL_INTERVAL_MS : i64 = 500;
 pub const UI_CATALOG_EVERY_TICKS : i64 = 6;

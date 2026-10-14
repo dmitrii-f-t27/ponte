@@ -100,8 +100,9 @@ static const uint8_t UI_ROW_TEXT[18] = { 115, 121, 115, 116, 101, 109, 97, 112, 
 static const uint32_t UI_ROW_OFFSETS[5] = { 0, 6, 10, 13, 17 };
 static const uint32_t UI_ROW_LENGTHS[5] = { 6, 4, 3, 4, 1 };
 #define UI_DEFAULT_TRANSLATOR 0
-#define UI_DEFAULT_SPEAK_RUSSIAN 0
+#define UI_DEFAULT_SPEAK_RUSSIAN 1
 #define UI_DEFAULT_OVERLAY_VISIBLE 0
+#define UI_DEFAULT_HEAR_ORIGINAL 0
 #define UI_POLL_INTERVAL_MS 500
 #define UI_CATALOG_EVERY_TICKS 6
 #define UI_CATALOG_TICK 5

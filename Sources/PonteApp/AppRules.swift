@@ -547,6 +547,7 @@ enum AppRules {
     static let DEFAULT_TRANSLATOR: Int32 = UI_DEFAULT_TRANSLATOR
     static let DEFAULT_SPEAK_RUSSIAN = UI_DEFAULT_SPEAK_RUSSIAN != 0
     static let DEFAULT_OVERLAY_VISIBLE = UI_DEFAULT_OVERLAY_VISIBLE != 0
+    static let DEFAULT_HEAR_ORIGINAL = UI_DEFAULT_HEAR_ORIGINAL != 0
 
     /// The status row polls this often; the catalogs are re-read on some polls.
     static let POLL_INTERVAL_MS = Int64(UI_POLL_INTERVAL_MS)

@@ -394,9 +394,13 @@ private final class FakeTranslator: Translator, @unchecked Sendable {
     }
 
     @Test func installedVoicesOnThisMac() {
-        // Facts probed 2026-10-11: Luciana is the best pt-BR voice, Milena the only ru voice.
-        #expect(SystemSpeechSynth.voices(for: .ptBR).first?.name.contains("Luciana") == true)
+        // Facts probed 2026-10-13, after Felipe, Milena and Yuri (Enhanced) were downloaded: Felipe is the best
+        // pt-BR voice, Milena the best ru voice, and «М» of the Russian switch picks Yuri.
+        #expect(SystemSpeechSynth.voices(for: .ptBR).first?.name.contains("Felipe") == true)
         #expect(SystemSpeechSynth.voices(for: .ru).first?.name.contains("Milena") == true)
+        let ru = SystemSpeechSynth.voices(for: .ru)
+        let male = SpeechRules.pickGender(genders: ru.map(\.gender), want: SpeechRules.genderMale)
+        #expect(male >= 0 && ru[male].name.contains("Yuri"))
     }
 
     @Test func synthesisTimeout() {

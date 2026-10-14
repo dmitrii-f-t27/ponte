@@ -59,6 +59,11 @@ pub const AU_TAP_WAIT : i64 = 1;
 pub const AU_TAP_UPDATE : i64 = 2;
 pub const AU_TAP_REBUILD : i64 = 3;
 
+; --- What the owner hears of the tapped app (CATapMuteBehavior: unmuted, muted, mutedWhenTapped) ------------------
+pub const AU_TAP_MUTE_UNMUTED : i64 = 0;
+pub const AU_TAP_MUTE_MUTED : i64 = 1;
+pub const AU_TAP_MUTE_WHEN_TAPPED : i64 = 2;
+
 ; --- Microphone permission (micStart, micRequestFirst, micDenied) ------------------------------------------------
 ; AVAuthorizationStatus raw values: 0 notDetermined, 1 restricted, 2 denied, 3 authorized.
 pub const AU_MIC_START : i64 = 0;
@@ -730,6 +735,14 @@ pub fn au_tap_lists_processes(is_global: bool) -> bool {
     return is_global == false;
 }
 
+; The tap of the call app mutes the app on the Mac while Ponte reads it: the owner hears only the Russian
+; voice, and the other side's own voices only with "Hear them" (hear_original). The sound comes back as soon
+; as Ponte stops reading. The global tap (all Mac audio) never mutes: it would silence every other app.
+pub fn au_tap_mute_behavior(is_global: bool, hear_original: bool) -> i64 {
+    if (is_global or hear_original) { return AU_TAP_MUTE_UNMUTED; }
+    return AU_TAP_MUTE_WHEN_TAPPED;
+}
+
 ; The resampler flushes at the last buffer of a play call, or before a buffer of another format.
 pub fn au_flushes_converter(index: i64, count: i64, next_format_differs: bool) -> bool {
     return index == count - 1 or next_format_differs;
@@ -1152,6 +1165,10 @@ test au_moved_rules {
     assert au_has_signal(0.0005, 0.0005) == true;
     assert au_tap_lists_processes(false) == true;
     assert au_tap_lists_processes(true) == false;
+    assert au_tap_mute_behavior(false, false) == AU_TAP_MUTE_WHEN_TAPPED;
+    assert au_tap_mute_behavior(false, true) == AU_TAP_MUTE_UNMUTED;
+    assert au_tap_mute_behavior(true, false) == AU_TAP_MUTE_UNMUTED;
+    assert au_tap_mute_behavior(true, true) == AU_TAP_MUTE_UNMUTED;
     assert au_flushes_converter(2, 3, false) == true;
     assert au_flushes_converter(1, 3, false) == false;
     assert au_flushes_converter(1, 3, true) == true;

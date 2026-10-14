@@ -43,6 +43,20 @@ public final class AppAudioTapSource: AudioSource {
 
     public var status: Status { onControl { _status } }
 
+    /// Whether the owner also hears the tapped app on the Mac (AudioRules.tapMuteBehavior). True keeps the app
+    /// audible; false mutes it while Ponte reads it (the call app: only the Russian voice is heard). A running
+    /// tap takes the new value in place, or is rebuilt when that fails.
+    public var hearOriginal: Bool {
+        get { onControl { _hearOriginal } }
+        set {
+            onControl {
+                guard newValue != _hearOriginal else { return }
+                _hearOriginal = newValue
+                applyMuteBehavior()
+            }
+        }
+    }
+
     /// The tap's own stream format (diagnostics), nil until attached.
     public var tapStreamDescription: AudioStreamBasicDescription? { onControl { tapASBD } }
 
@@ -62,6 +76,7 @@ public final class AppAudioTapSource: AudioSource {
         didSet { if _status != oldValue { onStatusChange?(_status) } }
     }
     private var running = false
+    private var _hearOriginal = true
     /// Session output rate, fixed at the first attach (0 = not yet).
     private var fixedRate: Double = 0
 
@@ -212,6 +227,23 @@ public final class AppAudioTapSource: AudioSource {
         return true
     }
 
+    private var muteBehavior: CATapMuteBehavior {
+        CATapMuteBehavior(rawValue: AudioRules.tapMuteBehavior(isGlobal: isGlobal, hearOriginal: _hearOriginal)) ?? .unmuted
+    }
+
+    /// Sets the mute behavior of the running tap via kAudioTapPropertyDescription; rebuilds the tap if that fails.
+    private func applyMuteBehavior() {
+        guard running, tapID != kAudioObjectUnknown else { return }
+        let tap = AudioHardwareTap(id: tapID)
+        do {
+            let description = try tap.description
+            description.muteBehavior = muteBehavior
+            try tap.setDescription(description)
+        } catch {
+            scheduleReconcile(force: true)
+        }
+    }
+
     private func scheduleReconcile(force: Bool = false) {
         reconcileGeneration += 1
         let generation = reconcileGeneration
@@ -232,7 +264,7 @@ public final class AppAudioTapSource: AudioSource {
         }
         description.name = "Ponte tap"
         description.uuid = UUID()
-        description.muteBehavior = .unmuted
+        description.muteBehavior = muteBehavior
         description.isPrivate = true
 
         var newTap = AudioObjectID(kAudioObjectUnknown)

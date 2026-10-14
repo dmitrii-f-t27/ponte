@@ -246,30 +246,48 @@ final class AppModel {
     /// The synthesizer of the running call, so a voice change applies at once.
     @ObservationIgnored private var liveSynth: SystemSpeechSynth?
 
-    /// The female/male switch for the Portuguese voice (voice_rules: vo_switch_gender, vo_pick_gender).
-    var portugueseVoiceGender: Int {
-        get {
-            let voices = SystemSpeechSynth.voices(for: .ptBR)
-            let id = voicePT.isEmpty ? voices.first?.id : voicePT
-            return SpeechRules.switchGender(voices.first(where: { $0.id == id })?.gender ?? SpeechRules.genderUnspecified)
-        }
-        set {
-            let voices = SystemSpeechSynth.voices(for: .ptBR)
-            let index = SpeechRules.pickGender(genders: voices.map(\.gender), want: newValue)
-            if index >= 0 { voicePT = voices[index].id }
-        }
+    /// The female/male switch of a language's voice (voice_rules: vo_switch_gender, vo_pick_gender):
+    /// pt-BR is the voice in the call, ru the voice in the owner's headphones.
+    func voiceGender(_ lang: Lang) -> Int {
+        let voices = SystemSpeechSynth.voices(for: lang)
+        let stored = lang == .ptBR ? voicePT : voiceRU
+        let id = stored.isEmpty ? voices.first?.id : stored
+        return SpeechRules.switchGender(voices.first(where: { $0.id == id })?.gender ?? SpeechRules.genderUnspecified)
     }
 
-    /// Whether a Portuguese voice of this gender is installed.
-    func hasPortugueseVoice(_ gender: Int) -> Bool {
-        SpeechRules.pickGender(genders: SystemSpeechSynth.voices(for: .ptBR).map(\.gender), want: gender) >= 0
+    func setVoiceGender(_ gender: Int, _ lang: Lang) {
+        let voices = SystemSpeechSynth.voices(for: lang)
+        let index = SpeechRules.pickGender(genders: voices.map(\.gender), want: gender)
+        guard index >= 0 else { return }
+        if lang == .ptBR { voicePT = voices[index].id } else { voiceRU = voices[index].id }
     }
-    var voiceRU: String { didSet { defaults.set(voiceRU, forKey: PrefKey.voiceRU) } }
+
+    /// Whether a voice of this gender is installed for the language.
+    func hasVoice(_ gender: Int, _ lang: Lang) -> Bool {
+        SpeechRules.pickGender(genders: SystemSpeechSynth.voices(for: lang).map(\.gender), want: gender) >= 0
+    }
+    var voiceRU: String {
+        didSet {
+            defaults.set(voiceRU, forKey: PrefKey.voiceRU)
+            liveSynth?.voiceIdentifiers = voiceMap   // the next phrase already speaks with the new voice
+        }
+    }
     var speakRussian: Bool {
         didSet {
             defaults.set(speakRussian, forKey: PrefKey.speakRussian)
             incomingLane?.speechOutputEnabled = speakRussian
         }
+    }
+    /// «Слышать их»: the call app stays audible on the Mac; off = only the Russian voice (audio_rules: au_tap_mute_behavior).
+    var hearOriginal: Bool {
+        didSet {
+            defaults.set(hearOriginal, forKey: PrefKey.hearOriginal)
+            incomingTap?.hearOriginal = hearOriginal
+        }
+    }
+    /// Whether «Слышать их» can change anything: the tap of all Mac audio never mutes.
+    var canMuteOriginal: Bool {
+        AudioRules.tapMuteBehavior(isGlobal: source.target == .systemExceptSelf, hearOriginal: false) != AudioRules.tapMuteUnmuted
     }
     var translatorKind: TranslatorKind { didSet { defaults.set(translatorKind.rawValue, forKey: PrefKey.translator) } }
     var glossary: [GlossaryTerm] {
@@ -392,6 +410,8 @@ final class AppModel {
         voiceRU = d.string(forKey: PrefKey.voiceRU) ?? ""
         speakRussian = d.object(forKey: PrefKey.speakRussian) == nil ? AppRules.DEFAULT_SPEAK_RUSSIAN
             : d.bool(forKey: PrefKey.speakRussian)
+        hearOriginal = d.object(forKey: PrefKey.hearOriginal) == nil ? AppRules.DEFAULT_HEAR_ORIGINAL
+            : d.bool(forKey: PrefKey.hearOriginal)
         translatorKind = TranslatorKind(rawValue: d.string(forKey: PrefKey.translator) ?? "")
             ?? TranslatorKind(ruleCode: AppRules.DEFAULT_TRANSLATOR)
         glossary = GlossaryTerm.decode(d.string(forKey: PrefKey.glossary) ?? "[]")
@@ -776,6 +796,7 @@ final class AppModel {
             return fileSource(url, direction: .incoming)
         }
         let tap = AppAudioTapSource(target: source.target)
+        tap.hearOriginal = hearOriginal
         tap.onStatusChange = { [weak self, weak tap] status in
             let (code, detail) = AppModel.tapCode(status)
             Task { @MainActor in

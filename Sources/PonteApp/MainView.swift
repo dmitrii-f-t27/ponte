@@ -261,6 +261,12 @@ private struct IncomingColumn: View {
                 }
                 .toggleStyle(.button)
                 .accessibilityHint("Озвучивать русский перевод в наушники")
+                Toggle(isOn: $model.hearOriginal) {
+                    Label("Слышать их", systemImage: "speaker.wave.2")
+                }
+                .toggleStyle(.button)
+                .disabled(!model.canMuteOriginal)
+                .accessibilityHint("Слышать голоса собеседников на португальском вместе с переводом")
                 Button {
                     model.replayLast(.incoming)
                 } label: {
@@ -268,6 +274,7 @@ private struct IncomingColumn: View {
                 }
                 .disabled(!model.enabled(AppRules.BTN_REPLAY_INCOMING))
                 .accessibilityHint("Повторить последнюю фразу в наушники")
+                VoiceGenderSwitch(lang: .ru)
                 Spacer()
                 if model.incomingSpeaking {
                     SpeakingBadge(text: "в наушниках", tint: .blue)
@@ -298,7 +305,7 @@ private struct OutgoingColumn: View {
                 }
                 .disabled(!model.enabled(AppRules.BTN_REPLAY_OUTGOING))
                 .accessibilityHint("Повторить последнюю фразу в звонок")
-                PortugueseVoiceSwitch()
+                VoiceGenderSwitch(lang: .ptBR)
                 Spacer(minLength: 0)
             }
             Divider().padding(.horizontal, 22)
@@ -536,23 +543,27 @@ private struct OwnVoiceBar: View {
 }
 
 /// «Голос Ж / М»: the Portuguese voice the other side hears. Applies from the next phrase.
-private struct PortugueseVoiceSwitch: View {
+/// «Голос Ж | М»: pt-BR — the voice the other side hears in the call, ru — the voice in the owner's headphones.
+private struct VoiceGenderSwitch: View {
+    let lang: Lang
     @Environment(AppModel.self) private var model
 
     var body: some View {
         HStack(spacing: 6) {
             Text("Голос")
                 .foregroundStyle(.secondary)
-            Picker("Голос", selection: Binding(get: { model.portugueseVoiceGender },
-                                               set: { model.portugueseVoiceGender = $0 })) {
+            Picker("Голос", selection: Binding(get: { model.voiceGender(lang) },
+                                               set: { model.setVoiceGender($0, lang) })) {
                 Text("Ж").tag(SpeechRules.genderFemale)
+                    .disabled(!model.hasVoice(SpeechRules.genderFemale, lang))
                 Text("М").tag(SpeechRules.genderMale)
-                    .disabled(!model.hasPortugueseVoice(SpeechRules.genderMale))
+                    .disabled(!model.hasVoice(SpeechRules.genderMale, lang))
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .accessibilityHint("Женский или мужской португальский голос в звонке")
+            .accessibilityHint(lang == .ptBR ? "Женский или мужской португальский голос в звонке"
+                                             : "Женский или мужской русский голос в наушниках")
         }
     }
 }

@@ -3,6 +3,7 @@
 // facade with, function by function, bit for bit.
 
 import AVFoundation
+import CoreAudio
 import Foundation
 
 /// Every pure decision and computation of PonteAudio, in one place.
@@ -637,6 +638,10 @@ extension AudioRulesLegacy {
 
     /// AppAudioTapSource.build / updateTapProcesses: `isGlobal ? [] : pids`, mixdown unless global.
     static func tapListsProcesses(isGlobal: Bool) -> Bool { !isGlobal }
+    /// AppAudioTapSource.build: `.unmuted` for all Mac audio or when the owner hears them, else `.mutedWhenTapped`.
+    static func tapMuteBehavior(isGlobal: Bool, hearOriginal: Bool) -> Int {
+        isGlobal || hearOriginal ? CATapMuteBehavior.unmuted.rawValue : CATapMuteBehavior.mutedWhenTapped.rawValue
+    }
 
     /// WAVFileSink.play `i == input.count - 1 || nextDiffers`; DeviceAudioPlayer.schedule `i == input.count - 1`.
     static func flushesConverter(index: Int, count: Int, nextFormatDiffers: Bool) -> Bool { index == count - 1 || nextFormatDiffers }

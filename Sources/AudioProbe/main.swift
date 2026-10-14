@@ -70,7 +70,7 @@ let usageText = """
 AudioProbe devices
 AudioProbe apps [--raw]
 AudioProbe inputs [--bundle <call app id>]
-AudioProbe tap (--bundle <id> | --pid <n> [--pid <n>...] | --system) --seconds N --out file.wav [--self-play file]
+AudioProbe tap (--bundle <id> | --pid <n> [--pid <n>...] | --system) --seconds N --out file.wav [--self-play file] [--mute]
 AudioProbe mic [--device <name>] --seconds N --out file.wav [--request]
 AudioProbe permissions
 AudioProbe play [--device <name substring>] [--volume 0..1] [--wait S] [--hold S] [--stop-engine-at S] <file>
@@ -361,6 +361,11 @@ func cmdTap(_ args: Args) throws {
         print("tap target: all system audio except this process")
     } else {
         throw ProbeError.usage("tap needs --bundle, --pid or --system")
+    }
+    if args.flags.contains("--mute") {
+        // As Ponte does for the call app: the tapped audio is not heard on the Mac while it is read.
+        source.hearOriginal = false
+        print("mute: the tapped audio is muted on the Mac while tapped")
     }
     source.onStatusChange = { status in print("tap status: \(status)") }
     if let selfPlay = args.value("--self-play") {

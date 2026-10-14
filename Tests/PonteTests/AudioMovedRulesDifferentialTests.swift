@@ -33,6 +33,11 @@ private typealias L = AudioRulesLegacy
             log.check(F.hasSignal(peak: p, rms: q), L.hasSignal(peak: p, rms: q), describe(p, q))
         }
         for g in [false, true] { log.check(F.tapListsProcesses(isGlobal: g), L.tapListsProcesses(isGlobal: g), "\(g)") }
+        for g in [false, true] {
+            for h in [false, true] {
+                log.check(F.tapMuteBehavior(isGlobal: g, hearOriginal: h), L.tapMuteBehavior(isGlobal: g, hearOriginal: h), "mute \(g) \(h)")
+            }
+        }
         for i in -3...40 {
             for n in -3...40 {
                 for d in [false, true] {

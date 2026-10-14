@@ -759,8 +759,9 @@ extension AppRulesLegacy {
     // AppModel, views, LaunchOptions, Preferences, PonteMain
     /// `?? .apple`, `d.bool(...)` of a missing key.
     static let DEFAULT_TRANSLATOR: Int32 = TR_APPLE
-    static let DEFAULT_SPEAK_RUSSIAN = false
+    static let DEFAULT_SPEAK_RUSSIAN = true
     static let DEFAULT_OVERLAY_VISIBLE = false
+    static let DEFAULT_HEAR_ORIGINAL = false
     /// startPolling: `Task.sleep(for: .milliseconds(500))`, `tick % 6 == 5`.
     static let POLL_INTERVAL_MS: Int64 = 500
     static func pollRefreshesCatalogs(tick: Int64) -> Bool { tick % 6 == 5 }

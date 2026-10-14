@@ -658,6 +658,13 @@ public enum AudioRules {
     /// A tap of one app lists (mixes down) its processes; the global tap excludes them and reports no PIDs.
     public static func tapListsProcesses(isGlobal: Bool) -> Bool { au_tap_lists_processes(isGlobal) }
 
+    /// CATapMuteBehavior raw value for the tap: muted while tapped for one app unless the owner wants to hear it.
+    public static let tapMuteUnmuted = Int(AU_TAP_MUTE_UNMUTED)
+    public static let tapMuteWhenTapped = Int(AU_TAP_MUTE_WHEN_TAPPED)
+    public static func tapMuteBehavior(isGlobal: Bool, hearOriginal: Bool) -> Int {
+        Int(au_tap_mute_behavior(isGlobal, hearOriginal))
+    }
+
     /// The resampler flushes at the last buffer of a play call or before a buffer of another format.
     public static func flushesConverter(index: Int, count: Int, nextFormatDiffers: Bool) -> Bool {
         au_flushes_converter(Int64(index), Int64(count), nextFormatDiffers)
