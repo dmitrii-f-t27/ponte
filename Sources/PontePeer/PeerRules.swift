@@ -75,11 +75,18 @@ public enum PeerRules {
     /// A new peer is accepted while 0 to `maxPeers` - 2 peers are known.
     public static func acceptsNewPeer(knownPeers: Int) -> Bool { pe_accepts_new_peer(Int64(knownPeers)) }
 
-    /// The close code of a full room: the link does not reconnect after it.
+    /// The close code of a full room.
     public static let closeRoomFull = Int(PE_CLOSE_ROOM_FULL)
+    /// After a full room the link tries again this much later (the relay drops a slept Mac's socket within 20 s).
+    public static let roomFullRetryMs = Int(PE_ROOM_FULL_RETRY_MS)
 
-    /// After the relay closed the socket with `code`, the link reconnects unless the room was full.
-    public static func reconnects(afterCloseCode code: Int) -> Bool { pe_reconnects(Int64(code)) }
+    /// The relay closed the socket with `code` because the room was full.
+    public static func roomFull(closeCode code: Int) -> Bool { pe_room_full(Int64(code)) }
+
+    /// The wait before the next connection after the relay closed with `code` at failure `attempt` (0 is the first).
+    public static func retryDelayMs(closeCode code: Int, attempt: Int) -> Int {
+        Int(pe_retry_delay_ms(Int64(code), Int64(attempt)))
+    }
 
     // MARK: - Secret code shared only among the Russians
 
@@ -114,6 +121,12 @@ public enum PeerRules {
 
     /// |nowMs - sentMs| <= `maxSkewMs` (any Int64 times, no overflow).
     public static func frameFresh(sentMs: Int64, nowMs: Int64) -> Bool { pe_frame_fresh(sentMs, nowMs) }
+
+    /// When a peer's voice started or ended (`atMs`, its clock), on this Mac's clock: the gap to its frame's `sentMs`
+    /// counted back from the arrival `nowMs`, so the two Macs' clocks need not agree.
+    public static func voiceLocalMs(atMs: Int64, sentMs: Int64, nowMs: Int64) -> Int64 {
+        pe_voice_local_ms(atMs, sentMs, nowMs)
+    }
 
     /// No frame of that peer was taken yet, or this sequence number is above the last one taken.
     public static func seqNewer(seq: UInt32, lastSeq: UInt32, hasLast: Bool) -> Bool { pe_seq_newer(seq, lastSeq, hasLast) }

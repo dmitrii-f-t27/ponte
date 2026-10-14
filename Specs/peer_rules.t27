@@ -9,12 +9,13 @@
 ; not translate that Portuguese voice back into Russian; and each Ponte keeps the same windows of its own voice, so it
 ; does not translate its own TTS when the far side echoes it back.
 ; This spec decides: the secret code (its alphabet, the normalized code, how it is shown); the link status, the
-; reconnect delays and when a connection counts as stable; a full room; when a peer is alive; when a frame is fresh and
-; new; when the microphone goes to the peers (open with headphones, else only while the push-to-talk key is held, so
-; the speakers never echo back) and the voice gate with its hangover; the jitter buffer of a peer's voice (the same
-; algorithm and codes as the own-voice relay au_relay_action in audio_rules.t27, with deeper constants for the
-; network); voice windows kept alive and when they end; the words of a recognized phrase and how much of it is in what
-; a Ponte said (containment); and whether a recognized Portuguese phrase is a Ponte's voice.
+; reconnect delays and when a connection counts as stable; a full room and when to try it again; when a peer is alive;
+; when a frame is fresh and new; when a peer's voice event happened on this Mac's clock; when the microphone goes to
+; the peers (open with headphones, else only while the push-to-talk key is held, so the speakers never echo back)
+; and the voice gate with its hangover; the jitter buffer of a peer's voice (the same algorithm and codes as the
+; own-voice relay au_relay_action in audio_rules.t27, with deeper constants for the network); voice windows kept alive
+; and when they end; the words of a recognized phrase and how much of it is in what a Ponte said (containment); and
+; whether a recognized Portuguese phrase is a Ponte's voice.
 ; Version 3 (owner 2026-10-14): the rules the app no longer calls are gone (word similarity, the first peer-voice rule,
 ; the Meet code, the browser tab list); short Brazilian replies that repeat a word of a TTS are kept, a phrase after
 ; the owner's own voice is matched only 300 ms past its end, and this Ponte's own windows end only by their END.
@@ -63,8 +64,11 @@ pub const PE_PEER_TIMEOUT_MS : i64 = 15000;
 ; The failure count (pe_status, pe_reconnect_delay_ms) goes back to 0 only after the socket stayed open this long or
 ; a frame arrived, so a relay that accepts and drops at once still backs off.
 pub const PE_STABLE_MS : i64 = 3000;
-; The relay closes the socket with this code when the room is full: reconnecting would only fill it again.
+; The relay closes the socket with this code when the room is full.
 pub const PE_CLOSE_ROOM_FULL : i64 = 4001;
+; A full room may still count a member whose Mac slept or changed network: the relay drops such a socket within two
+; of its pings (20 s). So after a full room the link tries again this much later, and shows the room as full meanwhile.
+pub const PE_ROOM_FULL_RETRY_MS : i64 = 15000;
 
 ; --- The microphone to the peers ----------------------------------------------------------------------------------
 ; Frames keep going this long after the last frame with signal (word ends and short pauses are not cut).
@@ -272,9 +276,16 @@ pub fn pe_accepts_new_peer(known_peers: i64) -> bool {
     return known_peers >= 0 and known_peers < PE_MAX_PEERS - 1;
 }
 
-; After the relay closed the socket with `close_code`, the link reconnects unless the room was full.
-pub fn pe_reconnects(close_code: i64) -> bool {
-    return close_code != PE_CLOSE_ROOM_FULL;
+; The relay closed the socket with `close_code` because the room was full.
+pub fn pe_room_full(close_code: i64) -> bool {
+    return close_code == PE_CLOSE_ROOM_FULL;
+}
+
+; The wait before the next connection after the relay closed the socket with `close_code` at failure `attempt`
+; (0 is the first): PE_ROOM_FULL_RETRY_MS after a full room, else pe_reconnect_delay_ms.
+pub fn pe_retry_delay_ms(close_code: i64, attempt: i64) -> i64 {
+    if (pe_room_full(close_code)) { return PE_ROOM_FULL_RETRY_MS; }
+    return pe_reconnect_delay_ms(attempt);
 }
 
 ; --- The microphone to the peers ----------------------------------------------------------------------------------
@@ -463,6 +474,16 @@ pub fn pe_gap_over(hi: i64, lo: i64, limit: i64) -> bool {
 ; A frame sent at sent_ms is fresh at now_ms when |now_ms - sent_ms| <= PE_MAX_SKEW_MS (any i64 times).
 pub fn pe_frame_fresh(sent_ms: i64, now_ms: i64) -> bool {
     return pe_gap_over(now_ms, sent_ms, PE_MAX_SKEW_MS) == false and pe_gap_over(sent_ms, now_ms, PE_MAX_SKEW_MS) == false;
+}
+
+; When a voice started or ended (at_ms, sender's clock), on this Mac's clock: the sender stamps the event and the frame
+; (sent_ms) on the same clock, so the gap between them needs no agreement between the two Macs' clocks; the event
+; happened that long before the frame arrived (now_ms; the relay's delay is not subtracted). A gap below 0 or above
+; PE_MAX_SKEW_MS, or a negative now_ms, is not trusted: the arrival.
+pub fn pe_voice_local_ms(at_ms: i64, sent_ms: i64, now_ms: i64) -> i64 {
+    if (now_ms < 0 or at_ms > sent_ms) { return now_ms; }
+    if (pe_gap_over(sent_ms, at_ms, PE_MAX_SKEW_MS)) { return now_ms; }
+    return now_ms - (sent_ms - at_ms);
 }
 
 ; A frame's sequence number is new when no frame of that peer was taken yet, or it is above the last one taken.
@@ -1022,6 +1043,15 @@ test pe_freshness_rules {
     assert pe_seq_newer(top, top - 1, true) == true;
     assert pe_seq_newer(top, top, true) == false;
     assert pe_seq_newer(zero, top, true) == false;
+    assert pe_voice_local_ms(1000, 1600, 50000) == 49400;
+    assert pe_voice_local_ms(1600, 1600, 50000) == 50000;
+    assert pe_voice_local_ms(1601, 1600, 50000) == 50000;
+    assert pe_voice_local_ms(0, 30000, 50000) == 20000;
+    assert pe_voice_local_ms(-1, 30000, 50000) == 50000;
+    assert pe_voice_local_ms(1000, 1600, -5) == -5;
+    assert pe_voice_local_ms(0 - 9223372036854775807, 9223372036854775807, 50000) == 50000;
+    assert pe_voice_local_ms(9223372036854775807, 0 - 9223372036854775807, 50000) == 50000;
+    assert pe_voice_local_ms(9223372036854745807, 9223372036854775807, 30000) == 0;
 }
 
 test pe_room_rules {
@@ -1038,13 +1068,18 @@ test pe_room_rules {
         n = n + 1;
     }
     assert accepted == PE_MAX_PEERS - 1;
-    assert pe_reconnects(PE_CLOSE_ROOM_FULL) == false;
-    assert pe_reconnects(4001) == false;
-    assert pe_reconnects(1000) == true;
-    assert pe_reconnects(1006) == true;
-    assert pe_reconnects(4000) == true;
-    assert pe_reconnects(4002) == true;
-    assert pe_reconnects(-4001) == true;
+    assert pe_room_full(PE_CLOSE_ROOM_FULL) == true;
+    assert pe_room_full(4001) == true;
+    assert pe_room_full(1000) == false;
+    assert pe_room_full(1006) == false;
+    assert pe_room_full(4000) == false;
+    assert pe_room_full(4002) == false;
+    assert pe_room_full(-4001) == false;
+    assert pe_retry_delay_ms(4001, 0) == 15000;
+    assert pe_retry_delay_ms(4001, 9) == 15000;
+    assert pe_retry_delay_ms(1006, 0) == 500;
+    assert pe_retry_delay_ms(4002, 2) == 2000;
+    assert pe_retry_delay_ms(1000, 50) == 8000;
     // Stable after 3 s: longer than the first reconnect wait, shorter than a HELLO period.
     assert PE_STABLE_MS == 3000;
     assert PE_STABLE_MS > PE_RECONNECT_FIRST_MS;

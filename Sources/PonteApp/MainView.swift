@@ -401,7 +401,7 @@ private struct TextComposer: View {
                     .frame(height: 54)
                     .overlay(alignment: .topLeading) {
                         if draft.isEmpty {
-                            Text("Вставьте или напишите текст по-русски — Ponte переведёт и скажет его в звонок")
+                            Text("Вставьте или напишите текст по-русски — Ponte переведёт и скажет его в звонок (⌘↩)")
                                 .font(.body)
                                 .foregroundStyle(.tertiary)
                                 .padding(.leading, 5)
@@ -422,8 +422,7 @@ private struct TextComposer: View {
                 .controlSize(.large)
                 .disabled(!TextRules.sayEnabled(check: check))
                 .keyboardShortcut(model.commandReturnShortcut(TextRules.CMDRET_SAY))
-                .accessibilityHint("⌘↩ — сказать, ↩ — новая строка")
-                .accessibilityHint("Перевести текст и сказать его в звонок (⌘↩)")
+                .accessibilityHint("Перевести текст и сказать его в звонок (⌘↩; ↩ — новая строка)")
             }
             if let text = noteText(note) {
                 Text(text)

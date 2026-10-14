@@ -38,8 +38,9 @@ public final class PeerLink: @unchecked Sendable {
     /// counts in the room (this one included; -1 until it says): on the main queue. More connections than Pontes
     /// means someone listens without announcing himself.
     public var onStatus: ((Int, Int, Int) -> Void)?
-    /// The room already has PeerRules.maxPeers members; the link stops. On the main queue.
-    public var onRoomFull: (() -> Void)?
+    /// True: the room already has PeerRules.maxPeers members; the link tries again every PeerRules.roomFullRetryMs.
+    /// False: a seat was free after all and the link joined. On the main queue.
+    public var onRoomFull: ((Bool) -> Void)?
     /// Another Ponte speaks into the call (TTS or the owner's own voice) or stopped; on the link queue.
     public var onVoice: ((VoiceEvent) -> Void)?
     /// A frame of another Russian's voice (16 kHz mono Float32); on the link queue.
@@ -202,7 +203,7 @@ public final class PeerLink: @unchecked Sendable {
     // MARK: Link (on `queue`)
 
     private func connect() {
-        guard running, !roomFull, let url else { return }
+        guard running, let url else { return }
         let task = session.webSocketTask(with: url)
         self.task = task
         task.resume()
@@ -217,9 +218,8 @@ public final class PeerLink: @unchecked Sendable {
         reportStatus()
         // The relay accepts and then closes a full room: failures only count as overcome once the socket held.
         queue.asyncAfter(deadline: .now() + .milliseconds(PeerRules.stableMs)) { [weak self] in
-            guard let self, task === self.task, self.connected, self.failures != 0 else { return }
-            self.failures = 0
-            self.reportStatus()
+            guard let self, task === self.task, self.connected else { return }
+            self.joined()
         }
     }
 
@@ -252,6 +252,18 @@ public final class PeerLink: @unchecked Sendable {
         reportStatus()
     }
 
+    /// The socket held or the room answered: failures are overcome and the room has a seat for this Ponte.
+    private func joined() {
+        guard failures != 0 || roomFull else { return }
+        failures = 0
+        if roomFull {
+            roomFull = false
+            let handler = onRoomFull
+            DispatchQueue.main.async { handler?(false) }
+        }
+        reportStatus()
+    }
+
     private func dropped(_ task: URLSessionWebSocketTask, closeCode: Int) {
         guard running, task === self.task else { return }
         connected = false
@@ -260,17 +272,19 @@ public final class PeerLink: @unchecked Sendable {
         audioInFlight = 0
         for peer in peers.keys { onPeerGone?(peer) }
         peers.removeAll()
-        if !PeerRules.reconnects(afterCloseCode: closeCode) {
-            roomFull = true
-            failures = max(failures, PeerRules.failedAfter)
-            reportStatus()
-            let handler = onRoomFull
-            DispatchQueue.main.async { handler?() }
-            return
+        if PeerRules.roomFull(closeCode: closeCode) {
+            // Shown as failed and full; tried again later (a slept Mac's socket may still hold a seat).
+            failures = max(failures + 1, PeerRules.failedAfter)
+            if !roomFull {
+                roomFull = true
+                let handler = onRoomFull
+                DispatchQueue.main.async { handler?(true) }
+            }
+        } else {
+            failures += 1
         }
-        failures += 1
         reportStatus()
-        let delay = PeerRules.reconnectDelayMs(attempt: failures - 1)
+        let delay = PeerRules.retryDelayMs(closeCode: closeCode, attempt: failures - 1)
         queue.asyncAfter(deadline: .now() + .milliseconds(delay)) { [weak self] in
             guard let self, self.running, self.task == nil else { return }
             self.connect()
@@ -328,9 +342,7 @@ public final class PeerLink: @unchecked Sendable {
         guard PeerRules.seqNewer(seq: frameSeq, lastSeq: last ?? 0, hasLast: last != nil) else { return }
         if peers[peer] == nil, kind != PeerRules.msgBye, !PeerRules.acceptsNewPeer(knownPeers: peers.count) { return }
         lastSeq[peer] = frameSeq
-        if failures != 0 {
-            failures = 0   // the room answers: the link holds
-        }
+        joined()   // the room answers: the link holds
         let payload = Array(bytes[Self.headerBytes...])
         switch kind {
         case PeerRules.msgBye:
@@ -349,15 +361,15 @@ public final class PeerLink: @unchecked Sendable {
                   let out = buffer.floatChannelData else { return }
             for i in 0..<count {
                 let s = Int16(bitPattern: UInt16(payload[2 * i]) | UInt16(payload[2 * i + 1]) << 8)
-                out[0][i] = Float(s) / Float(Int16.max)
+                out[0][i] = AudioRules.int16ToFloat(s)
             }
             buffer.frameLength = AVAudioFrameCount(count)
             onAudio?(peer, buffer)
         case PeerRules.msgVoice:
             guard payload.count >= 10 else { return }
             let atMs = Int64(bitPattern: payload[2..<10].enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << (8 * UInt64($1.offset)) })
-            // When it really started or ended on the sender's Mac, if the clocks agree; else when it arrived.
-            let at = PeerRules.frameFresh(sentMs: atMs, nowMs: Self.ms(now)) ? Date(timeIntervalSince1970: Double(atMs) / 1000) : now
+            // When it started or ended, on this Mac's clock (the two Macs' clocks need not agree).
+            let at = Date(timeIntervalSince1970: Double(PeerRules.voiceLocalMs(atMs: atMs, sentMs: sentMs, nowMs: Self.ms(now))) / 1000)
             let text = String(decoding: payload[10...], as: UTF8.self)
             onVoice?(VoiceEvent(sender: peer, kind: Int(payload[0]), state: Int(payload[1]), text: text, receivedAt: at))
         default:

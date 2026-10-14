@@ -34,8 +34,10 @@ import Testing
     private func loud(_ seconds: Double = 0.02) -> AVAudioPCMBuffer {
         PCM.buffer([Float](repeating: 0.3, count: Int(48_000 * seconds)), sampleRate: 48_000)
     }
-    private func quiet(_ seconds: Double = 0.02) -> AVAudioPCMBuffer {
-        PCM.buffer([Float](repeating: 0, count: Int(48_000 * seconds)), sampleRate: 48_000)
+    /// The hum of a quiet room through a raw microphone: never exact zeros, about -54 dBFS.
+    private func roomNoise(_ seconds: Double = 0.02) -> AVAudioPCMBuffer {
+        let n = Int(48_000 * seconds)
+        return PCM.buffer((0..<n).map { i in i % 2 == 0 ? 0.002 : -0.002 }, sampleRate: 48_000)
     }
 
     private final class Clock: @unchecked Sendable {
@@ -114,6 +116,37 @@ import Testing
         // Turning «Свой голос» off while silent sends nothing more.
         intake.setRelay(nil)
         #expect(events.all.count == 2)
+    }
+
+    @Test func roomNoiseIsNotSpeech() {
+        let clock = Clock()
+        let intake = AudioIntake(clock: { clock.now })
+        let events = Box<(Bool, Date)>()
+        intake.onOwnTalk = { on, at in events.add((on, at)) }
+        intake.setRelay(LiveRelay(player: CountingPlayer()))
+        let toPeers = Box<Bool>()
+        intake.setPeerSink { _, voice in toPeers.add(voice) }
+
+        // A live microphone in a quiet room: every buffer has a little signal, none of it is the owner's voice.
+        for _ in 0..<100 {
+            intake.handle(roomNoise())
+            clock.now = clock.now.addingTimeInterval(0.02)
+        }
+        #expect(events.all.isEmpty)
+        #expect(toPeers.all.count == 100 && !toPeers.all.contains(true))
+
+        // The owner speaks, then the room is quiet again: «Свой голос» ends after the hangover.
+        intake.handle(loud())
+        #expect(events.all.map(\.0) == [true])
+        #expect(toPeers.all.last == true)
+        let spoke = clock.now
+        for _ in 0..<50 {
+            clock.now = clock.now.addingTimeInterval(0.02)
+            intake.handle(roomNoise())
+        }
+        #expect(events.all.map(\.0) == [true, false])
+        #expect(events.all.last?.1 == spoke)
+        #expect(toPeers.all.last == false)
     }
 
     @Test func turningOwnVoiceOffWhileSpeakingEndsIt() {

@@ -762,6 +762,8 @@ extension AppRulesLegacy {
     static func laneVoicePause(direction: Int32) -> Bool { direction == DIR_OUTGOING }
     static func laneEchoGuarded(direction: Int32) -> Bool { direction == DIR_OUTGOING }
     static func laneEchoSource(direction: Int32) -> Bool { direction == DIR_INCOMING }
+    /// AppModel `.voiceOut`: `guard direction == .outgoing`.
+    static func laneVoiceInCall(direction: Int32) -> Bool { direction == DIR_OUTGOING }
     /// GlossaryTerm: `direction == .incoming ? term.pt : term.ru`.
     static func glossarySourceIsPT(direction: Int32) -> Bool { direction == DIR_INCOMING }
     /// PushToTalkMonitor.apply.

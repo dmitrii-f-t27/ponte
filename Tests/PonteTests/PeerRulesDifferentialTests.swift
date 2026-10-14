@@ -87,20 +87,28 @@ private typealias L = PeerRulesLegacy
         log.finish(minimumCases: 20_000)
     }
 
-    /// acceptsNewPeer, reconnects.
+    /// acceptsNewPeer, roomFull, retryDelayMs.
     @Test func room() {
-        let log = DiffLog("acceptsNewPeer, reconnects")
+        let log = DiffLog("acceptsNewPeer, roomFull, retryDelayMs")
+        log.check(F.roomFullRetryMs, L.roomFullRetryMs, "roomFullRetryMs")
         for n in Array(-2000...2000) + [Int.min, Int.min + 1, Int.max - 1, Int.max] {
             log.check(F.acceptsNewPeer(knownPeers: n), L.acceptsNewPeer(knownPeers: n), "\(n)")
         }
         for code in Array(-1000...70_000) + [Int.min, Int.max] {
-            log.check(F.reconnects(afterCloseCode: code), L.reconnects(afterCloseCode: code), "\(code)")
+            log.check(F.roomFull(closeCode: code), L.roomFull(closeCode: code), "\(code)")
+        }
+        for code in [Int.min, -4001, 0, 1000, 1006, 4000, 4001, 4002, Int.max] {
+            for attempt in Array(-3...12) + [Int.min, Int.max] {
+                log.check(F.retryDelayMs(closeCode: code, attempt: attempt), L.retryDelayMs(closeCode: code, attempt: attempt),
+                          "\(code) attempt \(attempt)")
+            }
         }
         var r = DiffRandom(seed: 4001)
         for _ in 0..<20_000 {
             let n = Int(bitPattern: UInt(r.next()))
             log.check(F.acceptsNewPeer(knownPeers: n), L.acceptsNewPeer(knownPeers: n), "\(n)")
-            log.check(F.reconnects(afterCloseCode: n), L.reconnects(afterCloseCode: n), "\(n)")
+            log.check(F.roomFull(closeCode: n), L.roomFull(closeCode: n), "\(n)")
+            log.check(F.retryDelayMs(closeCode: n, attempt: n), L.retryDelayMs(closeCode: n, attempt: n), "\(n) attempt")
         }
         log.finish(minimumCases: 100_000)
     }
@@ -195,9 +203,9 @@ private typealias L = PeerRulesLegacy
         log.finish(minimumCases: 100_000)
     }
 
-    /// frameFresh over every edge of Int64; seqNewer over every edge of UInt32.
+    /// frameFresh and voiceLocalMs over every edge of Int64; seqNewer over every edge of UInt32.
     @Test func freshness() {
-        let log = DiffLog("frameFresh, seqNewer")
+        let log = DiffLog("frameFresh, voiceLocalMs, seqNewer")
         let edges: [Int64] = [.min, .min + 1, .min + 29_999, .min + 30_000, .min + 30_001, -(1 << 62), -30_001, -30_000,
                               -29_999, -1, 0, 1, 29_999, 30_000, 30_001, 1 << 62, .max - 30_001, .max - 30_000,
                               .max - 29_999, .max - 1, .max]
@@ -216,6 +224,21 @@ private typealias L = PeerRulesLegacy
             let sent = Int64(bitPattern: r.next())
             let now = r.bool() ? Int64(bitPattern: r.next()) : sent &+ Int64(r.int(-40_000...40_000))
             log.check(F.frameFresh(sentMs: sent, nowMs: now), L.frameFresh(sentMs: sent, nowMs: now), describe(sent, now))
+        }
+        for at in edges {
+            for sent in edges {
+                for now in [Int64.min, -1, 0, 1, 29_999, 30_000, clock, .max] {
+                    log.check(F.voiceLocalMs(atMs: at, sentMs: sent, nowMs: now), L.voiceLocalMs(atMs: at, sentMs: sent, nowMs: now),
+                              "voiceLocal \(at) \(sent) \(now)")
+                }
+            }
+        }
+        for _ in 0..<20_000 {
+            let sent = r.bool() ? Int64(bitPattern: r.next()) : clock &+ Int64(r.int(-40_000...40_000))
+            let at = r.bool() ? Int64(bitPattern: r.next()) : sent &- Int64(r.int(-1_000...40_000))
+            let now = r.bool() ? Int64(bitPattern: r.next()) : clock &+ Int64(r.int(-40_000...40_000))
+            log.check(F.voiceLocalMs(atMs: at, sentMs: sent, nowMs: now), L.voiceLocalMs(atMs: at, sentMs: sent, nowMs: now),
+                      "voiceLocal \(at) \(sent) \(now)")
         }
         let seqEdges: [UInt32] = [0, 1, 2, 1000, .max / 2, .max / 2 + 1, .max - 1, .max]
         for seq in seqEdges {
@@ -442,7 +465,10 @@ private typealias L = PeerRulesLegacy
         #expect(F.sampleRate * Double(F.frameMs) / 1000 == 640)
         // The room and the connection.
         #expect((-1...7).map { F.acceptsNewPeer(knownPeers: $0) } == [false, true, true, true, true, true, false, false, false])
-        #expect(!F.reconnects(afterCloseCode: F.closeRoomFull) && F.reconnects(afterCloseCode: 1006) && F.reconnects(afterCloseCode: 1000))
+        #expect(F.roomFull(closeCode: F.closeRoomFull) && !F.roomFull(closeCode: 1006) && !F.roomFull(closeCode: 1000))
+        #expect(F.retryDelayMs(closeCode: 4001, attempt: 0) == 15_000 && F.retryDelayMs(closeCode: 1006, attempt: 1) == 1000)
+        // A voice that ended 600 ms before its frame left: 600 ms before the frame arrived, whatever the sender's clock.
+        #expect(F.voiceLocalMs(atMs: 5_000_400, sentMs: 5_001_000, nowMs: 1_760_000_000_000) == 1_759_999_999_400)
         #expect(F.closeRoomFull == 4001 && F.stableMs == 3000 && F.voiceRefreshMs == 5000 && F.voiceStaleMs == 12_000)
         // Frames: the ±30 s edges and the Int64 extremes.
         #expect(F.maxSkewMs == 30_000)

@@ -86,7 +86,7 @@ struct PeerPanel: View {
         case PeerRules.statusWaiting: return "Подключено. Ждём второго русского…"
         case PeerRules.statusConnecting: return "Подключаемся…"
         case PeerRules.statusFailed:
-            return model.peerRoomFull ? "Комната занята: в ней уже \(PeerRules.maxPeers) участников." : "Нет связи с сервером. Пробуем снова…"
+            return model.peerRoomFull ? "Комната занята: в ней уже \(PeerRules.maxPeers) участников. Пробуем снова…" : "Нет связи с сервером. Пробуем снова…"
         default: return "Выключено"
         }
     }

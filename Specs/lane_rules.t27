@@ -578,6 +578,13 @@ pub fn ln_lane_echo_source(direction: i32) -> bool {
     return direction == LN_DIR_INCOMING;
 }
 
+; The lane whose voice (its TTS or the owner's own voice) plays into the call: its voice windows are kept, so neither
+; this Ponte (the far side echoes it back) nor the other Russians' Pontes translate it (peer_rules.t27). The incoming
+; lane's Russian voice plays only in the owner's ears.
+pub fn ln_lane_voice_in_call(direction: i32) -> bool {
+    return direction == LN_DIR_OUTGOING;
+}
+
 ; Glossary: the incoming lane replaces the Portuguese form, the outgoing lane the Russian one.
 pub fn ln_glossary_source_is_pt(direction: i32) -> bool {
     return direction == LN_DIR_INCOMING;
@@ -882,6 +889,8 @@ test ln_moved_rules {
     assert ln_lane_voice_pause(LN_DIR_OUTGOING) == true;
     assert ln_lane_echo_guarded(LN_DIR_INCOMING) == false;
     assert ln_lane_echo_source(LN_DIR_INCOMING) == true;
+    assert ln_lane_voice_in_call(LN_DIR_OUTGOING) == true;
+    assert ln_lane_voice_in_call(LN_DIR_INCOMING) == false;
     assert ln_glossary_source_is_pt(LN_DIR_INCOMING) == true;
     assert ln_glossary_source_is_pt(LN_DIR_OUTGOING) == false;
     assert ln_ptt_local(LN_PTT_SCOPE_WINDOW) == true;

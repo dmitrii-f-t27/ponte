@@ -113,6 +113,7 @@ private typealias L = AppRulesLegacy
             for speaks in bools {
                 log.check(F.lanePreparesOutput(direction: d, speaks: speaks), L.lanePreparesOutput(direction: d, speaks: speaks), describe(d, speaks))
             }
+            log.check(F.laneVoiceInCall(direction: d), L.laneVoiceInCall(direction: d), "voiceInCall \(d)")
         }
         for scope: Int32 in -3...6 {
             log.check(F.pttLocal(scope: scope), L.pttLocal(scope: scope), "\(scope)")

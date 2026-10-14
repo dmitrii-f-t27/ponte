@@ -160,7 +160,8 @@ public final class PeerWindows: @unchecked Sendable {
 
 /// The owner's microphone to the other Russians (PeerRules.sendsMic, vadSends): always with headphones, only
 /// while the push-to-talk key is held without them (speakers would send the other Russian back as an echo),
-/// never when muted; silence is not sent. `push` runs on the capture thread.
+/// never when muted; only voice is sent (the caller's voice detector), not silence or room noise. `push` runs on the
+/// capture thread.
 public final class PeerMicGate: @unchecked Sendable {
     private let lock = NSLock()
     private var link: PeerLink?
@@ -183,13 +184,13 @@ public final class PeerMicGate: @unchecked Sendable {
         }
     }
 
-    public func push(_ buffer: AVAudioPCMBuffer, hasSignal: Bool) {
+    public func push(_ buffer: AVAudioPCMBuffer, voice: Bool) {
         let now = Date()
         let (target, wasSending, sends): (PeerLink?, Bool, Bool) = lock.withLock {
-            if hasSignal { lastSignalAt = now }
+            if voice { lastSignalAt = now }
             let since = lastSignalAt.map { Int64(now.timeIntervalSince($0) * 1000) } ?? -1
             let open = PeerRules.sendsMic(linkUp: linkUp, muted: muted, headphonesLike: headphonesLike, keyHeld: keyHeld)
-            let sends = open && PeerRules.vadSends(hasSignal: hasSignal, msSinceSignal: since)
+            let sends = open && PeerRules.vadSends(hasSignal: voice, msSinceSignal: since)
             defer { sending = sends }
             return (link, sending, sends)
         }

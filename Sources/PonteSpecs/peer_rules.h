@@ -41,6 +41,7 @@
 #define PE_PEER_TIMEOUT_MS 15000
 #define PE_STABLE_MS 3000
 #define PE_CLOSE_ROOM_FULL 4001
+#define PE_ROOM_FULL_RETRY_MS 15000
 #define PE_VAD_HANGOVER_MS 600
 #define PE_MAX_AUDIO_IN_FLIGHT 6
 #define PE_JITTER_TARGET_MS 120.0
@@ -133,7 +134,8 @@ int64_t pe_status(bool link_on, bool connected, int64_t peers, int64_t failures)
 int64_t pe_reconnect_delay_ms(int64_t attempt);
 bool pe_peer_alive(int64_t ms_since_hello);
 bool pe_accepts_new_peer(int64_t known_peers);
-bool pe_reconnects(int64_t close_code);
+bool pe_room_full(int64_t close_code);
+int64_t pe_retry_delay_ms(int64_t close_code, int64_t attempt);
 bool pe_sends_mic(bool link_up, bool muted, bool headphones_like, bool key_held);
 bool pe_vad_sends(bool has_signal, int64_t ms_since_signal);
 bool pe_audio_sends(int64_t in_flight);
@@ -152,6 +154,7 @@ int64_t pe_secret_normalized(uint8_t text[static 4096], int64_t len, uint8_t out
 int64_t pe_secret_display(uint8_t text[static 4096], int64_t len, uint8_t out[static 16]);
 bool pe_gap_over(int64_t hi, int64_t lo, int64_t limit);
 bool pe_frame_fresh(int64_t sent_ms, int64_t now_ms);
+int64_t pe_voice_local_ms(int64_t at_ms, int64_t sent_ms, int64_t now_ms);
 bool pe_seq_newer(uint32_t seq, uint32_t last_seq, bool has_last);
 int64_t pe_window_end_ms(int64_t end_ms, int64_t last_seen_ms, int64_t now_ms, bool refreshed);
 int64_t pe_containment_milli(uint8_t phrase[static 4096], int64_t phrase_len, uint8_t said[static 4096], int64_t said_len);
@@ -206,8 +209,15 @@ bool pe_accepts_new_peer(int64_t known_peers) {
     return ((known_peers >= 0) && (known_peers < (PE_MAX_PEERS - 1)));
 }
 
-bool pe_reconnects(int64_t close_code) {
-    return (close_code != PE_CLOSE_ROOM_FULL);
+bool pe_room_full(int64_t close_code) {
+    return (close_code == PE_CLOSE_ROOM_FULL);
+}
+
+int64_t pe_retry_delay_ms(int64_t close_code, int64_t attempt) {
+    if (pe_room_full(close_code)) {
+        return PE_ROOM_FULL_RETRY_MS;
+    }
+    return pe_reconnect_delay_ms(attempt);
 }
 
 bool pe_sends_mic(bool link_up, bool muted, bool headphones_like, bool key_held) {
@@ -404,6 +414,16 @@ bool pe_gap_over(int64_t hi, int64_t lo, int64_t limit) {
 
 bool pe_frame_fresh(int64_t sent_ms, int64_t now_ms) {
     return ((pe_gap_over(now_ms, sent_ms, PE_MAX_SKEW_MS) == false) && (pe_gap_over(sent_ms, now_ms, PE_MAX_SKEW_MS) == false));
+}
+
+int64_t pe_voice_local_ms(int64_t at_ms, int64_t sent_ms, int64_t now_ms) {
+    if (((now_ms < 0) || (at_ms > sent_ms))) {
+        return now_ms;
+    }
+    if (pe_gap_over(sent_ms, at_ms, PE_MAX_SKEW_MS)) {
+        return now_ms;
+    }
+    return (now_ms - (sent_ms - at_ms));
 }
 
 bool pe_seq_newer(uint32_t seq, uint32_t last_seq, bool has_last) {
@@ -982,6 +1002,15 @@ void test_pe_freshness_rules(void) {
     assert((pe_seq_newer(top, (top - 1), true) == true));
     assert((pe_seq_newer(top, top, true) == false));
     assert((pe_seq_newer(zero, top, true) == false));
+    assert((pe_voice_local_ms(1000, 1600, 50000) == 49400));
+    assert((pe_voice_local_ms(1600, 1600, 50000) == 50000));
+    assert((pe_voice_local_ms(1601, 1600, 50000) == 50000));
+    assert((pe_voice_local_ms(0, 30000, 50000) == 20000));
+    assert((pe_voice_local_ms(-1, 30000, 50000) == 50000));
+    assert((pe_voice_local_ms(1000, 1600, -5) == -5));
+    assert((pe_voice_local_ms((0 - 9223372036854775807), 9223372036854775807, 50000) == 50000));
+    assert((pe_voice_local_ms(9223372036854775807, (0 - 9223372036854775807), 50000) == 50000));
+    assert((pe_voice_local_ms(9223372036854745807, 9223372036854775807, 30000) == 0));
 }
 
 void test_pe_room_rules(void) {
@@ -1000,13 +1029,18 @@ void test_pe_room_rules(void) {
         n = (n + 1);
     }
     assert((accepted == (PE_MAX_PEERS - 1)));
-    assert((pe_reconnects(PE_CLOSE_ROOM_FULL) == false));
-    assert((pe_reconnects(4001) == false));
-    assert((pe_reconnects(1000) == true));
-    assert((pe_reconnects(1006) == true));
-    assert((pe_reconnects(4000) == true));
-    assert((pe_reconnects(4002) == true));
-    assert((pe_reconnects(-4001) == true));
+    assert((pe_room_full(PE_CLOSE_ROOM_FULL) == true));
+    assert((pe_room_full(4001) == true));
+    assert((pe_room_full(1000) == false));
+    assert((pe_room_full(1006) == false));
+    assert((pe_room_full(4000) == false));
+    assert((pe_room_full(4002) == false));
+    assert((pe_room_full(-4001) == false));
+    assert((pe_retry_delay_ms(4001, 0) == 15000));
+    assert((pe_retry_delay_ms(4001, 9) == 15000));
+    assert((pe_retry_delay_ms(1006, 0) == 500));
+    assert((pe_retry_delay_ms(4002, 2) == 2000));
+    assert((pe_retry_delay_ms(1000, 50) == 8000));
     assert((PE_STABLE_MS == 3000));
     assert((PE_STABLE_MS > PE_RECONNECT_FIRST_MS));
     assert((PE_STABLE_MS < PE_HELLO_EVERY_MS));

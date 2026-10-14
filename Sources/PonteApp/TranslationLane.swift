@@ -4,6 +4,7 @@ import os
 import PonteAudio
 import PonteCore
 import PontePeer
+import PonteSpeech
 
 // One direction of the call:
 // AudioSource → Transcriber → (.final) → Translator (+ last 4 phrases as context)
@@ -337,15 +338,15 @@ final class TranslationLane {
 
     // MARK: Controls
 
-    /// «Свой голос» on or off. On: the speech queued or playing is cancelled, the gate closes (the key does
-    /// nothing) and the microphone is relayed to the player. Off: the relay stops at once, its jitter buffer
-    /// and what the player still holds are dropped, and the lane listens again.
     /// «Русские в звонке» (outgoing lane): the microphone also goes to PeerMicGate.
     func setPeerSink(_ sink: ((AVAudioPCMBuffer, Bool) -> Void)?) { intake.setPeerSink(sink) }
 
     /// «Свой голос»: end the owner's speech if the microphone stopped delivering (see AudioIntake.expireOwnTalk).
     func expireOwnTalk(at now: Date) { intake.expireOwnTalk(at: now) }
 
+    /// «Свой голос» on or off. On: the speech queued or playing is cancelled, the gate closes (the key does
+    /// nothing) and the microphone is relayed to the player. Off: the relay stops at once, its jitter buffer
+    /// and what the player still holds are dropped, and the lane listens again.
     func setOwnVoice(_ on: Bool) {
         guard on != ownVoice else { return }
         ownVoice = on
@@ -703,8 +704,12 @@ final class AudioIntake: @unchecked Sendable {
     private var echoGuard: EchoGuard?
     private var relay: LiveRelay?
     private var peerSink: ((AVAudioPCMBuffer, Bool) -> Void)?
-    /// «Свой голос»: whether the owner is speaking into the call now (mic signal with PeerRules.vadHangoverMs).
+    /// «Свой голос»: whether the owner is speaking into the call now (mic voice with PeerRules.vadHangoverMs).
     private var ownTalking = false
+    /// The transcriber's own voice detector (SpeechRules.isVoice over a noise floor): the hum of a quiet room is
+    /// not speech, so «Свой голос» ends when the owner stops and the other Russians get no room noise.
+    private var voiceFloorMilli = 0
+    private var hasVoiceFloor = false
     private var lastOwnSignalAt: Date?
     /// Bumped whenever the relay changes: an own-talk change computed for an old relay is dropped.
     private var relayGeneration = 0
@@ -750,32 +755,38 @@ final class AudioIntake: @unchecked Sendable {
 
     func stats() -> LaneAudioStats { lock.withLock { current } }
 
-    /// «Русские в звонке»: every microphone buffer also goes here with whether it has signal (PeerMicGate decides).
+    /// «Русские в звонке»: every microphone buffer also goes here with whether it is voice (PeerMicGate decides).
     func setPeerSink(_ sink: ((AVAudioPCMBuffer, Bool) -> Void)?) { lock.withLock { peerSink = sink } }
 
     func handle(_ buffer: AVAudioPCMBuffer) {
         let (rms, peak) = buffer.laneLevels
         let signal = AudioRules.hasSignal(peak: peak, rms: rms)
+        let level = SpeechRules.level(rms: rms)
+        let durationMs = SpeechRules.millis(Double(buffer.frameLength) / max(buffer.format.sampleRate, 1))
         let now = clock()
-        let (segment, echo, relay, peer, generation): (Segment?, EchoGuard?, LiveRelay?, ((AVAudioPCMBuffer, Bool) -> Void)?, Int) = lock.withLock {
+        let (segment, echo, relay, peer, generation, voice): (Segment?, EchoGuard?, LiveRelay?, ((AVAudioPCMBuffer, Bool) -> Void)?, Int, Bool) = lock.withLock {
             current.buffers += 1
             current.lastBufferAt = now
             current.level = rms
             if signal { current.lastSignalAt = now }
-            return (self.segment, self.echoGuard, self.relay, self.peerSink, relayGeneration)
+            let voice = SpeechRules.isVoice(level: level, floorMilli: voiceFloorMilli)
+            voiceFloorMilli = SpeechRules.nextNoiseFloor(floorMilli: voiceFloorMilli, hasFloor: hasVoiceFloor, level: level,
+                                                         durationMs: durationMs)
+            hasVoiceFloor = true
+            return (self.segment, self.echoGuard, self.relay, self.peerSink, relayGeneration, voice)
         }
         // A Russian voice the mic may hear never goes into the call (Ponte's on speakers, another Russian's on an
         // output that is not sealed); Ponte's own Russian voice on speakers does not go to the other Russians either.
         let callBlocks = echo?.blocksCall(at: now) ?? false
         let peerBlocks = echo?.blocksMic(at: now) ?? false
         if !callBlocks { relay?.push(buffer) }
-        if !peerBlocks { peer?(buffer, signal) }
+        if !peerBlocks { peer?(buffer, voice) }
         if relay != nil {
             let change: (Bool, Date)? = lock.withLock {
                 guard generation == relayGeneration, self.relay === relay else { return nil }   // the relay changed meanwhile
-                if signal && !callBlocks { lastOwnSignalAt = now }
+                if voice && !callBlocks { lastOwnSignalAt = now }
                 let since = lastOwnSignalAt.map { millis(now.timeIntervalSince($0)) } ?? -1
-                let talking = !callBlocks && PeerRules.vadSends(hasSignal: signal, msSinceSignal: since)
+                let talking = !callBlocks && PeerRules.vadSends(hasSignal: voice, msSinceSignal: since)
                 guard talking != ownTalking else { return nil }
                 ownTalking = talking
                 return (talking, talking ? now : (lastOwnSignalAt ?? now))

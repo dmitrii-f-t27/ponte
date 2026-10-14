@@ -249,6 +249,8 @@ final class AppModel {
     }
     /// When the owner held the talk key (the incoming lane drops his own voice coming back from the call).
     @ObservationIgnored private let ownTalk = OwnTalkLog()
+    /// When the owner spoke into the call with «Свой голос» (the same rule as the talk key, ln_own_talk_drops).
+    @ObservationIgnored private let ownVoiceTalk = OwnTalkLog()
     /// The synthesizer of the running call, so a voice change applies at once.
     @ObservationIgnored private var liveSynth: SystemSpeechSynth?
 
@@ -1205,11 +1207,12 @@ final class AppModel {
         case .problem(let text):
             banner = Banner(kind: .warning, text: text)
         case .voiceOut(let text, let playing, let at):
-            // Only the outgoing lane speaks into the call: neither this Ponte (its voice echoed back by the far side)
-            // nor the other Russians' Pontes may translate it.
-            guard direction == .outgoing else { return }
+            // Only a voice that plays into the call: neither this Ponte (its voice echoed back by the far side) nor the
+            // other Russians' Pontes may translate it.
+            guard AppRules.laneVoiceInCall(direction: AppRules.directionCode(direction)) else { return }
             let kind = text == nil ? PeerRules.voiceOwn : PeerRules.voiceTTS
             let state = playing ? PeerRules.voiceStart : PeerRules.voiceEnd
+            if text == nil { ownVoiceTalk.setHeld(playing, at: at) }
             selfWindows.record(sender: 0, kind: kind, state: state, text: text ?? "", at: at)
             peerLink?.sendVoice(kind: kind, state: state, text: text ?? "", at: at)
         }
@@ -1229,7 +1232,7 @@ final class AppModel {
     private(set) var peerCount = 0
     /// Connections the relay counts in the room, this one included (-1: unknown).
     private(set) var peerMembers = -1
-    /// The room was full: the link stopped for good.
+    /// The room was full: the link tries again until a seat is free.
     private(set) var peerRoomFull = false
     /// Another Russian's voice is playing in the owner's ears now.
     private(set) var peerSpeaking = false
@@ -1252,21 +1255,10 @@ final class AppModel {
 
     /// «Создать код»: a new random code from PeerRules.secretAlphabet, shown in groups.
     func newPeerSecret() {
+        // SystemRandomNumberGenerator is the system's cryptographic generator; randomElement() picks without bias.
+        var random = SystemRandomNumberGenerator()
         let alphabet = PeerRules.secretAlphabet
-        var bytes = [UInt8](repeating: 0, count: PeerRules.secretLength)
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return }
-        // Rejection sampling keeps every symbol equally likely.
-        var code: [UInt8] = []
-        var pool = bytes
-        while code.count < PeerRules.secretLength {
-            if pool.isEmpty {
-                pool = [UInt8](repeating: 0, count: PeerRules.secretLength)
-                guard SecRandomCopyBytes(kSecRandomDefault, pool.count, &pool) == errSecSuccess else { return }
-            }
-            let byte = pool.removeLast()
-            let limit = 256 - 256 % alphabet.count
-            if Int(byte) < limit { code.append(alphabet[Int(byte) % alphabet.count]) }
-        }
+        let code = (0..<PeerRules.secretLength).compactMap { _ in alphabet.randomElement(using: &random) }
         peerSecret = PeerRules.secretDisplay(String(decoding: code, as: UTF8.self))
         peerNotice = nil
     }
@@ -1298,11 +1290,11 @@ final class AppModel {
                     self.updatePeerMic()
                 }
             }
-            link.onRoomFull = { [weak self, weak link] in
+            link.onRoomFull = { [weak self, weak link] full in
                 MainActor.assumeIsolated {
                     guard let self, let link, self.peerLink === link else { return }
-                    self.peerRoomFull = true
-                    self.peerNotice = "В этой комнате уже \(PeerRules.maxPeers) участников. Создайте новый код."
+                    self.peerRoomFull = full
+                    self.peerNotice = full ? "В этой комнате уже \(PeerRules.maxPeers) участников. Пробуем снова каждые \(PeerRules.roomFullRetryMs / 1000) секунд; можно создать новый код." : nil
                 }
             }
             link.onVoice = { windows.record($0) }
@@ -1335,18 +1327,19 @@ final class AppModel {
     private func attachPeer() {
         let mic = peerMic
         incomingLane?.dropsPhrase = incomingPhraseFilter()
-        outgoingLane?.setPeerSink(peerLink == nil ? nil : { buffer, signal in mic.push(buffer, hasSignal: signal) })
+        outgoingLane?.setPeerSink(peerLink == nil ? nil : { buffer, voice in mic.push(buffer, voice: voice) })
         updatePeerMic()
     }
 
-    /// What the incoming lane must not translate: the owner's own voice coming back from the call (lane_rules:
-    /// ln_own_talk_drops; his own Portuguese voice and «Свой голос» echoed back, pe_is_peer_voice over selfWindows) and,
-    /// with «Русские в звонке», another Ponte's voice (pe_is_peer_voice over peerWindows).
+    /// What the incoming lane must not translate: the owner's own voice coming back from the call, with the talk key
+    /// or «Свой голос» (ln_own_talk_drops), and his Ponte's Portuguese voice echoed back (pe_is_peer_voice over
+    /// selfWindows); with «Русские в звонке», another Ponte's voice (pe_is_peer_voice over peerWindows).
     private func incomingPhraseFilter() -> (String, Date, Date) -> Bool {
-        let ownTalk = self.ownTalk, mine = selfWindows
+        let ownTalk = self.ownTalk, ownVoice = ownVoiceTalk, mine = selfWindows
         let windows: PeerWindows? = peerLink == nil ? nil : peerWindows
         return { text, start, end in
-            ownTalk.drops(start: start, end: end) || mine.isPeerVoice(text, start: start, end: end)
+            ownTalk.drops(start: start, end: end) || ownVoice.drops(start: start, end: end)
+                || mine.isPeerVoice(text, start: start, end: end)
                 || (windows?.isPeerVoice(text, start: start, end: end) ?? false)
         }
     }

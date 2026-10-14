@@ -304,6 +304,8 @@ final class CallAnalysisModel {
     @ObservationIgnored private var notebook = AnalysisNotebook()
     @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private var updateTask: Task<Void, Never>?
+    /// A background notes update is running.
+    var notesUpdating: Bool { updateTask != nil }
     /// Each notes update gets an ID; one that was stopped or replaced never touches the notebook.
     @ObservationIgnored private var updateID = 0
     @ObservationIgnored private var callStartedAt: Date?
@@ -311,7 +313,6 @@ final class CallAnalysisModel {
     @ObservationIgnored private var sourceName: String?
     /// The quiet status of the background notes («Заметки обновлены…», a failure); nil when there is nothing to say.
     private(set) var notesStatus: String?
-    private(set) var notesUpdating = false
     /// The last background notes update failed (the toolbar button shows a warning icon).
     private(set) var notesFailing = false
     /// The app is quitting (AppModel.prepareToQuit): Stop builds no report (AnalysisRules.reportOnStop).
@@ -381,7 +382,6 @@ final class CallAnalysisModel {
         let gen = generation
         updateID += 1
         let id = updateID
-        notesUpdating = true
         updateTask = Task { [weak self] in
             do {
                 let step = try await analyst.updateNotesSafely(notes: notes, lines: pending, maxLines: cap)
@@ -399,13 +399,11 @@ final class CallAnalysisModel {
         updateTask?.cancel()
         updateTask = nil
         updateID += 1
-        notesUpdating = false
     }
 
     private func notesUpdated(_ step: NotesStep, covering lines: [AnalysisLine], generation gen: Int, update id: Int) {
         guard gen == generation, id == updateID else { return }
         updateTask = nil
-        notesUpdating = false
         notebook.applied(notes: step.notes, covering: lines, at: Date())
         notebook.limitLines(step.lineCap)
         notesFailing = false
@@ -416,7 +414,6 @@ final class CallAnalysisModel {
     private func notesFailed(_ error: AnalysisError, generation gen: Int, update id: Int) {
         guard gen == generation, id == updateID else { return }
         updateTask = nil
-        notesUpdating = false
         notebook.failed(error, at: Date())
         notesFailing = true
         let text = error.localizedDescription

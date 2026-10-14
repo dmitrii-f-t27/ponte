@@ -35,6 +35,7 @@ enum PeerRulesLegacy {
     static func audioSends(inFlight: Int) -> Bool { inFlight >= 0 && inFlight < 6 }
     static let stableMs = 3000
     static let closeRoomFull = 4001
+    static let roomFullRetryMs = 15_000
 
     static let jitterTargetMs = 120.0
     static let jitterMaxMs = 400.0
@@ -90,7 +91,11 @@ enum PeerRulesLegacy {
 
     static func acceptsNewPeer(knownPeers: Int) -> Bool { (0..<(maxPeers - 1)).contains(knownPeers) }
 
-    static func reconnects(afterCloseCode code: Int) -> Bool { code != closeRoomFull }
+    static func roomFull(closeCode code: Int) -> Bool { code == closeRoomFull }
+
+    static func retryDelayMs(closeCode code: Int, attempt: Int) -> Int {
+        roomFull(closeCode: code) ? roomFullRetryMs : reconnectDelayMs(attempt: attempt)
+    }
 
     // MARK: - Microphone
 
@@ -174,6 +179,13 @@ enum PeerRulesLegacy {
 
     static func frameFresh(sentMs: Int64, nowMs: Int64) -> Bool {
         (Int128(nowMs) - Int128(sentMs)).magnitude <= UInt128(maxSkewMs)
+    }
+
+    /// Swift integers widen the arithmetic: the gap is exact for any Int64 times.
+    static func voiceLocalMs(atMs: Int64, sentMs: Int64, nowMs: Int64) -> Int64 {
+        guard nowMs >= 0, atMs <= sentMs else { return nowMs }
+        let gap = Int128(sentMs) - Int128(atMs)
+        return gap > Int128(maxSkewMs) ? nowMs : nowMs - Int64(gap)
     }
 
     static func seqNewer(seq: UInt32, lastSeq: UInt32, hasLast: Bool) -> Bool {

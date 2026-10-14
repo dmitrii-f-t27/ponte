@@ -37,6 +37,7 @@
 #define PE_PEER_TIMEOUT_MS 15000
 #define PE_STABLE_MS 3000
 #define PE_CLOSE_ROOM_FULL 4001
+#define PE_ROOM_FULL_RETRY_MS 15000
 #define PE_VAD_HANGOVER_MS 600
 #define PE_MAX_AUDIO_IN_FLIGHT 6
 #define PE_JITTER_TARGET_MS 120.0
@@ -127,7 +128,8 @@ int64_t pe_status(bool link_on, bool connected, int64_t peers, int64_t failures)
 int64_t pe_reconnect_delay_ms(int64_t attempt);
 bool pe_peer_alive(int64_t ms_since_hello);
 bool pe_accepts_new_peer(int64_t known_peers);
-bool pe_reconnects(int64_t close_code);
+bool pe_room_full(int64_t close_code);
+int64_t pe_retry_delay_ms(int64_t close_code, int64_t attempt);
 bool pe_sends_mic(bool link_up, bool muted, bool headphones_like, bool key_held);
 bool pe_vad_sends(bool has_signal, int64_t ms_since_signal);
 bool pe_audio_sends(int64_t in_flight);
@@ -146,6 +148,7 @@ int64_t pe_secret_normalized(uint8_t text[static 4096], int64_t len, uint8_t out
 int64_t pe_secret_display(uint8_t text[static 4096], int64_t len, uint8_t out[static 16]);
 bool pe_gap_over(int64_t hi, int64_t lo, int64_t limit);
 bool pe_frame_fresh(int64_t sent_ms, int64_t now_ms);
+int64_t pe_voice_local_ms(int64_t at_ms, int64_t sent_ms, int64_t now_ms);
 bool pe_seq_newer(uint32_t seq, uint32_t last_seq, bool has_last);
 int64_t pe_window_end_ms(int64_t end_ms, int64_t last_seen_ms, int64_t now_ms, bool refreshed);
 int64_t pe_containment_milli(uint8_t phrase[static 4096], int64_t phrase_len, uint8_t said[static 4096], int64_t said_len);

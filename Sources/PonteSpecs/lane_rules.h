@@ -179,6 +179,7 @@ bool ln_lane_prepares_output(int32_t direction, bool speaks);
 bool ln_lane_voice_pause(int32_t direction);
 bool ln_lane_echo_guarded(int32_t direction);
 bool ln_lane_echo_source(int32_t direction);
+bool ln_lane_voice_in_call(int32_t direction);
 bool ln_glossary_source_is_pt(int32_t direction);
 bool ln_ptt_local(int32_t scope);
 bool ln_ptt_global(int32_t scope);
@@ -640,6 +641,10 @@ bool ln_lane_echo_source(int32_t direction) {
     return (direction == LN_DIR_INCOMING);
 }
 
+bool ln_lane_voice_in_call(int32_t direction) {
+    return (direction == LN_DIR_OUTGOING);
+}
+
 bool ln_glossary_source_is_pt(int32_t direction) {
     return (direction == LN_DIR_INCOMING);
 }
@@ -948,6 +953,8 @@ void test_ln_moved_rules(void) {
     assert((ln_lane_voice_pause(LN_DIR_OUTGOING) == true));
     assert((ln_lane_echo_guarded(LN_DIR_INCOMING) == false));
     assert((ln_lane_echo_source(LN_DIR_INCOMING) == true));
+    assert((ln_lane_voice_in_call(LN_DIR_OUTGOING) == true));
+    assert((ln_lane_voice_in_call(LN_DIR_INCOMING) == false));
     assert((ln_glossary_source_is_pt(LN_DIR_INCOMING) == true));
     assert((ln_glossary_source_is_pt(LN_DIR_OUTGOING) == false));
     assert((ln_ptt_local(LN_PTT_SCOPE_WINDOW) == true));

@@ -549,6 +549,8 @@ enum AppRules {
     static func laneVoicePause(direction: Int32) -> Bool { ln_lane_voice_pause(direction) }
     static func laneEchoGuarded(direction: Int32) -> Bool { ln_lane_echo_guarded(direction) }
     static func laneEchoSource(direction: Int32) -> Bool { ln_lane_echo_source(direction) }
+    /// The lane whose voice plays into the call (its voice windows are kept and announced to the other Russians).
+    static func laneVoiceInCall(direction: Int32) -> Bool { ln_lane_voice_in_call(direction) }
     static func glossarySourceIsPT(direction: Int32) -> Bool { ln_glossary_source_is_pt(direction) }
 
     /// PushToTalkMonitor: which monitors a scope installs.
