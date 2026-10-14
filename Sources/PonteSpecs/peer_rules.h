@@ -104,6 +104,54 @@
 static const uint8_t PE_FX_TEXT[577] = { 79, 105, 44, 32, 99, 111, 109, 111, 32, 118, 111, 99, 101, 32, 101, 115, 116, 97, 63, 79, 105, 32, 99, 111, 109, 111, 32, 118, 111, 99, 101, 32, 101, 115, 116, 97, 79, 105, 44, 32, 99, 111, 109, 111, 32, 118, 111, 99, 195, 170, 32, 101, 115, 116, 195, 161, 63, 111, 105, 32, 99, 111, 109, 111, 32, 118, 111, 99, 195, 170, 32, 101, 115, 116, 195, 161, 66, 111, 109, 32, 100, 105, 97, 44, 32, 116, 117, 100, 111, 32, 98, 101, 109, 32, 99, 111, 109, 32, 118, 111, 99, 195, 170, 63, 98, 111, 109, 32, 100, 105, 97, 32, 116, 117, 100, 111, 32, 98, 101, 109, 79, 98, 114, 105, 103, 97, 100, 111, 32, 112, 101, 108, 97, 32, 114, 101, 117, 110, 105, 195, 163, 111, 32, 100, 101, 32, 104, 111, 106, 101, 46, 81, 117, 97, 108, 32, 195, 169, 32, 111, 32, 112, 114, 101, 195, 167, 111, 63, 208, 159, 209, 128, 208, 184, 208, 178, 208, 181, 209, 130, 44, 32, 208, 186, 208, 176, 208, 186, 32, 208, 180, 208, 181, 208, 187, 208, 176, 63, 208, 191, 209, 128, 208, 184, 208, 178, 208, 181, 209, 130, 32, 208, 186, 208, 176, 208, 186, 32, 208, 180, 208, 181, 208, 187, 208, 176, 115, 105, 109, 32, 115, 105, 109, 32, 115, 105, 109, 32, 110, 97, 111, 115, 105, 109, 32, 110, 97, 111, 32, 110, 97, 111, 83, 97, 108, 97, 32, 50, 48, 50, 54, 44, 32, 97, 110, 100, 97, 114, 32, 49, 48, 115, 97, 108, 97, 32, 50, 48, 50, 54, 32, 97, 110, 100, 97, 114, 32, 100, 101, 122, 46, 46, 46, 32, 33, 63, 32, 45, 45, 32, 40, 41, 77, 101, 101, 116, 32, 45, 32, 107, 102, 115, 45, 99, 103, 118, 99, 45, 113, 114, 107, 77, 101, 101, 116, 32, 226, 128, 147, 32, 75, 70, 83, 45, 67, 71, 86, 67, 45, 81, 82, 75, 32, 45, 32, 66, 114, 111, 119, 115, 101, 114, 79, 83, 107, 102, 115, 45, 99, 103, 118, 99, 45, 113, 114, 107, 104, 116, 116, 112, 115, 58, 47, 47, 109, 101, 101, 116, 46, 103, 111, 111, 103, 108, 101, 46, 99, 111, 109, 47, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 63, 97, 117, 116, 104, 117, 115, 101, 114, 61, 48, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 120, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 107, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 49, 97, 98, 45, 99, 100, 101, 102, 45, 103, 104, 105, 32, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 32, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 105, 106, 107, 77, 101, 101, 116, 58, 32, 120, 121, 122, 45, 65, 66, 67, 68, 45, 101, 102, 103, 32, 97, 110, 100, 32, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 120, 121, 122, 45, 97, 98, 99, 100, 45, 101, 102, 103, 208, 182, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 208, 182, 97, 98, 99, 45, 100, 195, 169, 102, 103, 45, 104, 105, 106 };
 static const uint32_t PE_FX_OFFSETS[29] = { 0, 19, 36, 57, 76, 104, 120, 151, 168, 198, 226, 241, 252, 271, 290, 302, 302, 321, 354, 366, 413, 425, 438, 451, 464, 501, 536, 548, 564 };
 static const uint32_t PE_FX_LENGTHS[29] = { 19, 17, 21, 19, 28, 16, 31, 17, 30, 28, 15, 11, 19, 19, 12, 0, 19, 33, 12, 47, 12, 13, 13, 13, 37, 35, 12, 16, 13 };
+#define PE_SECRET_LENGTH 12
+#define PE_SECRET_GROUP 4
+#define PE_SECRET_DISPLAY_LEN 14
+#define PE_KDF_ITERATIONS 200000
+#define PE_SPACE 32
+#define PE_UNDERSCORE 95
+#define PE_SECRET_ALPHABET_LEN 31
+static const uint8_t PE_SECRET_ALPHABET[31] = { 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102, 103, 104, 106, 107, 109, 110, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122 };
+#define PE_FX2_TTS_CONTRACT 0
+#define PE_FX2_HEARD_TAIL 1
+#define PE_FX2_TTS_CONTRACT_PT 2
+#define PE_FX2_HEARD_TAIL_PT 3
+#define PE_FX2_REPLY 4
+#define PE_FX2_TTS_QUESTION 5
+#define PE_FX2_PHRASE_SEND 6
+#define PE_FX2_TTS_SEND 7
+#define PE_FX2_ORDER_SWAPPED 8
+#define PE_FX2_ORDER 9
+#define PE_FX2_SIM_THREE 10
+#define PE_FX2_SIM_ONE 11
+#define PE_FX2_NO_WORDS 12
+#define PE_FX2_EMPTY 13
+#define PE_FX2_SECRET_TYPED 14
+#define PE_FX2_SECRET 15
+#define PE_FX2_SECRET_DISPLAY 16
+#define PE_FX2_SECRET_ZERO 17
+#define PE_FX2_SECRET_UNDERSCORES 18
+#define PE_FX2_SECRET_UNDERSCORES_NORMALIZED 19
+#define PE_FX2_SECRET_UNDERSCORES_DISPLAY 20
+#define PE_FX2_SECRET_SHORT 21
+#define PE_FX2_SECRET_LONG 22
+#define PE_FX2_SECRET_WITH_I 23
+#define PE_FX2_SECRET_TABS 24
+#define PE_FX2_SECRET_ACCENT 25
+#define PE_FX2_SECRET_UPPER 26
+#define PE_FX2_COUNT 27
+static const uint8_t PE_FX2_TEXT[679] = { 69, 110, 116, 97, 111, 32, 102, 105, 99, 97, 32, 99, 111, 109, 98, 105, 110, 97, 100, 111, 32, 97, 115, 115, 105, 109, 58, 32, 101, 117, 32, 112, 114, 101, 112, 97, 114, 111, 32, 116, 117, 100, 111, 32, 104, 111, 106, 101, 32, 97, 32, 110, 111, 105, 116, 101, 32, 101, 32, 118, 111, 99, 101, 115, 32, 112, 111, 100, 101, 109, 32, 114, 101, 118, 105, 115, 97, 114, 32, 99, 111, 109, 32, 99, 97, 108, 109, 97, 32, 101, 44, 32, 115, 101, 32, 113, 117, 105, 115, 101, 114, 101, 109, 44, 32, 97, 115, 115, 105, 110, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 97, 32, 100, 101, 32, 109, 97, 110, 104, 97, 46, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 97, 32, 100, 101, 32, 109, 97, 110, 104, 97, 69, 110, 116, 195, 163, 111, 32, 102, 105, 99, 97, 32, 99, 111, 109, 98, 105, 110, 97, 100, 111, 32, 97, 115, 115, 105, 109, 58, 32, 101, 117, 32, 112, 114, 101, 112, 97, 114, 111, 32, 116, 117, 100, 111, 32, 104, 111, 106, 101, 32, 195, 160, 32, 110, 111, 105, 116, 101, 32, 101, 32, 118, 111, 99, 195, 170, 115, 32, 112, 111, 100, 101, 109, 32, 114, 101, 118, 105, 115, 97, 114, 32, 99, 111, 109, 32, 99, 97, 108, 109, 97, 32, 101, 44, 32, 115, 101, 32, 113, 117, 105, 115, 101, 114, 101, 109, 44, 32, 97, 115, 115, 105, 110, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 195, 163, 32, 100, 101, 32, 109, 97, 110, 104, 195, 163, 46, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 195, 163, 32, 100, 101, 32, 109, 97, 110, 104, 195, 163, 83, 105, 109, 44, 32, 112, 111, 100, 101, 109, 111, 115, 32, 99, 111, 109, 101, 99, 97, 114, 32, 97, 103, 111, 114, 97, 80, 111, 100, 101, 109, 111, 115, 32, 99, 111, 109, 101, 99, 97, 114, 32, 97, 103, 111, 114, 97, 63, 80, 111, 100, 101, 109, 111, 115, 32, 101, 110, 118, 105, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 97, 86, 111, 99, 101, 115, 32, 112, 111, 100, 101, 109, 32, 101, 110, 118, 105, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 104, 111, 106, 101, 63, 99, 111, 110, 116, 114, 97, 116, 111, 32, 111, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 115, 105, 109, 32, 115, 105, 109, 32, 115, 105, 109, 83, 105, 109, 46, 46, 46, 46, 32, 45, 45, 32, 63, 33, 65, 66, 67, 68, 32, 101, 102, 103, 104, 45, 74, 75, 77, 78, 97, 98, 99, 100, 101, 102, 103, 104, 106, 107, 109, 110, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 110, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 48, 32, 32, 50, 51, 52, 53, 95, 54, 55, 56, 57, 95, 87, 88, 89, 90, 32, 32, 50, 51, 52, 53, 54, 55, 56, 57, 119, 120, 121, 122, 50, 51, 52, 53, 45, 54, 55, 56, 57, 45, 119, 120, 121, 122, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 110, 112, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 105, 106, 107, 109, 97, 98, 99, 100, 9, 101, 102, 103, 104, 9, 106, 107, 109, 110, 97, 98, 99, 100, 45, 195, 169, 102, 103, 104, 45, 106, 107, 109, 110, 65, 66, 67, 68, 69, 70, 71, 72, 74, 75, 77, 78 };
+static const uint32_t PE_FX2_OFFSETS[27] = { 0, 140, 166, 311, 339, 365, 387, 419, 454, 464, 474, 485, 489, 498, 498, 512, 524, 538, 552, 570, 582, 596, 609, 624, 638, 652, 667 };
+static const uint32_t PE_FX2_LENGTHS[27] = { 140, 26, 145, 28, 26, 22, 32, 35, 10, 10, 11, 4, 9, 0, 14, 12, 14, 14, 18, 12, 14, 13, 15, 14, 14, 15, 12 };
+#define PE_MAX_SKEW_MS 30000
+#define PE_CLOSE_ROOM_FULL 4001
+#define PE_STABLE_MS 3000
+#define PE_VOICE_REFRESH_MS 5000
+#define PE_VOICE_STALE_MS 12000
+#define PE_PERMILLE 1000
+#define PE_CONTAIN_MIN_MILLI 800
+#define PE_CONTAIN_SURE_MILLI 900
+#define PE_OWN_OVERLAP_PERMILLE 600
 
 /* -------------------------------------------------------
    Function prototypes
@@ -131,6 +179,24 @@ int64_t pe_meet_code(uint8_t text[static 4096], int64_t len, uint8_t out[static 
 int64_t pe_fixture(int64_t index, uint8_t out[static 4096]);
 int64_t pe_fixture_similarity(int64_t a, int64_t b);
 bool pe_fixture_meet_code_is(int64_t text, int64_t code);
+bool pe_in_secret_alphabet(uint8_t c);
+int64_t pe_secret_alphabet(uint8_t out[static 64]);
+int64_t pe_secret_normalized(uint8_t text[static 4096], int64_t len, uint8_t out[static 12]);
+int64_t pe_secret_display(uint8_t text[static 4096], int64_t len, uint8_t out[static 16]);
+bool pe_gap_over(int64_t hi, int64_t lo, int64_t limit);
+bool pe_frame_fresh(int64_t sent_ms, int64_t now_ms);
+bool pe_seq_newer(uint32_t seq, uint32_t last_seq, bool has_last);
+bool pe_accepts_new_peer(int64_t known_peers);
+bool pe_reconnects(int64_t close_code);
+int64_t pe_window_end_ms(int64_t end_ms, int64_t last_seen_ms, int64_t now_ms);
+int64_t pe_containment_milli(uint8_t phrase[static 4096], int64_t phrase_len, uint8_t said[static 4096], int64_t said_len);
+bool pe_permille_at_least(int64_t part, int64_t whole, int64_t permille);
+bool pe_is_peer_voice_v2(int64_t kind, int64_t containment_milli, int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t window_start_ms, int64_t window_end_ms);
+int64_t pe_fixture2(int64_t index, uint8_t out[static 4096]);
+int64_t pe_fixture2_containment(int64_t phrase, int64_t said);
+int64_t pe_fixture2_similarity(int64_t a, int64_t b);
+bool pe_fixture2_secret_is(int64_t text, int64_t expected);
+bool pe_fixture2_display_is(int64_t text, int64_t expected);
 
 /* -------------------------------------------------------
    Function implementations
@@ -400,6 +466,280 @@ bool pe_fixture_meet_code_is(int64_t text, int64_t code) {
     int64_t k = 0;
     while ((k < PE_MEET_CODE_LEN)) {
         if ((out[k] != c[k])) {
+            return false;
+        }
+        k = (k + 1);
+    }
+    return true;
+}
+
+bool pe_in_secret_alphabet(uint8_t c) {
+    int64_t k = 0;
+    while ((k < PE_SECRET_ALPHABET_LEN)) {
+        if ((PE_SECRET_ALPHABET[k] == c)) {
+            return true;
+        }
+        k = (k + 1);
+    }
+    return false;
+}
+
+int64_t pe_secret_alphabet(uint8_t out[static 64]) {
+    int64_t k = 0;
+    while ((k < PE_SECRET_ALPHABET_LEN)) {
+        out[k] = PE_SECRET_ALPHABET[k];
+        k = (k + 1);
+    }
+    return PE_SECRET_ALPHABET_LEN;
+}
+
+int64_t pe_secret_normalized(uint8_t text[static 4096], int64_t len, uint8_t out[static 12]) {
+    int64_t n = pe_text_len(len);
+    int64_t count = 0;
+    int64_t i = 0;
+    while ((i < n)) {
+        uint8_t c = pe_fold(text[i]);
+        if ((((c != PE_SPACE) && (c != PE_HYPHEN)) && (c != PE_UNDERSCORE))) {
+            if ((count >= PE_SECRET_LENGTH)) {
+                return 0;
+            }
+            if ((pe_in_secret_alphabet(c) == false)) {
+                return 0;
+            }
+            out[count] = c;
+            count = (count + 1);
+        }
+        i = (i + 1);
+    }
+    if ((count != PE_SECRET_LENGTH)) {
+        return 0;
+    }
+    return count;
+}
+
+int64_t pe_secret_display(uint8_t text[static 4096], int64_t len, uint8_t out[static 16]) {
+    if ((len != PE_SECRET_LENGTH)) {
+        return 0;
+    }
+    int64_t k = 0;
+    while ((k < PE_SECRET_LENGTH)) {
+        if ((pe_in_secret_alphabet(text[k]) == false)) {
+            return 0;
+        }
+        k = (k + 1);
+    }
+    int64_t at = 0;
+    k = 0;
+    while ((k < PE_SECRET_LENGTH)) {
+        if (((k > 0) && ((k % PE_SECRET_GROUP) == 0))) {
+            out[at] = PE_HYPHEN;
+            at = (at + 1);
+        }
+        out[at] = text[k];
+        at = (at + 1);
+        k = (k + 1);
+    }
+    return at;
+}
+
+bool pe_gap_over(int64_t hi, int64_t lo, int64_t limit) {
+    if ((hi <= lo)) {
+        return false;
+    }
+    if (((lo >= 0) || (hi < 0))) {
+        return ((hi - lo) > limit);
+    }
+    if ((hi > limit)) {
+        return true;
+    }
+    if ((lo < (0 - limit))) {
+        return true;
+    }
+    return ((hi - lo) > limit);
+}
+
+bool pe_frame_fresh(int64_t sent_ms, int64_t now_ms) {
+    return ((pe_gap_over(now_ms, sent_ms, PE_MAX_SKEW_MS) == false) && (pe_gap_over(sent_ms, now_ms, PE_MAX_SKEW_MS) == false));
+}
+
+bool pe_seq_newer(uint32_t seq, uint32_t last_seq, bool has_last) {
+    return ((has_last == false) || (seq > last_seq));
+}
+
+bool pe_accepts_new_peer(int64_t known_peers) {
+    return ((known_peers >= 0) && (known_peers < (PE_MAX_PEERS - 1)));
+}
+
+bool pe_reconnects(int64_t close_code) {
+    return (close_code != PE_CLOSE_ROOM_FULL);
+}
+
+int64_t pe_window_end_ms(int64_t end_ms, int64_t last_seen_ms, int64_t now_ms) {
+    if ((end_ms >= 0)) {
+        return end_ms;
+    }
+    if (pe_gap_over(now_ms, last_seen_ms, PE_VOICE_STALE_MS)) {
+        return last_seen_ms;
+    }
+    return -1;
+}
+
+int64_t pe_containment_milli(uint8_t phrase[static 4096], int64_t phrase_len, uint8_t said[static 4096], int64_t said_len) {
+    int64_t p_starts[512] = { [0 ... (512) - 1] = 0 };
+    int64_t p_lens[512] = { [0 ... (512) - 1] = 0 };
+    int64_t s_starts[512] = { [0 ... (512) - 1] = 0 };
+    int64_t s_lens[512] = { [0 ... (512) - 1] = 0 };
+    int64_t np = pe_words(phrase, phrase_len, p_starts, p_lens);
+    int64_t ns = pe_words(said, said_len, s_starts, s_lens);
+    if ((np == 0)) {
+        return 0;
+    }
+    int64_t prev[513] = { [0 ... (513) - 1] = 0 };
+    int64_t row[513] = { [0 ... (513) - 1] = 0 };
+    int64_t i = 0;
+    while ((i < np)) {
+        row[0] = 0;
+        int64_t j = 0;
+        while ((j < ns)) {
+            if (pe_same_word(phrase, p_starts[i], p_lens[i], said, s_starts[j], s_lens[j])) {
+                row[(j + 1)] = (prev[j] + 1);
+            } else if ((prev[(j + 1)] >= row[j])) {
+                row[(j + 1)] = prev[(j + 1)];
+            } else {
+                row[(j + 1)] = row[j];
+            }
+            j = (j + 1);
+        }
+        j = 0;
+        while ((j <= ns)) {
+            prev[j] = row[j];
+            j = (j + 1);
+        }
+        i = (i + 1);
+    }
+    return ((PE_PERMILLE * prev[ns]) / np);
+}
+
+bool pe_permille_at_least(int64_t part, int64_t whole, int64_t permille) {
+    int64_t q = (whole / PE_PERMILLE);
+    int64_t r = (whole % PE_PERMILLE);
+    int64_t rest = (part - (permille * q));
+    return (rest >= ((((permille * r) + PE_PERMILLE) - 1) / PE_PERMILLE));
+}
+
+bool pe_is_peer_voice_v2(int64_t kind, int64_t containment_milli, int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t window_start_ms, int64_t window_end_ms) {
+    int64_t p_start = phrase_start_ms;
+    int64_t p_last = phrase_end_ms;
+    if ((phrase_end_ms < phrase_start_ms)) {
+        p_start = phrase_end_ms;
+        p_last = phrase_start_ms;
+    }
+    int64_t duration = (p_last - p_start);
+    if ((duration < 1)) {
+        duration = 1;
+    }
+    int64_t p_end = (p_start + duration);
+    bool open = (window_end_ms < 0);
+    int64_t w_from = (window_start_ms - PE_WINDOW_BEFORE_MS);
+    int64_t w_until = p_end;
+    if ((open == false)) {
+        w_until = (window_end_ms + PE_WINDOW_AFTER_MS);
+    }
+    if ((kind == PE_VOICE_OWN)) {
+        int64_t lo = p_start;
+        if ((w_from > lo)) {
+            lo = w_from;
+        }
+        int64_t hi = p_end;
+        if ((w_until < hi)) {
+            hi = w_until;
+        }
+        int64_t overlap = 0;
+        if ((hi > lo)) {
+            overlap = (hi - lo);
+        }
+        return pe_permille_at_least(overlap, duration, PE_OWN_OVERLAP_PERMILLE);
+    }
+    if ((kind == PE_VOICE_TTS)) {
+        bool meets = ((p_end >= w_from) && (open || (p_start <= w_until)));
+        if ((meets && (containment_milli >= PE_CONTAIN_MIN_MILLI))) {
+            return true;
+        }
+        bool in_text_window = ((p_end >= w_from) && (open || (p_start <= (window_end_ms + PE_TEXT_WINDOW_MS))));
+        return ((containment_milli >= PE_CONTAIN_SURE_MILLI) && in_text_window);
+    }
+    return false;
+}
+
+int64_t pe_fixture2(int64_t index, uint8_t out[static 4096]) {
+    if (((index < 0) || (index >= PE_FX2_COUNT))) {
+        return 0;
+    }
+    int64_t off = PE_FX2_OFFSETS[index];
+    int64_t len = PE_FX2_LENGTHS[index];
+    int64_t k = 0;
+    while (((k < len) && (k < PE_TEXT_MAX))) {
+        out[k] = PE_FX2_TEXT[(off + k)];
+        k = (k + 1);
+    }
+    return k;
+}
+
+int64_t pe_fixture2_containment(int64_t phrase, int64_t said) {
+    uint8_t tp[4096] = { [0 ... (4096) - 1] = 0 };
+    uint8_t ts[4096] = { [0 ... (4096) - 1] = 0 };
+    int64_t np = pe_fixture2(phrase, tp);
+    int64_t ns = pe_fixture2(said, ts);
+    return pe_containment_milli(tp, np, ts, ns);
+}
+
+int64_t pe_fixture2_similarity(int64_t a, int64_t b) {
+    uint8_t ta[4096] = { [0 ... (4096) - 1] = 0 };
+    uint8_t tb[4096] = { [0 ... (4096) - 1] = 0 };
+    int64_t na = pe_fixture2(a, ta);
+    int64_t nb = pe_fixture2(b, tb);
+    return pe_word_similarity_milli(ta, na, tb, nb);
+}
+
+bool pe_fixture2_secret_is(int64_t text, int64_t expected) {
+    uint8_t t[4096] = { [0 ... (4096) - 1] = 0 };
+    uint8_t e[4096] = { [0 ... (4096) - 1] = 0 };
+    uint8_t out[12] = { [0 ... (12) - 1] = 0 };
+    int64_t n = pe_fixture2(text, t);
+    int64_t got = pe_secret_normalized(t, n, out);
+    if ((expected < 0)) {
+        return (got == 0);
+    }
+    int64_t m = pe_fixture2(expected, e);
+    if ((got != m)) {
+        return false;
+    }
+    int64_t k = 0;
+    while ((k < m)) {
+        if ((out[k] != e[k])) {
+            return false;
+        }
+        k = (k + 1);
+    }
+    return true;
+}
+
+bool pe_fixture2_display_is(int64_t text, int64_t expected) {
+    uint8_t t[4096] = { [0 ... (4096) - 1] = 0 };
+    uint8_t e[4096] = { [0 ... (4096) - 1] = 0 };
+    uint8_t out[16] = { [0 ... (16) - 1] = 0 };
+    int64_t n = pe_fixture2(text, t);
+    int64_t got = pe_secret_display(t, n, out);
+    if ((expected < 0)) {
+        return (got == 0);
+    }
+    int64_t m = pe_fixture2(expected, e);
+    if ((got != m)) {
+        return false;
+    }
+    int64_t k = 0;
+    while ((k < m)) {
+        if ((out[k] != e[k])) {
             return false;
         }
         k = (k + 1);
@@ -718,6 +1058,349 @@ void test_pe_meet_code_rules(void) {
     assert((pe_is_letter(122) == true));
 }
 
+void test_pe_secret_rules(void) {
+    assert((PE_SECRET_ALPHABET_LEN == 31));
+    assert((PE_SECRET_DISPLAY_LEN == (PE_SECRET_LENGTH + ((PE_SECRET_LENGTH - 1) / PE_SECRET_GROUP))));
+    assert((PE_KDF_ITERATIONS == 200000));
+    uint32_t in_alphabet = 0;
+    uint32_t bad = 0;
+    uint32_t b = 0;
+    while ((b < 256)) {
+        if (pe_in_secret_alphabet(((uint8_t)(b)))) {
+            in_alphabet = (in_alphabet + 1);
+        }
+        b = (b + 1);
+    }
+    assert((in_alphabet == 31));
+    int64_t k = 1;
+    while ((k < PE_SECRET_ALPHABET_LEN)) {
+        if ((PE_SECRET_ALPHABET[(k - 1)] >= PE_SECRET_ALPHABET[k])) {
+            bad = (bad + 1);
+        }
+        k = (k + 1);
+    }
+    assert((bad == 0));
+    assert((pe_in_secret_alphabet(48) == false));
+    assert((pe_in_secret_alphabet(49) == false));
+    assert((pe_in_secret_alphabet(105) == false));
+    assert((pe_in_secret_alphabet(108) == false));
+    assert((pe_in_secret_alphabet(111) == false));
+    assert((pe_in_secret_alphabet(50) == true));
+    assert((pe_in_secret_alphabet(57) == true));
+    assert((pe_in_secret_alphabet(97) == true));
+    assert((pe_in_secret_alphabet(122) == true));
+    assert((pe_in_secret_alphabet(65) == false));
+    uint8_t alphabet[64] = { [0 ... (64) - 1] = 0 };
+    assert((pe_secret_alphabet(alphabet) == 31));
+    assert((alphabet[0] == 50));
+    assert((alphabet[30] == 122));
+    assert((pe_fixture2_secret_is(PE_FX2_SECRET_TYPED, PE_FX2_SECRET) == true));
+    assert((pe_fixture2_secret_is(PE_FX2_SECRET_DISPLAY, PE_FX2_SECRET) == true));
+    assert((pe_fixture2_secret_is(PE_FX2_SECRET, PE_FX2_SECRET) == true));
+    assert((pe_fixture2_secret_is(PE_FX2_SECRET_UPPER, PE_FX2_SECRET) == true));
+    assert((pe_fixture2_secret_is(PE_FX2_SECRET_UNDERSCORES, PE_FX2_SECRET_UNDERSCORES_NORMALIZED) == true));
+    assert((pe_fixture2_secret_is(PE_FX2_SECRET_ZERO, -1) == true));
+    assert((pe_fixture2_secret_is(PE_FX2_SECRET_SHORT, -1) == true));
+    assert((pe_fixture2_secret_is(PE_FX2_SECRET_LONG, -1) == true));
+    assert((pe_fixture2_secret_is(PE_FX2_SECRET_WITH_I, -1) == true));
+    assert((pe_fixture2_secret_is(PE_FX2_SECRET_TABS, -1) == true));
+    assert((pe_fixture2_secret_is(PE_FX2_SECRET_ACCENT, -1) == true));
+    assert((pe_fixture2_secret_is(PE_FX2_EMPTY, -1) == true));
+    assert((pe_fixture2_display_is(PE_FX2_SECRET, PE_FX2_SECRET_DISPLAY) == true));
+    assert((pe_fixture2_display_is(PE_FX2_SECRET_UNDERSCORES_NORMALIZED, PE_FX2_SECRET_UNDERSCORES_DISPLAY) == true));
+    assert((pe_fixture2_display_is(PE_FX2_SECRET_UPPER, -1) == true));
+    assert((pe_fixture2_display_is(PE_FX2_SECRET_DISPLAY, -1) == true));
+    assert((pe_fixture2_display_is(PE_FX2_SECRET_TYPED, -1) == true));
+    assert((pe_fixture2_display_is(PE_FX2_EMPTY, -1) == true));
+    uint8_t t[4096] = { [0 ... (4096) - 1] = 0 };
+    uint8_t out[12] = { [0 ... (12) - 1] = 0 };
+    uint8_t shown[16] = { [0 ... (16) - 1] = 0 };
+    k = 0;
+    while ((k < 4096)) {
+        t[k] = PE_SPACE;
+        k = (k + 1);
+    }
+    k = 0;
+    while ((k < 12)) {
+        t[(4084 + k)] = PE_SECRET_ALPHABET[k];
+        k = (k + 1);
+    }
+    assert((pe_secret_normalized(t, 4096, out) == 12));
+    assert((out[0] == 50));
+    assert((out[11] == 100));
+    assert((pe_secret_normalized(t, 9999, out) == 12));
+    assert((pe_secret_normalized(t, 4095, out) == 0));
+    assert((pe_secret_normalized(t, -1, out) == 0));
+    t[4083] = 66;
+    assert((pe_secret_normalized(t, 4096, out) == 0));
+    t[4083] = 95;
+    t[0] = 45;
+    assert((pe_secret_normalized(t, 4096, out) == 12));
+    assert((pe_secret_display(t, 4096, shown) == 0));
+}
+
+void test_pe_freshness_rules(void) {
+    int64_t i64_max = 9223372036854775807;
+    int64_t i64_min = ((0 - 9223372036854775807) - 1);
+    assert((pe_frame_fresh(0, 0) == true));
+    assert((pe_frame_fresh(0, 30000) == true));
+    assert((pe_frame_fresh(0, 30001) == false));
+    assert((pe_frame_fresh(0, -30000) == true));
+    assert((pe_frame_fresh(0, -30001) == false));
+    assert((pe_frame_fresh(30000, 0) == true));
+    assert((pe_frame_fresh(-30001, 0) == false));
+    assert((pe_frame_fresh(-15000, 15000) == true));
+    assert((pe_frame_fresh(-15000, 15001) == false));
+    assert((pe_frame_fresh(15001, -15000) == false));
+    assert((pe_frame_fresh(1760000000000, 1760000029999) == true));
+    assert((pe_frame_fresh(1760000000000, 1759999969999) == false));
+    assert((pe_frame_fresh(i64_min, i64_max) == false));
+    assert((pe_frame_fresh(i64_max, i64_min) == false));
+    assert((pe_frame_fresh(i64_max, i64_max) == true));
+    assert((pe_frame_fresh(i64_min, i64_min) == true));
+    assert((pe_frame_fresh((i64_max - 30000), i64_max) == true));
+    assert((pe_frame_fresh((i64_max - 30001), i64_max) == false));
+    assert((pe_frame_fresh(i64_min, (i64_min + 30000)) == true));
+    assert((pe_frame_fresh((i64_min + 30001), i64_min) == false));
+    assert((pe_frame_fresh(-1, i64_max) == false));
+    assert((pe_frame_fresh(0, i64_min) == false));
+    assert((pe_frame_fresh(i64_min, 0) == false));
+    assert((pe_frame_fresh(-30000, 0) == true));
+    uint32_t bad = 0;
+    int64_t d = -40000;
+    while ((d <= 40000)) {
+        bool expect = ((d <= 30000) && (d >= -30000));
+        if ((pe_frame_fresh(0, d) != expect)) {
+            bad = (bad + 1);
+        }
+        if ((pe_frame_fresh(d, 0) != expect)) {
+            bad = (bad + 1);
+        }
+        if ((pe_frame_fresh((d - 20000), -20000) != expect)) {
+            bad = (bad + 1);
+        }
+        bool over = (d > 12000);
+        if ((pe_gap_over(d, 0, 12000) != over)) {
+            bad = (bad + 1);
+        }
+        bool under = ((0 - d) > 12000);
+        if ((pe_gap_over(0, d, 12000) != under)) {
+            bad = (bad + 1);
+        }
+        d = (d + 7);
+    }
+    assert((bad == 0));
+    assert((pe_gap_over(i64_max, i64_min, 0) == true));
+    assert((pe_gap_over(i64_min, i64_max, 0) == false));
+    assert((pe_gap_over(5, -7, 12) == false));
+    assert((pe_gap_over(5, -8, 12) == true));
+    uint32_t top = 4294967295;
+    uint32_t zero = 0;
+    assert((pe_seq_newer(5, 4, true) == true));
+    assert((pe_seq_newer(4, 4, true) == false));
+    assert((pe_seq_newer(3, 4, true) == false));
+    assert((pe_seq_newer(zero, top, false) == true));
+    assert((pe_seq_newer(zero, zero, false) == true));
+    assert((pe_seq_newer(zero, zero, true) == false));
+    assert((pe_seq_newer(top, (top - 1), true) == true));
+    assert((pe_seq_newer(top, top, true) == false));
+    assert((pe_seq_newer(zero, top, true) == false));
+}
+
+void test_pe_room_rules(void) {
+    assert((pe_accepts_new_peer(-1) == false));
+    assert((pe_accepts_new_peer(0) == true));
+    assert((pe_accepts_new_peer(4) == true));
+    assert((pe_accepts_new_peer(5) == false));
+    assert((pe_accepts_new_peer(6) == false));
+    assert((pe_accepts_new_peer(9223372036854775807) == false));
+    int64_t accepted = 0;
+    int64_t n = -10;
+    while ((n < 100)) {
+        if (pe_accepts_new_peer(n)) {
+            accepted = (accepted + 1);
+        }
+        n = (n + 1);
+    }
+    assert((accepted == (PE_MAX_PEERS - 1)));
+    assert((pe_reconnects(PE_CLOSE_ROOM_FULL) == false));
+    assert((pe_reconnects(4001) == false));
+    assert((pe_reconnects(1000) == true));
+    assert((pe_reconnects(1006) == true));
+    assert((pe_reconnects(4000) == true));
+    assert((pe_reconnects(4002) == true));
+    assert((pe_reconnects(-4001) == true));
+    assert((PE_STABLE_MS == 3000));
+    assert((PE_STABLE_MS > PE_RECONNECT_FIRST_MS));
+    assert((PE_STABLE_MS < PE_HELLO_EVERY_MS));
+}
+
+void test_pe_voice_window_rules(void) {
+    int64_t i64_max = 9223372036854775807;
+    int64_t i64_min = ((0 - 9223372036854775807) - 1);
+    assert((PE_VOICE_STALE_MS > (2 * PE_VOICE_REFRESH_MS)));
+    assert((PE_VOICE_STALE_MS < PE_WINDOW_KEEP_MS));
+    assert((pe_window_end_ms(15000, 10000, 99999) == 15000));
+    assert((pe_window_end_ms(0, 5, 99999) == 0));
+    assert((pe_window_end_ms(15000, 10000, 0) == 15000));
+    assert((pe_window_end_ms(-1, 10000, 10000) == -1));
+    assert((pe_window_end_ms(-1, 10000, 22000) == -1));
+    assert((pe_window_end_ms(-1, 10000, 22001) == 10000));
+    assert((pe_window_end_ms(-7, 10000, 900000) == 10000));
+    assert((pe_window_end_ms(-1, 10000, 9000) == -1));
+    assert((pe_window_end_ms(-1, i64_min, i64_max) == i64_min));
+    assert((pe_window_end_ms(-1, i64_max, i64_min) == -1));
+    assert((pe_window_end_ms(i64_min, 0, i64_max) == 0));
+    assert((pe_window_end_ms(i64_max, i64_min, i64_max) == i64_max));
+    assert((pe_window_end_ms(-1, (i64_max - 12000), i64_max) == -1));
+    assert((pe_window_end_ms(-1, (i64_max - 12001), i64_max) == (i64_max - 12001)));
+    int64_t closed_at = pe_window_end_ms(-1, 10000, 40000);
+    assert((closed_at == 10000));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 30000, 31000, 10000, closed_at) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 30000, 31000, 10000, -1) == true));
+}
+
+void test_pe_containment_rules(void) {
+    assert((pe_fixture2_containment(PE_FX2_HEARD_TAIL, PE_FX2_TTS_CONTRACT) == 1000));
+    assert((pe_fixture2_containment(PE_FX2_TTS_CONTRACT, PE_FX2_HEARD_TAIL) == 200));
+    assert((pe_fixture2_containment(PE_FX2_HEARD_TAIL_PT, PE_FX2_TTS_CONTRACT_PT) == 1000));
+    assert((pe_fixture2_containment(PE_FX2_HEARD_TAIL, PE_FX2_TTS_CONTRACT_PT) == 600));
+    assert((pe_fixture2_containment(PE_FX2_REPLY, PE_FX2_TTS_QUESTION) == 750));
+    assert((pe_fixture2_similarity(PE_FX2_REPLY, PE_FX2_TTS_QUESTION) == 857));
+    assert((pe_fixture2_containment(PE_FX2_TTS_QUESTION, PE_FX2_REPLY) == 1000));
+    assert((pe_fixture2_containment(PE_FX2_PHRASE_SEND, PE_FX2_TTS_SEND) == 600));
+    assert((pe_fixture2_containment(PE_FX2_ORDER_SWAPPED, PE_FX2_ORDER) == 500));
+    assert((pe_fixture2_containment(PE_FX2_ORDER, PE_FX2_ORDER) == 1000));
+    assert((pe_fixture2_containment(PE_FX2_SIM_THREE, PE_FX2_SIM_ONE) == 333));
+    assert((pe_fixture2_containment(PE_FX2_SIM_ONE, PE_FX2_SIM_THREE) == 1000));
+    assert((pe_fixture2_containment(PE_FX2_NO_WORDS, PE_FX2_TTS_CONTRACT) == 0));
+    assert((pe_fixture2_containment(PE_FX2_EMPTY, PE_FX2_EMPTY) == 0));
+    assert((pe_fixture2_containment(PE_FX2_HEARD_TAIL, PE_FX2_NO_WORDS) == 0));
+    assert((pe_fixture2_containment(PE_FX2_HEARD_TAIL, PE_FX2_EMPTY) == 0));
+    uint32_t bad = 0;
+    int64_t x = 0;
+    while ((x < PE_FX2_COUNT)) {
+        int64_t y = 0;
+        while ((y < PE_FX2_COUNT)) {
+            int64_t c = pe_fixture2_containment(x, y);
+            if (((c < 0) || (c > PE_PERMILLE))) {
+                bad = (bad + 1);
+            }
+            y = (y + 1);
+        }
+        int64_t self_c = pe_fixture2_containment(x, x);
+        uint8_t t[4096] = { [0 ... (4096) - 1] = 0 };
+        int64_t starts[512] = { [0 ... (512) - 1] = 0 };
+        int64_t lens[512] = { [0 ... (512) - 1] = 0 };
+        int64_t n = pe_fixture2(x, t);
+        int64_t word_count = pe_words(t, n, starts, lens);
+        if (((word_count == 0) && (self_c != 0))) {
+            bad = (bad + 1);
+        }
+        if (((word_count > 0) && (self_c != PE_PERMILLE))) {
+            bad = (bad + 1);
+        }
+        x = (x + 1);
+    }
+    assert((bad == 0));
+    uint8_t a[4096] = { [0 ... (4096) - 1] = 0 };
+    uint8_t u[4096] = { [0 ... (4096) - 1] = 0 };
+    int64_t k = 0;
+    while ((k < 4096)) {
+        if (((k % 2) == 0)) {
+            a[k] = 65;
+        } else {
+            a[k] = 32;
+        }
+        if (((k % 2) == 0)) {
+            u[k] = 97;
+        } else {
+            u[k] = 44;
+        }
+        k = (k + 1);
+    }
+    assert((pe_containment_milli(a, 4096, u, 200) == 195));
+    assert((pe_containment_milli(u, 200, a, 4096) == 1000));
+    assert((pe_containment_milli(a, 9999, u, 9999) == 1000));
+    assert((pe_containment_milli(a, -5, u, 200) == 0));
+    int64_t i64_max = 9223372036854775807;
+    assert((pe_permille_at_least(600, 1000, 600) == true));
+    assert((pe_permille_at_least(599, 1000, 600) == false));
+    assert((pe_permille_at_least(1, 1, 600) == true));
+    assert((pe_permille_at_least(0, 1, 600) == false));
+    assert((pe_permille_at_least(0, 1, 0) == true));
+    assert((pe_permille_at_least(1000, 1667, 600) == false));
+    assert((pe_permille_at_least(1000, 1666, 600) == true));
+    assert((pe_permille_at_least(i64_max, i64_max, 1000) == true));
+    assert((pe_permille_at_least((i64_max - 1), i64_max, 1000) == false));
+    assert((pe_permille_at_least(5534023222112865485, i64_max, 600) == true));
+    assert((pe_permille_at_least(5534023222112865484, i64_max, 600) == false));
+    uint32_t bad_permille = 0;
+    int64_t w = 1;
+    while ((w < 2600)) {
+        int64_t p = 0;
+        while ((p <= w)) {
+            bool exact = ((p * 1000) >= (600 * w));
+            if ((pe_permille_at_least(p, w, 600) != exact)) {
+                bad_permille = (bad_permille + 1);
+            }
+            p = (p + 13);
+        }
+        w = (w + 1);
+    }
+    assert((bad_permille == 0));
+}
+
+void test_pe_peer_voice_v2_rules(void) {
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 10200, 12400, 10000, 12000) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 12400, 10200, 10000, 12000) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 12500, 16000, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 12500, 14000, 10000, 12000) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 12500, 14166, 10000, 12000) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 12500, 14167, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 1000, 9000, 10000, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 9500, 10000, 10000, 12000) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 13499, 13499, 10000, 12000) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 13500, 13500, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 9699, 9699, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 9700, 9700, 10000, 12000) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 50000, 51000, 10000, -1) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 9000, 9600, 10000, -1) == false));
+    int64_t reply = pe_fixture2_containment(PE_FX2_REPLY, PE_FX2_TTS_QUESTION);
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, reply, 12500, 13800, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 800, 12500, 13800, 10000, 12000) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 799, 12500, 13800, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 800, 13500, 14000, 10000, 12000) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 800, 13501, 14000, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 900, 20000, 21000, 10000, 12000) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 899, 20000, 21000, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 1000, 27000, 28000, 10000, 12000) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 1000, 27001, 28000, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 1000, 5000, 9699, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 1000, 9699, 9699, 10000, 12000) == true));
+    int64_t tail = pe_fixture2_containment(PE_FX2_HEARD_TAIL, PE_FX2_TTS_CONTRACT);
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, tail, 16000, 18000, 10000, -1) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, tail, 16000, 18000, 10000, 17500) == true));
+    int64_t send = pe_fixture2_containment(PE_FX2_PHRASE_SEND, PE_FX2_TTS_SEND);
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, send, 11000, 12000, 10000, -1) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 800, 50000, 51000, 10000, -1) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 799, 50000, 51000, 10000, -1) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 900, 5000, 9699, 10000, -1) == false));
+    assert((pe_is_peer_voice_v2(0, 1000, 11000, 11500, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(3, 1000, 11000, 11500, 10000, 12000) == false));
+    assert((pe_is_peer_voice_v2(-1, 1000, 11000, 11500, 10000, -1) == false));
+    int64_t big = 4611686018427387903;
+    int64_t neg = (0 - 4611686018427387903);
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, neg, big, neg, -1) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, big, neg, neg, big) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, neg, big, (big - 1000), -1) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 800, neg, big, big, big) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 900, big, big, 0, 0) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_TTS, 900, neg, neg, big, -1) == false));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 1000, 1500, 0, 0) == true));
+    assert((pe_is_peer_voice_v2(PE_VOICE_OWN, 0, 1500, 1600, 0, 0) == false));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -731,7 +1414,13 @@ int main(void) {
     test_pe_similarity_rules();
     test_pe_peer_voice_rules();
     test_pe_meet_code_rules();
-    printf("All %d tests passed.\n", 5);
+    test_pe_secret_rules();
+    test_pe_freshness_rules();
+    test_pe_room_rules();
+    test_pe_voice_window_rules();
+    test_pe_containment_rules();
+    test_pe_peer_voice_v2_rules();
+    printf("All %d tests passed.\n", 11);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

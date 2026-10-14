@@ -162,3 +162,129 @@ private struct PeerText {
         length = Int64(utf8.count)
     }
 }
+
+// MARK: - Version 2 (owner 2026-10-13)
+
+/// Version 2 of the peer rules (owner 2026-10-13), added beside the first ones (the app still calls those): a secret
+/// code shared only among the Russians replaces the Meet code as the link secret; frames must be fresh and never
+/// replayed; a full room is not re-entered; voice windows are kept alive and end when stale; a recognized phrase is a
+/// peer's TTS by containment (how much of the phrase is in what the peer said), not by symmetric similarity.
+///
+/// The decisions are the "Version 2" part of `Specs/peer_rules.t27`; the oracle is the version 2 extension of
+/// `PeerRulesLegacy`. Times are milliseconds on one clock.
+extension PeerRules {
+
+    // MARK: Secret code shared only among the Russians
+
+    /// The bytes of a secret code: the digits 2-9 and the lowercase ASCII letters without i, l and o (no 0 1 i l o).
+    public static let secretAlphabet: [UInt8] = {
+        var out = [UInt8](repeating: 0, count: 64)
+        let n = Int(pe_secret_alphabet(&out))
+        return Array(out[0..<n])
+    }()
+    /// A code is `secretLength` bytes of `secretAlphabet`, shown in groups of `secretGroup` joined by "-".
+    public static let secretLength = Int(PE_SECRET_LENGTH)
+    public static let secretGroup = Int(PE_SECRET_GROUP)
+    /// PBKDF2-HMAC-SHA256 iterations that derive the link key from the normalized code.
+    public static let kdfIterations = Int(PE_KDF_ITERATIONS)
+
+    /// A typed or pasted code, normalized: ASCII A-Z folded to a-z, spaces, "-" and "_" removed; exactly `secretLength`
+    /// bytes of `secretAlphabet` must remain, else nil. Only the first 4096 bytes are read.
+    public static func secretNormalized(_ text: String) -> String? {
+        secretNormalized(utf8: Array(text.utf8)).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    /// A normalized code in groups of `secretGroup` joined by "-" ("abcdefghjkmn" -> "abcd-efgh-jkmn"); anything that
+    /// is not exactly `secretLength` alphabet bytes comes back unchanged.
+    public static func secretDisplay(_ normalized: String) -> String {
+        secretGroups(utf8: Array(normalized.utf8)).map { String(decoding: $0, as: UTF8.self) } ?? normalized
+    }
+
+    // MARK: Frame freshness and replay
+
+    /// A frame's clock may be this far from ours, either way.
+    public static let maxSkewMs = Int64(PE_MAX_SKEW_MS)
+
+    /// |nowMs - sentMs| <= `maxSkewMs` (any Int64 times, no overflow).
+    public static func frameFresh(sentMs: Int64, nowMs: Int64) -> Bool { pe_frame_fresh(sentMs, nowMs) }
+
+    /// No frame of that peer was taken yet, or this sequence number is above the last one taken.
+    public static func seqNewer(seq: UInt32, lastSeq: UInt32, hasLast: Bool) -> Bool { pe_seq_newer(seq, lastSeq, hasLast) }
+
+    // MARK: Peers and connection
+
+    /// A new peer is accepted while 0 to `maxPeers` - 2 peers are known.
+    public static func acceptsNewPeer(knownPeers: Int) -> Bool { pe_accepts_new_peer(Int64(knownPeers)) }
+
+    /// The close code of a full room: the link does not reconnect after it.
+    public static let closeRoomFull = Int(PE_CLOSE_ROOM_FULL)
+
+    /// After the relay closed the socket with `code`, the link reconnects unless the room was full.
+    public static func reconnects(afterCloseCode code: Int) -> Bool { pe_reconnects(Int64(code)) }
+
+    /// Failures reset only after the socket stayed open this long or a frame arrived.
+    public static let stableMs = Int(PE_STABLE_MS)
+
+    // MARK: Voice windows with keepalive
+
+    /// A sender re-sends START this often for every voice still playing.
+    public static let voiceRefreshMs = Int(PE_VOICE_REFRESH_MS)
+    /// A window not refreshed for longer than this ends where it was last seen.
+    public static let voiceStaleMs = Int64(PE_VOICE_STALE_MS)
+
+    /// Where a voice window ends: `endMs` when announced (>= 0); else `lastSeenMs` when that is more than
+    /// `voiceStaleMs` before `nowMs`; else -1 (still open). Any Int64 times.
+    public static func windowEndMs(endMs: Int64, lastSeenMs: Int64, nowMs: Int64) -> Int64 {
+        pe_window_end_ms(endMs, lastSeenMs, nowMs)
+    }
+
+    // MARK: Containment
+
+    /// How much of `phrase` is in `said`, 0...1000: 1000 * L / (words of phrase), L the longest common subsequence of
+    /// the word sequences (words as in `wordSimilarityMilli`: ASCII case folded; the first 4096 bytes and 512 words of
+    /// each); 0 when the phrase has no word.
+    public static func containmentMilli(phrase: String, said: String) -> Int {
+        containmentMilli(utf8: Array(phrase.utf8), Array(said.utf8))
+    }
+
+    /// A phrase meeting a TTS window is the peer's with this containment; up to `textWindowMs` after it, with the sure one.
+    public static let containMinMilli = Int(PE_CONTAIN_MIN_MILLI)
+    public static let containSureMilli = Int(PE_CONTAIN_SURE_MILLI)
+    /// A phrase is the peer's own voice when this share (thousandths) of its duration lies in the widened window.
+    public static let ownOverlapPermille = Int(PE_OWN_OVERLAP_PERMILLE)
+
+    /// Whether the phrase [phraseStartMs, phraseEndMs] (either order; at least 1 ms long) is a peer's voice announced
+    /// as `kind` in the window [windowStartMs, windowEndMs] (windowEndMs < 0: still open), widened by `windowBeforeMs`
+    /// and `windowAfterMs`. Own voice: at least `ownOverlapPermille` of the phrase lies in the widened window. TTS: the
+    /// phrase meets it with `containmentMilli` >= `containMinMilli`, or with >= `containSureMilli` it starts at most
+    /// `textWindowMs` after the window end. Times within ±2^62 (no overflow).
+    public static func isPeerVoiceV2(kind: Int, containmentMilli: Int, phraseStartMs: Int64, phraseEndMs: Int64,
+                                     windowStartMs: Int64, windowEndMs: Int64) -> Bool {
+        pe_is_peer_voice_v2(Int64(kind), Int64(containmentMilli), phraseStartMs, phraseEndMs, windowStartMs, windowEndMs)
+    }
+
+    // MARK: Bytes (the differential tests also pass invalid UTF-8)
+
+    static func secretNormalized(utf8: [UInt8]) -> [UInt8]? {
+        var t = PeerText(utf8)
+        var out = [UInt8](repeating: 0, count: Int(PE_SECRET_LENGTH))
+        let n = Int(pe_secret_normalized(&t.bytes, t.length, &out))
+        return n == out.count ? out : nil
+    }
+
+    /// The groups of a normalized code; nil when the bytes are not one (shown unchanged).
+    static func secretGroups(utf8: [UInt8]) -> [UInt8]? {
+        var t = PeerText(utf8)
+        var out = [UInt8](repeating: 0, count: 16)
+        let n = Int(pe_secret_display(&t.bytes, t.length, &out))
+        return n > 0 ? Array(out[0..<n]) : nil
+    }
+
+    static func secretDisplay(utf8: [UInt8]) -> [UInt8] { secretGroups(utf8: utf8) ?? utf8 }
+
+    static func containmentMilli(utf8 phrase: [UInt8], _ said: [UInt8]) -> Int {
+        var tp = PeerText(phrase)
+        var ts = PeerText(said)
+        return Int(pe_containment_milli(&tp.bytes, tp.length, &ts.bytes, ts.length))
+    }
+}
