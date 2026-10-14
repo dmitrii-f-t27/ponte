@@ -65,6 +65,14 @@ static const uint32_t VO_FX_LENGTHS[4] = { 30, 38, 37, 0 };
 #define VO_SOURCE_BEST 1
 #define VO_SOURCE_LANGUAGE 2
 #define VO_MILLI 1000.0
+#define VO_GENDER_UNSPECIFIED 0
+#define VO_GENDER_MALE 1
+#define VO_GENDER_FEMALE 2
+#define VO_GENDER_LIST_MAX 64
+#define VO_MALE_MARKS 5
+static const uint8_t VO_MALE_TEXT[31] = { 46, 70, 101, 108, 105, 112, 101, 46, 69, 100, 100, 121, 46, 82, 101, 101, 100, 46, 82, 111, 99, 107, 111, 46, 71, 114, 97, 110, 100, 112, 97 };
+static const uint32_t VO_MALE_OFFSETS[5] = { 0, 7, 12, 17, 23 };
+static const uint32_t VO_MALE_LENGTHS[5] = { 7, 5, 5, 6, 8 };
 
 /* -------------------------------------------------------
    Function prototypes
@@ -85,6 +93,9 @@ bool vo_sets_rate(bool has_rate, int64_t rate_percent);
 int64_t vo_base_rate_milli(bool has_rate, float rate);
 float vo_utterance_rate(int64_t milli);
 int64_t vo_fixture(int64_t index, uint8_t out[static 1024], int64_t at);
+int64_t vo_pick_gender(int64_t genders[static 64], int64_t count, int64_t want);
+int64_t vo_switch_gender(int64_t gender);
+int64_t vo_effective_gender(int64_t gender, uint8_t id[static 1024], int64_t len);
 
 /* -------------------------------------------------------
    Function implementations
@@ -255,9 +266,85 @@ int64_t vo_fixture(int64_t index, uint8_t out[static 1024], int64_t at) {
     return k;
 }
 
+int64_t vo_pick_gender(int64_t genders[static 64], int64_t count, int64_t want) {
+    int64_t n = count;
+    if ((n > VO_GENDER_LIST_MAX)) {
+        n = VO_GENDER_LIST_MAX;
+    }
+    int64_t i = 0;
+    while ((i < n)) {
+        if ((genders[i] == want)) {
+            return i;
+        }
+        i = (i + 1);
+    }
+    return -1;
+}
+
+int64_t vo_switch_gender(int64_t gender) {
+    if ((gender == VO_GENDER_MALE)) {
+        return VO_GENDER_MALE;
+    }
+    return VO_GENDER_FEMALE;
+}
+
+int64_t vo_effective_gender(int64_t gender, uint8_t id[static 1024], int64_t len) {
+    if (((gender == VO_GENDER_MALE) || (gender == VO_GENDER_FEMALE))) {
+        return gender;
+    }
+    int64_t n = len;
+    if ((n > VO_ID_MAX)) {
+        n = VO_ID_MAX;
+    }
+    int64_t m = 0;
+    while ((m < VO_MALE_MARKS)) {
+        int64_t ml = VO_MALE_LENGTHS[m];
+        int64_t mo = VO_MALE_OFFSETS[m];
+        if ((n >= ml)) {
+            int64_t k = 0;
+            bool same = true;
+            while ((k < ml)) {
+                if ((id[((n - ml) + k)] != VO_MALE_TEXT[(mo + k)])) {
+                    same = false;
+                }
+                k = (k + 1);
+            }
+            if (same) {
+                return VO_GENDER_MALE;
+            }
+        }
+        m = (m + 1);
+    }
+    return VO_GENDER_UNSPECIFIED;
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
+
+void test_vo_gender_switch(void) {
+    int64_t g[64] = { [0 ... (64) - 1] = 0 };
+    assert((vo_pick_gender(g, 0, VO_GENDER_MALE) == -1));
+    g[0] = VO_GENDER_FEMALE;
+    g[1] = VO_GENDER_UNSPECIFIED;
+    g[2] = VO_GENDER_MALE;
+    g[3] = VO_GENDER_MALE;
+    assert((vo_pick_gender(g, 4, VO_GENDER_MALE) == 2));
+    assert((vo_pick_gender(g, 4, VO_GENDER_FEMALE) == 0));
+    assert((vo_pick_gender(g, 2, VO_GENDER_MALE) == -1));
+    assert((vo_pick_gender(g, 1000, VO_GENDER_MALE) == 2));
+    assert((vo_pick_gender(g, -5, VO_GENDER_FEMALE) == -1));
+    assert((vo_switch_gender(VO_GENDER_MALE) == VO_GENDER_MALE));
+    assert((vo_switch_gender(VO_GENDER_FEMALE) == VO_GENDER_FEMALE));
+    assert((vo_switch_gender(VO_GENDER_UNSPECIFIED) == VO_GENDER_FEMALE));
+    assert((vo_switch_gender(7) == VO_GENDER_FEMALE));
+    uint8_t id[1024] = { [0 ... (1024) - 1] = 0 };
+    assert((vo_effective_gender(VO_GENDER_FEMALE, id, vo_fixture(VO_FX_EDDY, id, 0)) == VO_GENDER_FEMALE));
+    assert((vo_effective_gender(VO_GENDER_UNSPECIFIED, id, vo_fixture(VO_FX_EDDY, id, 0)) == VO_GENDER_MALE));
+    assert((vo_effective_gender(VO_GENDER_UNSPECIFIED, id, vo_fixture(VO_FX_LUCIANA, id, 0)) == VO_GENDER_UNSPECIFIED));
+    assert((vo_effective_gender(VO_GENDER_UNSPECIFIED, id, vo_fixture(VO_FX_EMPTY, id, 0)) == VO_GENDER_UNSPECIFIED));
+    assert((vo_effective_gender(VO_GENDER_MALE, id, vo_fixture(VO_FX_LUCIANA, id, 0)) == VO_GENDER_MALE));
+}
 
 void test_vo_rank_rules(void) {
     assert((vo_voice_rank_key(VO_QUALITY_PREMIUM, true, -1) > vo_voice_rank_key(VO_QUALITY_ENHANCED, false, 0)));
@@ -347,10 +434,11 @@ void test_vo_moved_rules(void) {
 #ifdef T27_TEST_MAIN
 #include <stdio.h>
 int main(void) {
+    test_vo_gender_switch();
     test_vo_rank_rules();
     test_vo_novelty_and_synthesis();
     test_vo_moved_rules();
-    printf("All %d tests passed.\n", 3);
+    printf("All %d tests passed.\n", 4);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

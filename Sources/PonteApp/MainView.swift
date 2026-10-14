@@ -1,5 +1,6 @@
 import AppKit
 import PonteCore
+import PonteSpeech
 import SwiftUI
 
 struct MainView: View {
@@ -297,6 +298,7 @@ private struct OutgoingColumn: View {
                 }
                 .disabled(!model.enabled(AppRules.BTN_REPLAY_OUTGOING))
                 .accessibilityHint("Повторить последнюю фразу в звонок")
+                PortugueseVoiceSwitch()
                 Spacer(minLength: 0)
             }
             Divider().padding(.horizontal, 22)
@@ -530,5 +532,27 @@ private struct OwnVoiceBar: View {
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Self.amber))
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// «Голос Ж / М»: the Portuguese voice the other side hears. Applies from the next phrase.
+private struct PortugueseVoiceSwitch: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Голос")
+                .foregroundStyle(.secondary)
+            Picker("Голос", selection: Binding(get: { model.portugueseVoiceGender },
+                                               set: { model.portugueseVoiceGender = $0 })) {
+                Text("Ж").tag(SpeechRules.genderFemale)
+                Text("М").tag(SpeechRules.genderMale)
+                    .disabled(!model.hasPortugueseVoice(SpeechRules.genderMale))
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .accessibilityHint("Женский или мужской португальский голос в звонке")
+        }
     }
 }

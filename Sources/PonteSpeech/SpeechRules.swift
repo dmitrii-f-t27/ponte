@@ -266,6 +266,34 @@ public enum SpeechRules {
         Int(vo_voice_rank_key(Int64(qualityCode), isNovelty, Int64(preferredIndex)))
     }
 
+    // MARK: - The female/male switch for the Portuguese voice
+
+    /// AVSpeechSynthesisVoiceGender raw values.
+    public static let genderUnspecified = Int(VO_GENDER_UNSPECIFIED)
+    public static let genderMale = Int(VO_GENDER_MALE)
+    public static let genderFemale = Int(VO_GENDER_FEMALE)
+
+    /// Index of the first voice of the wanted gender in `genders` (voices in rank order, best first); −1 if none.
+    public static func pickGender(genders: [Int], want: Int) -> Int {
+        var list = [Int64](repeating: 0, count: Int(VO_GENDER_LIST_MAX))
+        for (i, g) in genders.prefix(list.count).enumerated() { list[i] = Int64(g) }
+        return Int(vo_pick_gender(&list, Int64(genders.count), Int64(want)))
+    }
+
+    /// The gender the switch uses: the system's male or female, else male when the identifier ends in a
+    /// male voice name (Felipe, Eddy, Reed, Rocko, Grandpa), else unspecified.
+    public static func effectiveGender(gender: Int, identifierUTF8 id: [UInt8]) -> Int {
+        var buffer = [UInt8](repeating: 0, count: Int(VO_ID_MAX))
+        let n = min(id.count, buffer.count)
+        for i in 0..<n { buffer[i] = id[i] }
+        return Int(vo_effective_gender(Int64(gender), &buffer, Int64(n)))
+    }
+
+    /// What the switch shows for a voice of this gender: male, or female (also for unspecified).
+    public static func switchGender(_ gender: Int) -> Int {
+        Int(vo_switch_gender(Int64(gender)))
+    }
+
     // MARK: - Synthesis
 
     /// Rendering time limit for a phrase of `textBytes` UTF-8 bytes.

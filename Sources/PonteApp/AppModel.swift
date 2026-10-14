@@ -237,7 +237,33 @@ final class AppModel {
             refreshCatalogs()
         }
     }
-    var voicePT: String { didSet { defaults.set(voicePT, forKey: PrefKey.voicePT) } }
+    var voicePT: String {
+        didSet {
+            defaults.set(voicePT, forKey: PrefKey.voicePT)
+            liveSynth?.voiceIdentifiers = voiceMap   // the next phrase already speaks with the new voice
+        }
+    }
+    /// The synthesizer of the running call, so a voice change applies at once.
+    @ObservationIgnored private var liveSynth: SystemSpeechSynth?
+
+    /// The female/male switch for the Portuguese voice (voice_rules: vo_switch_gender, vo_pick_gender).
+    var portugueseVoiceGender: Int {
+        get {
+            let voices = SystemSpeechSynth.voices(for: .ptBR)
+            let id = voicePT.isEmpty ? voices.first?.id : voicePT
+            return SpeechRules.switchGender(voices.first(where: { $0.id == id })?.gender ?? SpeechRules.genderUnspecified)
+        }
+        set {
+            let voices = SystemSpeechSynth.voices(for: .ptBR)
+            let index = SpeechRules.pickGender(genders: voices.map(\.gender), want: newValue)
+            if index >= 0 { voicePT = voices[index].id }
+        }
+    }
+
+    /// Whether a Portuguese voice of this gender is installed.
+    func hasPortugueseVoice(_ gender: Int) -> Bool {
+        SpeechRules.pickGender(genders: SystemSpeechSynth.voices(for: .ptBR).map(\.gender), want: gender) >= 0
+    }
     var voiceRU: String { didSet { defaults.set(voiceRU, forKey: PrefKey.voiceRU) } }
     var speakRussian: Bool {
         didSet {
@@ -819,6 +845,7 @@ final class AppModel {
         let translator = makeTranslator()
         translatorInUse = translator.name
         let synth = SystemSpeechSynth(voiceIdentifiers: voiceMap)
+        liveSynth = synth
         let echoOutput = AppRules.echoGuardApplies(speakerOutput: speakerWarning, micIsLive: micIsLive)
         echoGuard.configure(speakerOutput: echoOutput)
         let callOutput: AudioPlayer?

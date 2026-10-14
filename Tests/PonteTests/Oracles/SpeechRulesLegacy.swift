@@ -422,6 +422,24 @@ enum SpeechRulesLegacy {
         return qualityCode * 10_000 + (isNovelty ? 0 : 1_000) + preferred
     }
 
+    /// The female/male switch (voice_rules: vo_pick_gender, vo_switch_gender).
+    static func pickGender(genders: [Int], want: Int) -> Int {
+        let n = min(genders.count, 64)
+        for i in 0..<max(n, 0) where genders[i] == want { return i }
+        return -1
+    }
+
+    static func switchGender(_ gender: Int) -> Int { gender == 1 ? 1 : 2 }
+
+    static func effectiveGender(gender: Int, identifierUTF8 id: [UInt8]) -> Int {
+        if gender == 1 || gender == 2 { return gender }
+        let n = Array(id.prefix(1024))
+        for mark in [".Felipe", ".Eddy", ".Reed", ".Rocko", ".Grandpa"] where n.count >= mark.utf8.count {
+            if Array(n.suffix(mark.utf8.count)) == Array(mark.utf8) { return 1 }
+        }
+        return 0
+    }
+
     // MARK: - Synthesis
 
     /// Rendering time limit for a phrase of `textBytes` UTF-8 bytes (a safety net: the synthesizer

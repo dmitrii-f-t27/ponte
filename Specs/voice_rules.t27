@@ -230,6 +230,88 @@ pub fn vo_fixture(index: i64, out: [1024]u8, at: i64) -> i64 {
     return k;
 }
 
+; --- The female/male switch for the Portuguese voice (owner 2026-10-13) ---------------------------------------
+; Gender codes are AVSpeechSynthesisVoiceGender's raw values.
+pub const VO_GENDER_UNSPECIFIED : i64 = 0;
+pub const VO_GENDER_MALE : i64 = 1;
+pub const VO_GENDER_FEMALE : i64 = 2;
+pub const VO_GENDER_LIST_MAX : i64 = 64;
+
+; vo_pick_gender: the voice the switch picks. `genders` holds the installed voices' genders in rank order
+; (best first); the first voice of the wanted gender wins. -1 when there is none.
+pub fn vo_pick_gender(genders: [64]i64, count: i64, want: i64) -> i64 {
+    var n: i64 = count;
+    if (n > VO_GENDER_LIST_MAX) { n = VO_GENDER_LIST_MAX; }
+    var i: i64 = 0;
+    while (i < n) {
+        if (genders[i] == want) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+; vo_switch_gender: what the switch shows for the voice in use. Only a male voice shows "male"; a female or
+; unspecified one shows "female" (the default voice, Luciana, is female).
+pub fn vo_switch_gender(gender: i64) -> i64 {
+    if (gender == VO_GENDER_MALE) { return VO_GENDER_MALE; }
+    return VO_GENDER_FEMALE;
+}
+
+; Brazilian voices that are male although the system reports no gender: their identifiers end with these
+; names (Felipe, and the Eloquence voices Eddy, Reed, Rocko, Grandpa).
+pub const VO_MALE_MARKS : i64 = 5;
+pub const VO_MALE_TEXT : [31]u8 = [46, 70, 101, 108, 105, 112, 101, 46, 69, 100, 100, 121, 46, 82, 101, 101, 100, 46, 82, 111, 99, 107, 111, 46, 71, 114, 97, 110, 100, 112, 97];
+pub const VO_MALE_OFFSETS : [5]u32 = [0, 7, 12, 17, 23];
+pub const VO_MALE_LENGTHS : [5]u32 = [7, 5, 5, 6, 8];
+
+; vo_effective_gender: the gender the switch uses. The system's male or female wins; for an unspecified
+; gender, an identifier ending in a male name counts as male; otherwise unspecified.
+pub fn vo_effective_gender(gender: i64, id: [1024]u8, len: i64) -> i64 {
+    if (gender == VO_GENDER_MALE or gender == VO_GENDER_FEMALE) { return gender; }
+    var n: i64 = len;
+    if (n > VO_ID_MAX) { n = VO_ID_MAX; }
+    var m: i64 = 0;
+    while (m < VO_MALE_MARKS) {
+        var ml: i64 = VO_MALE_LENGTHS[m];
+        var mo: i64 = VO_MALE_OFFSETS[m];
+        if (n >= ml) {
+            var k: i64 = 0;
+            var same: bool = true;
+            while (k < ml) {
+                if (id[n - ml + k] != VO_MALE_TEXT[mo + k]) { same = false; }
+                k = k + 1;
+            }
+            if (same) { return VO_GENDER_MALE; }
+        }
+        m = m + 1;
+    }
+    return VO_GENDER_UNSPECIFIED;
+}
+
+test vo_gender_switch {
+    var g: [64]i64 = [0; 64];
+    assert vo_pick_gender(g, 0, VO_GENDER_MALE) == -1;
+    g[0] = VO_GENDER_FEMALE;
+    g[1] = VO_GENDER_UNSPECIFIED;
+    g[2] = VO_GENDER_MALE;
+    g[3] = VO_GENDER_MALE;
+    assert vo_pick_gender(g, 4, VO_GENDER_MALE) == 2;
+    assert vo_pick_gender(g, 4, VO_GENDER_FEMALE) == 0;
+    assert vo_pick_gender(g, 2, VO_GENDER_MALE) == -1;
+    assert vo_pick_gender(g, 1000, VO_GENDER_MALE) == 2;
+    assert vo_pick_gender(g, -5, VO_GENDER_FEMALE) == -1;
+    assert vo_switch_gender(VO_GENDER_MALE) == VO_GENDER_MALE;
+    assert vo_switch_gender(VO_GENDER_FEMALE) == VO_GENDER_FEMALE;
+    assert vo_switch_gender(VO_GENDER_UNSPECIFIED) == VO_GENDER_FEMALE;
+    assert vo_switch_gender(7) == VO_GENDER_FEMALE;
+    var id: [1024]u8 = [0; 1024];
+    assert vo_effective_gender(VO_GENDER_FEMALE, id, vo_fixture(VO_FX_EDDY, id, 0)) == VO_GENDER_FEMALE;
+    assert vo_effective_gender(VO_GENDER_UNSPECIFIED, id, vo_fixture(VO_FX_EDDY, id, 0)) == VO_GENDER_MALE;
+    assert vo_effective_gender(VO_GENDER_UNSPECIFIED, id, vo_fixture(VO_FX_LUCIANA, id, 0)) == VO_GENDER_UNSPECIFIED;
+    assert vo_effective_gender(VO_GENDER_UNSPECIFIED, id, vo_fixture(VO_FX_EMPTY, id, 0)) == VO_GENDER_UNSPECIFIED;
+    assert vo_effective_gender(VO_GENDER_MALE, id, vo_fixture(VO_FX_LUCIANA, id, 0)) == VO_GENDER_MALE;
+}
+
 test vo_rank_rules {
     // rankKey
     assert vo_voice_rank_key(VO_QUALITY_PREMIUM, true, -1) > vo_voice_rank_key(VO_QUALITY_ENHANCED, false, 0);

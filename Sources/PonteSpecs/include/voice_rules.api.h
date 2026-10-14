@@ -61,6 +61,14 @@ static const uint32_t VO_FX_LENGTHS[4] = { 30, 38, 37, 0 };
 #define VO_SOURCE_BEST 1
 #define VO_SOURCE_LANGUAGE 2
 #define VO_MILLI 1000.0
+#define VO_GENDER_UNSPECIFIED 0
+#define VO_GENDER_MALE 1
+#define VO_GENDER_FEMALE 2
+#define VO_GENDER_LIST_MAX 64
+#define VO_MALE_MARKS 5
+static const uint8_t VO_MALE_TEXT[31] = { 46, 70, 101, 108, 105, 112, 101, 46, 69, 100, 100, 121, 46, 82, 101, 101, 100, 46, 82, 111, 99, 107, 111, 46, 71, 114, 97, 110, 100, 112, 97 };
+static const uint32_t VO_MALE_OFFSETS[5] = { 0, 7, 12, 17, 23 };
+static const uint32_t VO_MALE_LENGTHS[5] = { 7, 5, 5, 6, 8 };
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -79,5 +87,8 @@ bool vo_sets_rate(bool has_rate, int64_t rate_percent);
 int64_t vo_base_rate_milli(bool has_rate, float rate);
 float vo_utterance_rate(int64_t milli);
 int64_t vo_fixture(int64_t index, uint8_t out[static 1024], int64_t at);
+int64_t vo_pick_gender(int64_t genders[static 64], int64_t count, int64_t want);
+int64_t vo_switch_gender(int64_t gender);
+int64_t vo_effective_gender(int64_t gender, uint8_t id[static 1024], int64_t len);
 /* Function bodies: see the full header. */
 #endif

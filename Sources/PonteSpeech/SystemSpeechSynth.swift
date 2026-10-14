@@ -24,12 +24,15 @@ public struct SpeechVoice: Hashable, Identifiable, Sendable {
     public let name: String
     public let quality: Quality
     public let language: String    // BCP-47, e.g. "pt-BR"
+    /// AVSpeechSynthesisVoiceGender raw value (SpeechRules.gender*).
+    public let gender: Int
 
-    public init(id: String, name: String, quality: Quality, language: String) {
+    public init(id: String, name: String, quality: Quality, language: String, gender: Int = SpeechRules.genderUnspecified) {
         self.id = id
         self.name = name
         self.quality = quality
         self.language = language
+        self.gender = gender
     }
 
     /// Novelty voices (Eddy, Flo, Reed…: `com.apple.eloquence.*`) rank lower (`SpeechRules.isNoveltyVoice`).
@@ -78,7 +81,8 @@ public final class SystemSpeechSynth: SpeechSynth, @unchecked Sendable {
         let voices = AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language.lowercased().replacingOccurrences(of: "_", with: "-") == code }
             .map { v in
-                SpeechVoice(id: v.identifier, name: v.name, quality: Self.quality(v.quality), language: v.language)
+                SpeechVoice(id: v.identifier, name: v.name, quality: Self.quality(v.quality), language: v.language,
+                            gender: SpeechRules.effectiveGender(gender: v.gender.rawValue, identifierUTF8: Array(v.identifier.utf8)))
             }
         return VoiceRanking.rank(voices, preferredNames: VoiceRanking.preferredNames(for: lang))
     }
