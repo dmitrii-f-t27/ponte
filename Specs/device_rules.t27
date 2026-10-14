@@ -965,6 +965,36 @@ pub fn dv_is_hear_output(kind: i64, output_channels: i64, selectable: bool) -> b
     return selectable and dv_usable(kind, output_channels);
 }
 
+; --- The owner's ears are never the call's microphone (owner 2026-10-14) ---------------------------------------------
+; Live 2026-10-14: the AirPods dropped for a moment and macOS made BlackHole 2ch the system output. Ponte's Russian voice,
+; played to the system output, went into Meet's microphone: the other side heard Russian and the owner heard nothing.
+; An output the owner hears must never be the call's virtual mic or Ponte's tap. While Ponte is open, such a system
+; output is moved at once to the owner's ears, and a player that follows the system output plays to them instead.
+pub fn dv_output_needs_rescue(kind: i64) -> bool {
+    return dv_is_excluded_for_monitoring(kind);
+}
+
+; The owner's ears instead: the first selectable output in DV_LISTEN_PRIORITY order (headphone jack, Bluetooth, USB,
+; built-in speaker), else the first selectable usable output; -1 if none.
+pub fn dv_pick_rescue_output_index(kinds: [256]i64, output_channels: [256]i64, selectable: [256]i64, count: i64) -> i64 {
+    var n: i64 = dv_list_count(count);
+    var p: i64 = 0;
+    while (p < 4) {
+        var i: i64 = 0;
+        while (i < n) {
+            if (dv_usable(kinds[i], output_channels[i]) and selectable[i] != 0 and kinds[i] == DV_LISTEN_PRIORITY[p]) { return i; }
+            i = i + 1;
+        }
+        p = p + 1;
+    }
+    var j: i64 = 0;
+    while (j < n) {
+        if (dv_usable(kinds[j], output_channels[j]) and selectable[j] != 0) { return j; }
+        j = j + 1;
+    }
+    return -1;
+}
+
 ; Never Ponte's microphone: BlackHole, Ponte's tap, an iPhone (Continuity).
 pub fn dv_auto_mic_allowed(kind: i64, channels: i64) -> bool {
     return channels > 0 and dv_is_excluded_for_monitoring(kind) == false and kind != DV_KIND_CONTINUITY;
@@ -1624,4 +1654,32 @@ test dv_hear_menu {
     assert dv_is_hear_output(DV_KIND_PONTE_AGGREGATE, 2, true) == false;
     assert dv_is_hear_output(DV_KIND_DISPLAY, 2, true) == true;
     assert dv_is_hear_output(DV_KIND_BUILT_IN_MIC, 0, true) == false;
+}
+
+test dv_rescue_output {
+    var kinds: [256]i64 = [0; 256];
+    var outs: [256]i64 = [0; 256];
+    var sel: [256]i64 = [1; 256];
+    // This Mac on 2026-10-14: AirPods (Bluetooth), BlackHole (the system output), the MacBook speakers.
+    kinds[0] = DV_KIND_BLUETOOTH;
+    kinds[1] = DV_KIND_BLACKHOLE;
+    kinds[2] = DV_KIND_BUILT_IN_SPEAKER;
+    outs[0] = 2;
+    outs[1] = 2;
+    outs[2] = 2;
+    assert dv_output_needs_rescue(DV_KIND_BLACKHOLE) == true;
+    assert dv_output_needs_rescue(DV_KIND_PONTE_AGGREGATE) == true;
+    assert dv_output_needs_rescue(DV_KIND_BLUETOOTH) == false;
+    assert dv_output_needs_rescue(DV_KIND_BUILT_IN_SPEAKER) == false;
+    assert dv_pick_rescue_output_index(kinds, outs, sel, 3) == 0;
+    // The AirPods dropped (hidden): the MacBook speakers.
+    sel[0] = 0;
+    assert dv_pick_rescue_output_index(kinds, outs, sel, 3) == 2;
+    // Only BlackHole left: nothing to move to.
+    outs[2] = 0;
+    assert dv_pick_rescue_output_index(kinds, outs, sel, 3) == -1;
+    // A display (not in the priority list) is still better than BlackHole.
+    kinds[2] = DV_KIND_DISPLAY;
+    outs[2] = 2;
+    assert dv_pick_rescue_output_index(kinds, outs, sel, 3) == 2;
 }

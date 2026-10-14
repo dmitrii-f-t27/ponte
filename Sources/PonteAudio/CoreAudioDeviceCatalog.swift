@@ -74,6 +74,29 @@ public final class CoreAudioDeviceCatalog: AudioDeviceCatalog {
         return hidden == 0 && canDefault != 0
     }
 
+    /// The owner's ears when the system output is the call's virtual mic or Ponte's tap (AudioRules.pickRescueOutputIndex).
+    public func rescueOutput() -> AudioDevice? {
+        let all = devices()
+        let i = AudioRules.pickRescueOutputIndex(kinds: all.map(kind(of:)), outputChannels: all.map(\.outputChannels),
+                                                 selectable: all.map(isSelectableOutput))
+        return i >= 0 ? all[i] : nil
+    }
+
+    /// Calls `handler` on the main queue whenever the Mac's system output changes. Keep the returned token;
+    /// pass it to `stopObserving` to stop.
+    public func observeDefaultOutput(_ handler: @escaping () -> Void) -> AnyObject? {
+        var addr = HAL.address(kAudioHardwarePropertyDefaultOutputDevice)
+        let block: AudioObjectPropertyListenerBlock = { _, _ in handler() }
+        guard AudioObjectAddPropertyListenerBlock(HAL.system, &addr, DispatchQueue.main, block) == noErr else { return nil }
+        return block as AnyObject
+    }
+
+    public func stopObserving(_ token: AnyObject) {
+        guard let block = token as? AudioObjectPropertyListenerBlock else { return }
+        var addr = HAL.address(kAudioHardwarePropertyDefaultOutputDevice)
+        AudioObjectRemovePropertyListenerBlock(HAL.system, &addr, DispatchQueue.main, block)
+    }
+
     /// Makes the device the Mac's system output, as the Sound menu does: Ponte's Russian voice and the call app follow it.
     public func setDefaultOutput(_ device: AudioDevice) throws {
         try HAL.set(HAL.system, HAL.address(kAudioHardwarePropertyDefaultOutputDevice), AudioObjectID(device.id))

@@ -835,6 +835,17 @@ public enum AudioRules {
     /// Headphones or a headset: the headphone jack, Bluetooth, USB.
     public static func isHeadphonesLike(kind: Int) -> Bool { dv_is_headphones_like(Int64(kind)) }
 
+    /// An output the owner hears must never be the call's virtual mic or Ponte's tap (owner 2026-10-14).
+    public static func outputNeedsRescue(kind: Int) -> Bool { dv_output_needs_rescue(Int64(kind)) }
+
+    /// The owner's ears instead of such an output: headphones, Bluetooth, USB, the speakers, else any selectable one.
+    public static func pickRescueOutputIndex(kinds: [Int], outputChannels: [Int], selectable: [Bool]) -> Int {
+        var k = DeviceText.list(kinds)
+        var outputs = DeviceText.list(outputChannels)
+        var s = DeviceText.list(selectable.map { $0 ? 1 : 0 })
+        return Int(dv_pick_rescue_output_index(&k, &outputs, &s, DeviceText.listCount(kinds.count)))
+    }
+
     /// «Звук Meet»: an output the owner can pick to hear the call and the Russian voice. `selectable`: macOS lets
     /// it become the system output (CoreAudioDeviceCatalog.isSelectableOutput).
     public static func isHearOutput(kind: Int, outputChannels: Int, selectable: Bool) -> Bool {

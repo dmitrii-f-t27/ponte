@@ -438,6 +438,12 @@ final class AppModel {
         ptt.key = pttKey
         refreshCatalogs()
         if showChecklist { refreshListener() }
+        defaultOutputObserver = deviceCatalog.observeDefaultOutput { [weak self] in
+            MainActor.assumeIsolated {
+                self?.rescueSystemOutput()
+                self?.refreshDevices()
+            }
+        }
     }
 
     /// Called when the main window appears (windows can be created). Runs once.
@@ -669,8 +675,26 @@ final class AppModel {
         audioApps = appCatalog.apps()
     }
 
+    /// Watches the Mac's system output (set up once in `init`).
+    @ObservationIgnored private var defaultOutputObserver: AnyObject?
+
+    /// The owner's ears are never the call's microphone (device_rules: dv_output_needs_rescue, owner 2026-10-14):
+    /// when the system output becomes BlackHole or Ponte's tap, it moves at once to the headphones or the speakers.
+    private func rescueSystemOutput() {
+        guard let output = deviceCatalog.defaultOutput(),
+              AudioRules.outputNeedsRescue(kind: deviceCatalog.kind(of: output)),
+              let ears = deviceCatalog.rescueOutput() else { return }
+        do {
+            try deviceCatalog.setDefaultOutput(ears)
+            PonteDiagnostics.log("system output was \(output.name) (the call microphone): moved to \(ears.name)")
+        } catch {
+            PonteDiagnostics.log("system output was \(output.name): moving to \(ears.name) FAILED \(error.localizedDescription)")
+        }
+    }
+
     /// Devices, the default output, the call output, the headphone warning and the automatic microphone.
     private func refreshDevices() {
+        rescueSystemOutput()
         let listed = deviceCatalog.devices()
         if listed != devices { devices = listed }
         let output = deviceCatalog.defaultOutput()

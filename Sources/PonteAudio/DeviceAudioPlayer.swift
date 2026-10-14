@@ -478,6 +478,22 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
         let raised = PonteCatchObjC {
             do {
                 engine.attach(player)
+                if self.device == nil, let au = engine.outputNode.audioUnit {
+                    // Following the system output, but never into the call's microphone (owner 2026-10-14): when the
+                    // system output is BlackHole or Ponte's tap, play to the owner's ears (dv_output_needs_rescue).
+                    let catalog = CoreAudioDeviceCatalog()
+                    var current = AudioDeviceID(0)
+                    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+                    if AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size) == noErr,
+                       let on = catalog.devices().first(where: { $0.id == current }),
+                       AudioRules.outputNeedsRescue(kind: catalog.kind(of: on)), let ears = catalog.rescueOutput() {
+                        PonteDiagnostics.log("player \(self.name): the system output is \(on.name); playing to \(ears.name)")
+                        var id = ears.id
+                        try HAL.check(AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                                           &id, UInt32(MemoryLayout<AudioDeviceID>.size)),
+                                      "set output device \(ears.name)")
+                    }
+                }
                 if let device = self.device {
                     guard let live = CoreAudioDeviceCatalog().device(uid: device.uid), live.outputChannels > 0 else {
                         throw PonteAudioError.deviceNotFound(device.name)

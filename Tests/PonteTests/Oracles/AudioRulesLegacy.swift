@@ -773,6 +773,16 @@ extension AudioRulesLegacy {
     }
 
     static func isHeadphonesLike(kind: Int) -> Bool { [kindBuiltInHeadphones, kindBluetooth, kindUSB].contains(kind) }
+    /// Never the call's virtual mic or Ponte's tap.
+    static func outputNeedsRescue(kind: Int) -> Bool { kind == kindBlackHole || kind == kindPonteAggregate }
+    static func pickRescueOutputIndex(kinds: [Int], outputChannels: [Int], selectable: [Bool]) -> Int {
+        func usable(_ i: Int) -> Bool { outputChannels[i] > 0 && !outputNeedsRescue(kind: kinds[i]) && selectable[i] }
+        for kind in [kindBuiltInHeadphones, kindBluetooth, kindUSB, kindBuiltInSpeaker] {
+            if let i = kinds.indices.first(where: { kinds[$0] == kind && usable($0) }) { return i }
+        }
+        return kinds.indices.first(where: usable) ?? -1
+    }
+
     /// «Звук Meet»: a selectable output with channels, never BlackHole or Ponte's tap.
     static func isHearOutput(kind: Int, outputChannels: Int, selectable: Bool) -> Bool {
         selectable && outputChannels > 0 && kind != kindBlackHole && kind != kindPonteAggregate

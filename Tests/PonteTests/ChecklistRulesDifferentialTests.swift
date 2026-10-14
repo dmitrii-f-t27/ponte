@@ -80,6 +80,7 @@ private typealias PL = AppRulesLegacy
         for kind in -5...20 {
             log.check(AF.isRealMicKind(kind), AL.isRealMicKind(kind), "\(kind)")
             log.check(AF.isHeadphonesLike(kind: kind), AL.isHeadphonesLike(kind: kind), "\(kind)")
+            log.check(AF.outputNeedsRescue(kind: kind), AL.outputNeedsRescue(kind: kind), "rescue \(kind)")
             for channels in [0, 2] {
                 for selectable in [false, true] {
                     log.check(AF.isHearOutput(kind: kind, outputChannels: channels, selectable: selectable),
@@ -215,5 +216,22 @@ private typealias PL = AppRulesLegacy
                       describe(run, mark, ms, open, dismissed))
         }
         log.finish(minimumCases: 200_000)
+    }
+
+    @Test func rescueOutputPicks() {
+        let log = DiffLog("pickRescueOutputIndex")
+        let pool = [AF.kindBuiltInSpeaker, AF.kindBuiltInHeadphones, AF.kindBluetooth, AF.kindUSB, AF.kindBlackHole,
+                    AF.kindDisplay, AF.kindAirPlay, AF.kindAggregate, AF.kindPonteAggregate, AF.kindUnknown]
+        var r = DiffRandom(seed: 1014)
+        for _ in 0..<5000 {
+            let n = r.int(0...7)
+            let kinds = (0..<n).map { _ in pool[r.int(0...(pool.count - 1))] }
+            let outputs = (0..<n).map { _ in r.int(0...3) == 0 ? 0 : 2 }
+            let selectable = (0..<n).map { _ in r.int(0...4) != 0 }
+            log.check(AF.pickRescueOutputIndex(kinds: kinds, outputChannels: outputs, selectable: selectable),
+                      AL.pickRescueOutputIndex(kinds: kinds, outputChannels: outputs, selectable: selectable),
+                      "\(kinds) \(outputs) \(selectable)")
+        }
+        log.finish(minimumCases: 5000)
     }
 }

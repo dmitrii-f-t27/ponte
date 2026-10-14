@@ -268,6 +268,8 @@ int64_t dv_first_use(int64_t uses[static 256], int64_t count, int64_t wanted);
 int64_t dv_listen_index(int64_t uses[static 256], int64_t count);
 bool dv_is_headphones_like(int64_t kind);
 bool dv_is_hear_output(int64_t kind, int64_t output_channels, bool selectable);
+bool dv_output_needs_rescue(int64_t kind);
+int64_t dv_pick_rescue_output_index(int64_t kinds[static 256], int64_t output_channels[static 256], int64_t selectable[static 256], int64_t count);
 bool dv_auto_mic_allowed(int64_t kind, int64_t channels);
 bool dv_headset_mic_matches(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t i, int64_t output);
 int64_t dv_pick_auto_mic_index(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t input_channels[static 256], int64_t count, int64_t output_index);
@@ -987,6 +989,33 @@ bool dv_is_hear_output(int64_t kind, int64_t output_channels, bool selectable) {
     return (selectable && dv_usable(kind, output_channels));
 }
 
+bool dv_output_needs_rescue(int64_t kind) {
+    return dv_is_excluded_for_monitoring(kind);
+}
+
+int64_t dv_pick_rescue_output_index(int64_t kinds[static 256], int64_t output_channels[static 256], int64_t selectable[static 256], int64_t count) {
+    int64_t n = dv_list_count(count);
+    int64_t p = 0;
+    while ((p < 4)) {
+        int64_t i = 0;
+        while ((i < n)) {
+            if (((dv_usable(kinds[i], output_channels[i]) && (selectable[i] != 0)) && (kinds[i] == DV_LISTEN_PRIORITY[p]))) {
+                return i;
+            }
+            i = (i + 1);
+        }
+        p = (p + 1);
+    }
+    int64_t j = 0;
+    while ((j < n)) {
+        if ((dv_usable(kinds[j], output_channels[j]) && (selectable[j] != 0))) {
+            return j;
+        }
+        j = (j + 1);
+    }
+    return -1;
+}
+
 bool dv_auto_mic_allowed(int64_t kind, int64_t channels) {
     return (((channels > 0) && (dv_is_excluded_for_monitoring(kind) == false)) && (kind != DV_KIND_CONTINUITY));
 }
@@ -1647,6 +1676,30 @@ void test_dv_hear_menu(void) {
     assert((dv_is_hear_output(DV_KIND_BUILT_IN_MIC, 0, true) == false));
 }
 
+void test_dv_rescue_output(void) {
+    int64_t kinds[256] = { [0 ... (256) - 1] = 0 };
+    int64_t outs[256] = { [0 ... (256) - 1] = 0 };
+    int64_t sel[256] = { [0 ... (256) - 1] = 1 };
+    kinds[0] = DV_KIND_BLUETOOTH;
+    kinds[1] = DV_KIND_BLACKHOLE;
+    kinds[2] = DV_KIND_BUILT_IN_SPEAKER;
+    outs[0] = 2;
+    outs[1] = 2;
+    outs[2] = 2;
+    assert((dv_output_needs_rescue(DV_KIND_BLACKHOLE) == true));
+    assert((dv_output_needs_rescue(DV_KIND_PONTE_AGGREGATE) == true));
+    assert((dv_output_needs_rescue(DV_KIND_BLUETOOTH) == false));
+    assert((dv_output_needs_rescue(DV_KIND_BUILT_IN_SPEAKER) == false));
+    assert((dv_pick_rescue_output_index(kinds, outs, sel, 3) == 0));
+    sel[0] = 0;
+    assert((dv_pick_rescue_output_index(kinds, outs, sel, 3) == 2));
+    outs[2] = 0;
+    assert((dv_pick_rescue_output_index(kinds, outs, sel, 3) == -1));
+    kinds[2] = DV_KIND_DISPLAY;
+    outs[2] = 2;
+    assert((dv_pick_rescue_output_index(kinds, outs, sel, 3) == 2));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1664,7 +1717,8 @@ int main(void) {
     test_dv_checklist_readers();
     test_dv_auto_mic();
     test_dv_hear_menu();
-    printf("All %d tests passed.\n", 9);
+    test_dv_rescue_output();
+    printf("All %d tests passed.\n", 10);
     return 0;
 }
 #endif /* T27_TEST_MAIN */
