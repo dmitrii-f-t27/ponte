@@ -204,6 +204,8 @@ final class AppModel {
     @ObservationIgnored private var terminationSignal: DispatchSourceSignal?
     @ObservationIgnored private var silenceWarning = SilenceWarning()
     @ObservationIgnored private var listenerWarning = ListenerWarning()
+    /// The call analysis (CallAnalysisModel.swift): notes during a call, the report after it.
+    let analysis = CallAnalysisModel()
 
     // MARK: Catalog snapshots
 
@@ -1025,6 +1027,7 @@ final class AppModel {
         }
 
         runState = RunState(code: AppRules.runStateAfterStart(lanesStarted: lanesStarted))
+        analysis.callStarted(self)
         if !isRunning {
             callStartedAt = nil
             incomingTap = nil
@@ -1091,6 +1094,7 @@ final class AppModel {
         runState = .idle
         pollAudioStats()
         if AppRules.autosaveOnStop(lines: Int32(lines.count)) { saveTranscript() }
+        analysis.callStopped(self)
     }
 
     /// Stops cleanly before the app quits (and saves the transcript).

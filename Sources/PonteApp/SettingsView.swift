@@ -14,6 +14,8 @@ struct SettingsView: View {
                 .tabItem { Label("Перевод", systemImage: "character.bubble") }
             GlossarySettings()
                 .tabItem { Label("Глоссарий", systemImage: "text.book.closed") }
+            AnalysisSettingsView()
+                .tabItem { Label("Анализ звонка", systemImage: "doc.text.magnifyingglass") }
         }
         .frame(width: 600, height: 470)
     }

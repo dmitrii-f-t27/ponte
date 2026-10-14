@@ -1,5 +1,6 @@
 // Decisions written in t27 (Specs/*.t27), compiled to C by t27c. Rewritten by Specs/generate.sh.
 #pragma once
+#include "analysis_rules.api.h"
 #include "audio_rules.api.h"
 #include "context_rules.api.h"
 #include "device_rules.api.h"

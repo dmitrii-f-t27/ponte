@@ -7,6 +7,8 @@ A live speech translator between Brazilian Portuguese and Russian for calls in a
 
 Recognition, translation and speech run on the device: SpeechAnalyzer, the Translation framework and AVSpeechSynthesizer. Claude (`claude-haiku-5-5`) is an optional translator. It is used only when its key is in the macOS Keychain under the item `ponte-anthropic-key`.
 
+The call analysis is optional too. In Settings → «Анализ звонка» you pick a chat service (Z.ai GLM, DeepSeek, or any OpenAI-compatible one), paste its API key (kept only in the Keychain as `ponte-analysis-<id>`) and check it. During a call an agent sends the new lines (who spoke, original and translation) to that service about every two minutes and keeps notes. After «Стоп», or from the toolbar button «Отчёт по звонку», it writes a report: summary, participants, important data, agreements, tasks, open questions, risks and next steps. «Сохранить в TXT» writes the report and the whole transcript to `~/Documents/Ponte/Ponte-report-YYYY-MM-DD-HHmm.txt`. Nothing is sent until a key is saved.
+
 ## Written in t27
 
 Every decision Ponte makes is written in [t27](https://github.com/gHashTag/t27), the spec language of the Trinity stack, and compiled to C by `t27c`. Swift collects facts (audio levels, device lists, recognizer results, what you clicked), asks a spec, and carries out the answer. The `Specs/` folder holds these specs:
@@ -21,6 +23,7 @@ Every decision Ponte makes is written in [t27](https://github.com/gHashTag/t27),
 | `lane_rules.t27` | the mic gate and phrase pipeline state machines, push-to-talk, echo guard, speaking rate, replay |
 | `ui_rules.t27` | buttons, status lights, latency colours, setup wizard, overlay |
 | `transcript_rules.t27` | transcript file names, Markdown escaping |
+| `analysis_rules.t27` | the call analysis agent: providers and defaults, endpoint, when notes update, request chunks, error classes, retries and backoff, the report and its TXT file name |
 
 The generated C is committed in `Sources/PonteSpecs`, so building the app does not need `t27c`. To regenerate the C and run every spec's own tests:
 
