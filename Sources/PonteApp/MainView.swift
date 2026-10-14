@@ -168,7 +168,7 @@ private struct StartStopButton: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .keyboardShortcut(.return, modifiers: .command)
+            .keyboardShortcut(model.commandReturnShortcut(TextRules.CMDRET_RUN))
         case .running:
             Button { model.toggleRun() } label: {
                 Label("Стоп", systemImage: "stop.fill").frame(minWidth: 84)
@@ -176,7 +176,7 @@ private struct StartStopButton: View {
             .buttonStyle(.borderedProminent)
             .tint(.red)
             .controlSize(.large)
-            .keyboardShortcut(.return, modifiers: .command)
+            .keyboardShortcut(model.commandReturnShortcut(TextRules.CMDRET_RUN))
         case .starting, .stopping:
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
@@ -305,7 +305,8 @@ private struct OutgoingColumn: View {
                            emptyTitle: "Здесь будет ваш перевод",
                            emptyText: model.outgoingMode == .pushToTalk
                                ? "Держите \(model.pttKey.short) и говорите по-русски — собеседники услышат португальский."
-                               : "Говорите по-русски — собеседники услышат португальский.")
+                               : "Говорите по-русски — собеседники услышат португальский.",
+                           marker: { model.lineMarker($0) })
             OutgoingFooter()
         }
     }
@@ -353,6 +354,7 @@ private struct OutgoingFooter: View {
                 .fixedSize()
                 .accessibilityHint("Не слушать микрофон и не говорить в звонок (⇧⌘P)")
             }
+            TextComposer()
             if model.ownVoice {
                 OwnVoiceBar()
             } else if model.outgoingMode == .pushToTalk {
@@ -363,6 +365,83 @@ private struct OutgoingFooter: View {
         .padding(.horizontal, 22)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// «Сказать»: Russian text typed or pasted here is translated and said into the call like a spoken phrase,
+/// without the talk key (TextRules, TranslationLane.speakText). ↩ types a new line, ⌘↩ says the text.
+private struct TextComposer: View {
+    @Environment(AppModel.self) private var model
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let check = model.textCheck(draft)
+        let note = TextRules.fieldNote(check: check, bytes: TextRules.trimmedUTF8(draft).count, paused: model.voicePaused)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .bottom, spacing: 8) {
+                TextEditor(text: $draft)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .focused($focused)
+                    .frame(height: 54)
+                    .overlay(alignment: .topLeading) {
+                        if draft.isEmpty {
+                            Text("Вставьте или напишите текст по-русски — Ponte переведёт и скажет его в звонок")
+                                .font(.body)
+                                .foregroundStyle(.tertiary)
+                                .padding(.leading, 5)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 5)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.04)))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(focused ? Color.green.opacity(0.7) : Color.primary.opacity(0.15)))
+                    .accessibilityLabel("Текст для звонка")
+                Button(action: send) {
+                    Label("Сказать", systemImage: "paperplane.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+                .controlSize(.large)
+                .disabled(!TextRules.sayEnabled(check: check))
+                .keyboardShortcut(model.commandReturnShortcut(TextRules.CMDRET_SAY))
+                .help("⌘↩ — сказать, ↩ — новая строка")
+                .accessibilityHint("Перевести текст и сказать его в звонок (⌘↩)")
+            }
+            if let text = noteText(note) {
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(note == TextRules.NOTE_TOO_LONG ? Color.orange : Color.secondary)
+            }
+        }
+        .onChange(of: focused) { model.textFieldFocused = focused }
+    }
+
+    private func send() {
+        if model.sayText(draft) == TextRules.SUBMIT_OK { draft = "" }
+        focused = true
+    }
+
+    private func noteText(_ note: Int32) -> String? {
+        switch note {
+        case TextRules.NOTE_TOO_LONG:
+            "Слишком длинный текст (\(draft.count) знаков): за раз — до \(TextRules.MAX_BYTES / 2) русских букв. Отправьте его частями."
+        case TextRules.NOTE_NEEDS_START: "Нажмите «Старт» — тогда Ponte скажет этот текст в звонок."
+        case TextRules.NOTE_NO_LANE: "Канал «Я → по-португальски» не запустился — сказать текст нельзя."
+        case TextRules.NOTE_PAUSED: "Пауза голоса: перевод появится здесь, но в звонок не прозвучит."
+        default: nil
+        }
+    }
+}
+
+extension AppModel {
+    /// ⌘↩ belongs to «Старт»/«Стоп» or to «Сказать» (TextRules.commandReturn): the shortcut for `target`, or nil.
+    func commandReturnShortcut(_ target: Int32) -> KeyboardShortcut? {
+        TextRules.commandReturn(fieldFocused: textFieldFocused, running: isRunning) == target
+            ? KeyboardShortcut(.return, modifiers: .command) : nil
     }
 }
 

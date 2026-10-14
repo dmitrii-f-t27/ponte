@@ -130,6 +130,8 @@ struct LineRow: View {
     let line: ConversationLine
     let isNewest: Bool
     let fontSize: Double
+    /// TextRules.MARK_*: a typed line gets a small keyboard next to its time.
+    var marker: Int32 = TextRules.MARK_NONE
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -157,6 +159,11 @@ struct LineRow: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 4) {
+                if marker == TextRules.MARK_KEYBOARD {
+                    Image(systemName: "keyboard")
+                        .accessibilityLabel("Напечатано")
+                        .help("Напечатано, а не сказано голосом")
+                }
                 Text(line.at, format: .dateTime.hour().minute().second())
                 if let latency = line.latency {
                     Text("· \(secondsText(latency))")
@@ -179,13 +186,15 @@ struct TranscriptList: View {
     let emptyIcon: String
     let emptyTitle: String
     let emptyText: String
+    /// TextRules.MARK_* of each line.
+    var marker: (ConversationLine) -> Int32 = { _ in TextRules.MARK_NONE }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {
                     ForEach(lines) { line in
-                        LineRow(line: line, isNewest: line.id == lines.last?.id, fontSize: fontSize)
+                        LineRow(line: line, isNewest: line.id == lines.last?.id, fontSize: fontSize, marker: marker(line))
                             .id(line.id)
                     }
                     if !partial.isEmpty {

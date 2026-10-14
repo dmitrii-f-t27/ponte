@@ -297,6 +297,10 @@ final class AppModel {
         }
     }
     var talkKeyHeld = false
+    /// Outgoing lines the owner typed («Сказать»): TextRules.lineMarker puts a keyboard on them.
+    var typedLineIDs: Set<UUID> = []
+    /// The text field of «Я → по-португальски» has the focus (TextRules.commandReturn).
+    var textFieldFocused = false
     var pttIsGlobal = false
     var lastLatency: TimeInterval?
     var callStartedAt: Date?
@@ -787,6 +791,7 @@ final class AppModel {
         ownVoice = false
         refreshCatalogs()
         lines.removeAll()
+        typedLineIDs.removeAll()
         incomingPartial = ""
         outgoingPartial = ""
         lastLatency = nil
@@ -1057,6 +1062,26 @@ final class AppModel {
 
     func replayLast(_ direction: Direction) {
         (direction == .incoming ? incomingLane : outgoingLane)?.replayLast()
+    }
+
+    /// TextRules.SUBMIT_* for the text in the field.
+    func textCheck(_ text: String) -> Int32 {
+        TextRules.submitCheck(running: isRunning, hasLane: outgoingLane != nil, text: text)
+    }
+
+    /// «Сказать»: the outgoing lane translates the typed text and says it into the call, like a spoken
+    /// phrase but without the talk key. Returns TextRules.SUBMIT_* (the field clears on SUBMIT_OK).
+    @discardableResult
+    func sayText(_ text: String) -> Int32 {
+        let check = textCheck(text)
+        guard TextRules.sayEnabled(check: check), let lane = outgoingLane else { return check }
+        typedLineIDs.formUnion(lane.speakText(text))
+        return check
+    }
+
+    /// TextRules.MARK_* of a transcript line.
+    func lineMarker(_ line: ConversationLine) -> Int32 {
+        TextRules.lineMarker(typed: typedLineIDs.contains(line.id))
     }
 
     func setTalkKey(_ held: Bool) {

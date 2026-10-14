@@ -17,7 +17,7 @@ struct PonteMain: App {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("Звонок") {
                 Button(model.isRunning ? "Стоп" : "Старт") { model.toggleRun() }
-                    .keyboardShortcut(.return, modifiers: .command)
+                    .keyboardShortcut(model.commandReturnShortcut(TextRules.CMDRET_RUN))
                     .disabled(!model.enabled(AppRules.BTN_START_STOP))
                 Toggle("Пауза голоса в звонок", isOn: Binding(get: { model.voicePaused },
                                                                set: { model.voicePaused = $0 }))

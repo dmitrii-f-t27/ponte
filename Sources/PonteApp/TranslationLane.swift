@@ -7,6 +7,7 @@ import PonteCore
 // One direction of the call:
 // AudioSource → Transcriber → (.final) → Translator (+ last 4 phrases as context)
 // → ConversationLine → optional SpeechSynth → AudioPlayer.
+// Typed text (speakText, TextRules) enters the same pipeline as final phrases, without the transcriber.
 //
 // Every decision is asked from AppRules (gate machine, phrase pipeline, speech
 // cancel, replay, speech rate, echo guard, phrase end, translator retry) and AudioRules
@@ -293,10 +294,27 @@ final class TranslationLane {
         Task { await gateEvent(AppRules.GEV_KEY) }
     }
 
+    /// «Сказать»: text the owner typed. Its phrases (TextRules.phrases) enter the phrase pipeline as finals,
+    /// in order, after any phrase already queued: same translator and context, voice, pause and call output
+    /// as a spoken phrase, but no transcriber and no push-to-talk gate. Returns the IDs of the new lines.
+    @discardableResult
+    func speakText(_ text: String) -> [UUID] {
+        guard isRunning else { return [] }
+        let now = clock()
+        return TextRules.phrases(text).compactMap { piece in
+            guard finalTranslates(piece) else { return nil }
+            let line = ConversationLine(direction: direction, at: now, original: piece)
+            enqueue(line, end: now, recognitionMs: nil)
+            return line.id
+        }
+    }
+
     /// «Повторить» / «Сказать заново»: the last translated phrase again.
     func replayLast() {
         let translation = lastTranslatedLine?.translation ?? ""
-        let action = AppRules.replayAction(hasCachedAudio: lastSpoken != nil,
+        // Cached audio counts only if it is of that phrase (a phrase shown but not spoken, say while paused,
+        // is synthesized instead of replaying the one before it).
+        let action = AppRules.replayAction(hasCachedAudio: lastSpoken.map { $0.text == translation } ?? false,
                                            hasLastTranslation: !translation.isEmpty,
                                            hasPlayer: player != nil && AppRules.speechAllowed(ownVoice: ownVoice))
         guard action != AppRules.RPL_NONE else { return }
@@ -388,21 +406,31 @@ final class TranslationLane {
             let partialAt = lastPartialAt.removeValue(forKey: id)
             onEvent(.partial(""))
             let phrase = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let step = AppRules.phraseStep(stage: AppRules.PH_LISTENING, event: AppRules.PEV_FINAL,
-                                           flags: AppRules.phraseFlags(emptyText: phrase.isEmpty))
-            guard AppRules.stepAction(step) == AppRules.PACT_TRANSLATE else { return }
+            guard finalTranslates(phrase) else { return }
             let timing = transcriber.timing(for: id)
             let end = phraseEnd(timing: timing, lastPartialAt: partialAt)
-            let line = ConversationLine(id: id, direction: direction, at: end, original: phrase)
-            onEvent(.phrase(line))
-            let context = memory.snapshot()
-            memory.add(phrase)
-            let speak = AppRules.speakRequested(speechEnabled: speechOutputEnabled,
-                                                paused: AppRules.gateHeld(paused: isPaused, ownVoice: ownVoice))
-            translateInput?.yield(PendingPhrase(line: line, context: context, end: end,
-                                                recognitionMs: timing.map { millis($0.recognitionLatency) },
-                                                speak: speak, generation: speechGeneration))
+            enqueue(ConversationLine(id: id, direction: direction, at: end, original: phrase), end: end,
+                    recognitionMs: timing.map { millis($0.recognitionLatency) })
         }
+    }
+
+    /// PEV_FINAL: an empty phrase is dropped, any other is translated.
+    private func finalTranslates(_ phrase: String) -> Bool {
+        let step = AppRules.phraseStep(stage: AppRules.PH_LISTENING, event: AppRules.PEV_FINAL,
+                                       flags: AppRules.phraseFlags(emptyText: phrase.isEmpty))
+        return AppRules.stepAction(step) == AppRules.PACT_TRANSLATE
+    }
+
+    /// A final phrase (spoken or typed) enters the pipeline: shown, remembered as context, queued for translation.
+    private func enqueue(_ line: ConversationLine, end: Date, recognitionMs: Int64?) {
+        onEvent(.phrase(line))
+        let context = memory.snapshot()
+        memory.add(line.original)
+        // «Свой голос» holds the translation voice like a pause: a typed phrase is shown, not spoken.
+        let speak = AppRules.speakRequested(speechEnabled: speechOutputEnabled,
+                                            paused: AppRules.gateHeld(paused: isPaused, ownVoice: ownVoice))
+        translateInput?.yield(PendingPhrase(line: line, context: context, end: end, recognitionMs: recognitionMs,
+                                            speak: speak, generation: speechGeneration))
     }
 
     private func phraseEnd(timing: PhraseTiming?, lastPartialAt: Date?) -> Date {
