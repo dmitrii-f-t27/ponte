@@ -50,6 +50,8 @@ public enum PeerRules {
 
     /// Off, linked (connected with peers), waiting (connected, alone), failed (not connected after 3 failures
     /// in a row) or connecting.
+    /// After this many failed connections in a row the link shows as failed (also: a full room).
+    public static let failedAfter = Int(PE_FAILED_AFTER)
     public static func status(linkOn: Bool, connected: Bool, peers: Int, failures: Int) -> Int {
         Int(pe_status(linkOn, connected, Int64(peers), Int64(failures)))
     }
