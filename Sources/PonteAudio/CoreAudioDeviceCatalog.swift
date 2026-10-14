@@ -65,6 +65,20 @@ public final class CoreAudioDeviceCatalog: AudioDeviceCatalog {
         return i >= 0 ? all[i] : nil
     }
 
+    /// macOS lets the output become the system output: not hidden (AirPods playing to another device are listed
+    /// hidden) and allowed as a default device.
+    public func isSelectableOutput(_ device: AudioDevice) -> Bool {
+        let hidden = (try? HAL.get(device.id, HAL.address(kAudioDevicePropertyIsHidden), default: UInt32(0))) ?? 0
+        let canDefault = (try? HAL.get(device.id, HAL.address(kAudioDevicePropertyDeviceCanBeDefaultDevice,
+                                                              kAudioObjectPropertyScopeOutput), default: UInt32(0))) ?? 0
+        return hidden == 0 && canDefault != 0
+    }
+
+    /// Makes the device the Mac's system output, as the Sound menu does: Ponte's Russian voice and the call app follow it.
+    public func setDefaultOutput(_ device: AudioDevice) throws {
+        try HAL.set(HAL.system, HAL.address(kAudioHardwarePropertyDefaultOutputDevice), AudioObjectID(device.id))
+    }
+
     /// Suggested output for the Russian voice in the owner's ears (never BlackHole).
     public func suggestedListenOutput() -> AudioDevice? {
         let all = devices()

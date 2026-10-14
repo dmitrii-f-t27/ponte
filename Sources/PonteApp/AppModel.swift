@@ -514,6 +514,47 @@ final class AppModel {
     /// Where the user hears things: chosen headphones or the system output.
     var listeningDevice: AudioDevice? { headphonesDevice ?? defaultOutput }
 
+    /// «Слушать: Наушники | Мак» (device_rules: dv_hear_choice), from the output the owner hears now.
+    var hearChoice: Int {
+        AudioRules.hearChoice(kind: listeningDevice.map { deviceCatalog.kind(of: $0) } ?? AudioRules.kindUnknown)
+    }
+
+    /// The output for a switch position among the connected devices (device_rules: dv_pick_hear_index).
+    func hearDevice(_ target: Int) -> AudioDevice? {
+        let i = AudioRules.pickHearIndex(kinds: devices.map { deviceCatalog.kind(of: $0) },
+                                         outputChannels: devices.map(\.outputChannels),
+                                         selectable: devices.map { deviceCatalog.isSelectableOutput($0) }, target: target)
+        return i >= 0 ? devices[i] : nil
+    }
+
+    func canHear(_ target: Int) -> Bool { hearDevice(target) != nil }
+
+    /// Why «Наушники» or «Мак» could not be switched on (shown as an alert); nil when nothing to say.
+    var hearNotice: String?
+
+    /// Moves everything the owner hears to headphones or the Mac: the chosen output becomes the system output
+    /// (the call app follows it), and the Russian voice follows the system output.
+    func setHear(_ target: Int) {
+        guard let device = hearDevice(target) else {
+            hearNotice = target == AudioRules.hearHeadphones
+                ? "Наушники не подключены к этому Маку. Наденьте их и выберите в Пункте управления → Звук, затем нажмите «Наушники» снова."
+                : "Динамики Мака недоступны."
+            refreshCatalogs()
+            return
+        }
+        do {
+            try deviceCatalog.setDefaultOutput(device)
+            log.info("listen on \(device.name, privacy: .public)")
+        } catch {
+            log.error("listen on \(device.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+        }
+        if !headphonesUID.isEmpty { headphonesUID = "" }
+        refreshCatalogs()
+        if defaultOutput?.id != device.id {
+            hearNotice = "macOS не переключил звук на «\(device.name)». Выберите это устройство в Пункте управления → Звук."
+        }
+    }
+
     /// The listening output decides the headphone warning, the checklist's headphones row and the automatic microphone.
     private func refreshSpeakerWarning() {
         let kind = listeningDevice.map { deviceCatalog.kind(of: $0) }

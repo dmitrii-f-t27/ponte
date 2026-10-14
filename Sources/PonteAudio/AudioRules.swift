@@ -835,6 +835,18 @@ public enum AudioRules {
     /// Headphones or a headset: the headphone jack, Bluetooth, USB.
     public static func isHeadphonesLike(kind: Int) -> Bool { dv_is_headphones_like(Int64(kind)) }
 
+    /// «Слушать: Наушники | Мак»: the switch position for the system output's kind, and the output for a position.
+    public static let hearHeadphones = Int(DV_HEAR_HEADPHONES)
+    public static let hearMac = Int(DV_HEAR_MAC)
+    public static func hearChoice(kind: Int) -> Int { Int(dv_hear_choice(Int64(kind))) }
+    /// `selectable`: macOS lets the output become the system output (CoreAudioDeviceCatalog.isSelectableOutput).
+    public static func pickHearIndex(kinds: [Int], outputChannels: [Int], selectable: [Bool], target: Int) -> Int {
+        var k = DeviceText.list(kinds)
+        var outputs = DeviceText.list(outputChannels)
+        var s = DeviceText.list(selectable.map { $0 ? 1 : 0 })
+        return Int(dv_pick_hear_index(&k, &outputs, &s, DeviceText.listCount(kinds.count), Int64(target)))
+    }
+
     /// Ponte's microphone when the settings say «Автоматически»: the headset's own microphone when the listening
     /// output (`outputIndex`, -1 for none) is one, else the built-in microphone, else the first real one; never
     /// BlackHole, Ponte's tap or an iPhone. -1 if none.

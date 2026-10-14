@@ -1,4 +1,5 @@
 import AppKit
+import PonteAudio
 import PonteCore
 import PonteSpeech
 import SwiftUI
@@ -209,6 +210,7 @@ private struct StatusRow: View {
                        valueTint: latencyTint(model.latencyColorCode),
                        help: "От конца фразы до перевода на экране (цель — до 2 с)")
             Spacer(minLength: 0)
+            HearSwitch()
             if model.speakerWarning {
                 Label("Динамики Мака — нужны наушники", systemImage: "headphones")
                     .font(.callout)
@@ -543,6 +545,34 @@ private struct OwnVoiceBar: View {
 }
 
 /// «Голос Ж / М»: the Portuguese voice the other side hears. Applies from the next phrase.
+/// «Слушать: Наушники | Мак»: where the owner hears the Russian voice and the call.
+private struct HearSwitch: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Слушать")
+                .foregroundStyle(.secondary)
+            Picker("Слушать", selection: Binding(get: { model.hearChoice }, set: { model.setHear($0) })) {
+                Label("Наушники", systemImage: "headphones").tag(AudioRules.hearHeadphones)
+                    .disabled(!model.canHear(AudioRules.hearHeadphones))
+                Label("Мак", systemImage: "laptopcomputer").tag(AudioRules.hearMac)
+                    .disabled(!model.canHear(AudioRules.hearMac))
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .accessibilityHint("Где слышать русский перевод и звонок: в наушниках или в динамиках Мака")
+        }
+        .alert("Звук не переключён", isPresented: Binding(get: { model.hearNotice != nil },
+                                                           set: { if !$0 { model.hearNotice = nil } })) {
+            Button("Понятно") { model.hearNotice = nil }
+        } message: {
+            Text(model.hearNotice ?? "")
+        }
+    }
+}
+
 /// «Голос Ж | М»: pt-BR — the voice the other side hears in the call, ru — the voice in the owner's headphones.
 private struct VoiceGenderSwitch: View {
     let lang: Lang

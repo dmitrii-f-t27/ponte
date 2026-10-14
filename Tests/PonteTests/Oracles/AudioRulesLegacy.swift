@@ -773,6 +773,15 @@ extension AudioRulesLegacy {
     }
 
     static func isHeadphonesLike(kind: Int) -> Bool { [kindBuiltInHeadphones, kindBluetooth, kindUSB].contains(kind) }
+    /// «Слушать»: 1 headphones, 2 the Mac.
+    static func hearChoice(kind: Int) -> Int { isHeadphonesLike(kind: kind) ? 1 : 2 }
+    static func pickHearIndex(kinds: [Int], outputChannels: [Int], selectable: [Bool], target: Int) -> Int {
+        let order = target == 2 ? [kindBuiltInSpeaker] : [kindBuiltInHeadphones, kindBluetooth, kindUSB]
+        for kind in order {
+            if let i = kinds.indices.first(where: { kinds[$0] == kind && outputChannels[$0] > 0 && selectable[$0] }) { return i }
+        }
+        return -1
+    }
 
     /// The headset's own microphone when the listening output is headphones-like; else the built-in microphone;
     /// else the first real one. Never BlackHole, Ponte's tap or an iPhone.
