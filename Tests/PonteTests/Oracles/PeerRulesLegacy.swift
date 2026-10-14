@@ -1,15 +1,16 @@
 // Test oracle for Specs/peer_rules.t27 (two Russians in one call hear each other). Written in plain Swift from the
-// same rules, independently of the t27: words by splitting and counting in a dictionary (the spec matches word by
-// word), the Meet code by a regular expression over the byte shape of the text (the spec scans), the voice window
-// with an optional end. The differential tests compare both implementations bit for bit.
+// same rules, independently of the t27: words by splitting the folded bytes (the spec scans runs and caps as it goes);
+// the secret code by folding, filtering and set membership (the spec scans with early exits); times in 128-bit
+// integers, so no case analysis for overflow (the spec compares case by case and splits the permille product);
+// containment by a full longest-common-subsequence table filled from the back over word identifiers (the spec keeps
+// two rows of prefixes and compares bytes); the window end as an optional, and the phrase rule as a list of the
+// spans a phrase may lie in or meet. The differential tests compare both implementations bit for bit.
 import Foundation
 
 enum PeerRulesLegacy {
     static let sampleRate = 16_000.0
     static let frameMs = 40
     static let maxPeers = 6
-    static let browserTabPorts = [9111, 9222]
-    static let tabListTimeoutMs = 1500
 
     static let msgHello: UInt8 = 1
     static let msgAudio: UInt8 = 2
@@ -25,10 +26,13 @@ enum PeerRulesLegacy {
     static let statusWaiting = 2
     static let statusLinked = 3
     static let statusFailed = 4
+    static let failedAfter = 3
 
     static let helloEveryMs = 5000
     static let peerTimeoutMs = 15_000
     static let vadHangoverMs = 600
+    static let stableMs = 3000
+    static let closeRoomFull = 4001
 
     static let jitterTargetMs = 120.0
     static let jitterMaxMs = 400.0
@@ -37,12 +41,27 @@ enum PeerRulesLegacy {
     /// The own-voice relay's codes (AudioRulesLegacy.relayKeep...relayRefill).
     static let jitterKeep = 0, jitterSend = 1, jitterDrop = 2, jitterTrim = 3, jitterRefill = 4
 
+    /// The digits 2-9, then a-z without i, l and o.
+    static let secretAlphabet: [UInt8] = Array(UInt8(ascii: "2")...UInt8(ascii: "9"))
+        + Array(UInt8(ascii: "a")...UInt8(ascii: "z")).filter { !Array("ilo".utf8).contains($0) }
+    static let secretLength = 12
+    static let secretGroup = 4
+    static let kdfIterations = 200_000
+    static let maxSkewMs: Int64 = 30_000
+
+    static let voiceRefreshMs = 5000
+    static let voiceStaleMs: Int64 = 12_000
+    static let windowKeepMs: Int64 = 20_000
+
     static let windowBeforeMs: Int64 = 300
     static let windowAfterMs: Int64 = 1500
     static let textWindowMs: Int64 = 15_000
-    static let similarityMinMilli = 350
-    static let similaritySureMilli = 700
-    static let windowKeepMs: Int64 = 20_000
+    static let containMinMilli = 800
+    static let containSureMilli = 900
+    static let ownOverlapPermille = 600
+    static let minWords = 3
+    static let ownAfterMs: Int64 = 300
+    static let echoLagMs: Int64 = 800
 
     static let textMax = 4096
     static let wordsMax = 512
@@ -54,7 +73,7 @@ enum PeerRulesLegacy {
         switch (connected, peers) {
         case (true, let p) where p > 0: return statusLinked
         case (true, 0): return statusWaiting
-        case (false, _) where failures >= 3: return statusFailed
+        case (false, _) where failures >= failedAfter: return statusFailed
         default: return statusConnecting
         }
     }
@@ -66,6 +85,10 @@ enum PeerRulesLegacy {
     }
 
     static func peerAlive(msSinceHello: Int64) -> Bool { (0..<Int64(peerTimeoutMs)).contains(msSinceHello) }
+
+    static func acceptsNewPeer(knownPeers: Int) -> Bool { (0..<(maxPeers - 1)).contains(knownPeers) }
+
+    static func reconnects(afterCloseCode code: Int) -> Bool { code != closeRoomFull }
 
     // MARK: - Microphone
 
@@ -111,84 +134,13 @@ enum PeerRulesLegacy {
         return folded.split(whereSeparator: { !isWordByte($0) }).prefix(wordsMax).map { Array($0) }
     }
 
-    static func wordSimilarityMilli(_ a: String, _ b: String) -> Int { wordSimilarityMilli(utf8: Array(a.utf8), Array(b.utf8)) }
+    static func wordCount(_ text: String) -> Int { wordCount(utf8: Array(text.utf8)) }
 
-    static func wordSimilarityMilli(utf8 a: [UInt8], _ b: [UInt8]) -> Int {
-        let wa = words(a), wb = words(b)
-        let total = wa.count + wb.count
-        if total == 0 { return 0 }
-        var countA: [[UInt8]: Int] = [:]
-        var countB: [[UInt8]: Int] = [:]
-        for w in wa { countA[w, default: 0] += 1 }
-        for w in wb { countB[w, default: 0] += 1 }
-        let common = countA.reduce(0) { sum, entry in sum + min(entry.value, countB[entry.key] ?? 0) }
-        return 2000 * common / total
-    }
+    static func wordCount(utf8: [UInt8]) -> Int { words(utf8).count }
 
-    // MARK: - Peer voice
-
-    static func isPeerVoice(kind: Int, similarityMilli: Int, phraseStartMs: Int64, phraseEndMs: Int64,
-                            windowStartMs: Int64, windowEndMs: Int64) -> Bool {
-        let end: Int64? = windowEndMs >= 0 ? windowEndMs : nil
-        let earliest = windowStartMs - windowBeforeMs
-        /// The phrase meets [earliest, end + slack] (no end while the window is open).
-        func meets(slack: Int64) -> Bool {
-            guard phraseEndMs >= earliest else { return false }
-            guard let end else { return true }
-            return phraseStartMs <= end + slack
-        }
-        if kind == voiceOwn { return meets(slack: windowAfterMs) }
-        if kind == voiceTTS {
-            let inside = meets(slack: windowAfterMs) && similarityMilli >= similarityMinMilli
-            let sure = similarityMilli >= similaritySureMilli && meets(slack: textWindowMs)
-            return inside || sure
-        }
-        return false
-    }
-
-    // MARK: - Meet code
-
-    /// Every byte as one ASCII character: letters as "L", the hyphen as "-", anything else as ".".
-    private static let codePattern = try! NSRegularExpression(pattern: "(?<!L)LLL-LLLL-LLL(?!L)")
-
-    static func meetCode(in text: String) -> String? { meetCode(utf8: Array(text.utf8)).map { String(decoding: $0, as: UTF8.self) } }
-
-    static func meetCode(utf8: [UInt8]) -> [UInt8]? {
-        let t = Array(utf8.prefix(textMax))
-        let shape = String(t.map { b -> Character in
-            if (0x41...0x5A).contains(b) || (0x61...0x7A).contains(b) { return "L" }
-            return b == 0x2D ? "-" : "."
-        })
-        let ns = shape as NSString
-        guard let match = codePattern.firstMatch(in: shape, range: NSRange(location: 0, length: ns.length)) else { return nil }
-        return t[match.range.location..<(match.range.location + match.range.length)].map(lower)
-    }
-}
-
-// MARK: - Version 2 (owner 2026-10-13)
-// Written from the same rules, independently of the t27: the secret code by folding, filtering and set membership (the
-// spec scans with early exits); times in 128-bit integers, so no case analysis for overflow (the spec compares case by
-// case and splits the permille product); containment by a full longest-common-subsequence table filled from the back
-// over word identifiers (the spec keeps two rows of prefixes and compares bytes); the window end as an optional.
-extension PeerRulesLegacy {
-    /// The digits 2-9, then a-z without i, l and o.
-    static let secretAlphabet: [UInt8] = Array(UInt8(ascii: "2")...UInt8(ascii: "9"))
-        + Array(UInt8(ascii: "a")...UInt8(ascii: "z")).filter { !Array("ilo".utf8).contains($0) }
-    static let secretLength = 12
-    static let secretGroup = 4
-    static let kdfIterations = 200_000
-    static let maxSkewMs: Int64 = 30_000
-    static let closeRoomFull = 4001
-    static let stableMs = 3000
-    static let voiceRefreshMs = 5000
-    static let voiceStaleMs: Int64 = 12_000
-    static let containMinMilli = 800
-    static let containSureMilli = 900
-    static let ownOverlapPermille = 600
+    // MARK: - Secret code
 
     private static let secretDropped: Set<UInt8> = [UInt8(ascii: " "), UInt8(ascii: "-"), UInt8(ascii: "_")]
-
-    // MARK: Secret code
 
     static func secretNormalized(_ text: String) -> String? {
         secretNormalized(utf8: Array(text.utf8)).map { String(decoding: $0, as: UTF8.self) }
@@ -216,7 +168,7 @@ extension PeerRulesLegacy {
         return Array(groups.joined(separator: [UInt8(ascii: "-")]))
     }
 
-    // MARK: Freshness, replay, room
+    // MARK: - Freshness and replay
 
     static func frameFresh(sentMs: Int64, nowMs: Int64) -> Bool {
         (Int128(nowMs) - Int128(sentMs)).magnitude <= UInt128(maxSkewMs)
@@ -227,19 +179,17 @@ extension PeerRulesLegacy {
         return seq > lastSeq
     }
 
-    static func acceptsNewPeer(knownPeers: Int) -> Bool { (0..<(maxPeers - 1)).contains(knownPeers) }
+    // MARK: - Voice windows
 
-    static func reconnects(afterCloseCode code: Int) -> Bool { code != closeRoomFull }
-
-    // MARK: Voice windows
-
-    static func windowEndMs(endMs: Int64, lastSeenMs: Int64, nowMs: Int64) -> Int64 {
+    static func windowEndMs(endMs: Int64, lastSeenMs: Int64, nowMs: Int64, refreshed: Bool) -> Int64 {
         if endMs >= 0 { return endMs }
+        // This Ponte's own windows get no keepalive and lose no END.
+        guard refreshed else { return -1 }
         let silentFor = Int128(nowMs) - Int128(lastSeenMs)
         return silentFor > Int128(voiceStaleMs) ? lastSeenMs : -1
     }
 
-    // MARK: Containment
+    // MARK: - Containment
 
     static func containmentMilli(phrase: String, said: String) -> Int {
         containmentMilli(utf8: Array(phrase.utf8), Array(said.utf8))
@@ -268,26 +218,41 @@ extension PeerRulesLegacy {
         return 1000 * common[0] / p.count
     }
 
-    // MARK: Peer voice, version 2
+    // MARK: - Is a recognized phrase a Ponte's voice?
 
-    static func isPeerVoiceV2(kind: Int, containmentMilli: Int, phraseStartMs: Int64, phraseEndMs: Int64,
-                              windowStartMs: Int64, windowEndMs: Int64) -> Bool {
+    /// A stretch of time the phrase is tested against: from `from`, up to `until` (nil: no end).
+    private struct Span {
+        let from: Int128
+        let until: Int128?
+    }
+
+    static func isPeerVoice(kind: Int, isSelf: Bool, phraseWords: Int, containmentMilli: Int, phraseStartMs: Int64,
+                            phraseEndMs: Int64, windowStartMs: Int64, windowEndMs: Int64) -> Bool {
         let a = Int128(phraseStartMs), b = Int128(phraseEndMs)
         let start = Swift.min(a, b)
-        let duration = Swift.max(1, Swift.max(a, b) - start)
+        let duration = Swift.max(Int128(1), Int128((a - b).magnitude))
         let end = start + duration
-        let from = Int128(windowStartMs) - Int128(windowBeforeMs)
-        let windowEnd: Int128? = windowEndMs >= 0 ? Int128(windowEndMs) : nil
-        let until = windowEnd.map { $0 + Int128(windowAfterMs) }
+        let windowEnd: Int128? = windowEndMs < 0 ? nil : Int128(windowEndMs)
+        /// The window from its early start up to `late` ms past its end.
+        func span(late: Int64) -> Span {
+            Span(from: Int128(windowStartMs) - Int128(windowBeforeMs), until: windowEnd.map { $0 + Int128(late) })
+        }
+        /// At least ownOverlapPermille of the phrase's time lies in the span.
+        func liesIn(_ s: Span) -> Bool {
+            let inside = Swift.max(0, Swift.min(end, s.until ?? end) - Swift.max(start, s.from))
+            return inside * 1000 >= Int128(ownOverlapPermille) * duration
+        }
+        /// The phrase and the span touch: it ends at or after the span's start and starts at or before its end.
+        func meets(_ s: Span) -> Bool { end >= s.from && (s.until.map { start <= $0 } ?? true) }
+        let long = phraseWords >= minWords
         switch kind {
         case voiceOwn:
-            let overlap = Swift.max(0, Swift.min(end, until ?? end) - Swift.max(start, from))
-            return overlap * 1000 >= Int128(ownOverlapPermille) * duration
+            return !isSelf && liesIn(span(late: ownAfterMs))
         case voiceTTS:
-            let meets = end >= from && (until.map { start <= $0 } ?? true)
-            if meets && containmentMilli >= containMinMilli { return true }
-            let late = end >= from && (windowEnd.map { start <= $0 + Int128(textWindowMs) } ?? true)
-            return containmentMilli >= containSureMilli && late
+            let playing = containmentMilli >= containMinMilli && liesIn(span(late: echoLagMs))
+            let justAfter = long && containmentMilli >= containMinMilli && meets(span(late: windowAfterMs))
+            let lateFromPeer = !isSelf && long && containmentMilli >= containSureMilli && meets(span(late: textWindowMs))
+            return playing || justAfter || lateFromPeer
         default:
             return false
         }
