@@ -576,10 +576,13 @@ private typealias L = PeerRulesLegacy
         // "Sim, claro" right after the owner's own voice (its window already holds the 600 ms hangover): translated.
         #expect(!drops(F.voiceOwn, isSelf: false, "Sim, claro", 11_900, 13_200, window: 10_000, 11_500))
         #expect(!drops(F.voiceOwn, isSelf: true, "Sim, claro", 11_900, 13_200, window: 10_000, 11_500))
-        // This Ponte's own voice is never matched: the call does not play the owner's microphone back to him.
+        // This Ponte's own voice (sent back by a laptop next to the owner) is matched like another Ponte's.
+        #expect(drops(F.voiceOwn, isSelf: true, "Sim, claro", 10_200, 11_400, window: 10_000, 11_500))
         for start in stride(from: Int64(9_000), through: 30_000, by: 250) {
-            #expect(!drops(F.voiceOwn, isSelf: true, "Sim, claro", start, start + 1300, window: 10_000, 11_500))
-            #expect(!drops(F.voiceOwn, isSelf: true, "Sim, claro", start, start + 1300, window: 10_000, -1))
+            for end: Int64 in [11_500, -1] {
+                #expect(drops(F.voiceOwn, isSelf: true, "Sim, claro", start, start + 1300, window: 10_000, end)
+                        == drops(F.voiceOwn, isSelf: false, "Sim, claro", start, start + 1300, window: 10_000, end))
+            }
         }
         // Another Ponte's owner still speaking (open window): what is heard meanwhile is his.
         #expect(drops(F.voiceOwn, isSelf: false, "Sim, claro", 12_000, 14_000, window: 10_000, -1))

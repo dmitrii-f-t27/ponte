@@ -129,8 +129,8 @@ public final class PeerWindows: @unchecked Sendable {
     }
 
     /// Whether a phrase the owner's Ponte heard between `start` and `end` was a Ponte's voice (now: `now`).
-    /// Sender 0 is this Ponte itself: its windows are never refreshed, so they never go stale, and its own voice
-    /// (Meet never plays the owner's microphone back) and its Portuguese words repeated later are not dropped.
+    /// Sender 0 is this Ponte itself: its windows are never refreshed, so they never go stale, and its Portuguese
+    /// words repeated later by the other side are not dropped.
     public func isPeerVoice(_ text: String, start: Date, end: Date, now: Date = Date()) -> Bool {
         let s = Self.ms(start), e = Self.ms(end), n = Self.ms(now)
         let words = PeerRules.wordCount(text)

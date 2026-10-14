@@ -267,7 +267,7 @@ enum PeerRulesLegacy {
         let long = phraseWords >= minWords
         switch kind {
         case voiceOwn:
-            return !isSelf && liesIn(span(late: ownAfterMs))
+            return liesIn(span(late: ownAfterMs))
         case voiceTTS:
             let playing = containmentMilli >= containMinMilli && liesIn(span(late: echoLagMs))
             let justAfter = long && containmentMilli >= containMinMilli && meets(span(late: windowAfterMs))

@@ -251,8 +251,6 @@ final class AppModel {
     }
     /// When the owner held the talk key (the incoming lane drops his own voice coming back from the call).
     @ObservationIgnored private let ownTalk = OwnTalkLog()
-    /// When the owner spoke into the call with «Свой голос» (the same rule as the talk key, ln_own_talk_drops).
-    @ObservationIgnored private let ownVoiceTalk = OwnTalkLog()
     /// The synthesizer of the running call, so a voice change applies at once.
     @ObservationIgnored private var liveSynth: SystemSpeechSynth?
 
@@ -1224,7 +1222,6 @@ final class AppModel {
             guard AppRules.laneVoiceInCall(direction: AppRules.directionCode(direction)) else { return }
             let kind = text == nil ? PeerRules.voiceOwn : PeerRules.voiceTTS
             let state = playing ? PeerRules.voiceStart : PeerRules.voiceEnd
-            if text == nil { ownVoiceTalk.setHeld(playing, at: at) }
             selfWindows.record(sender: 0, kind: kind, state: state, text: text ?? "", at: at)
             peerLink?.sendVoice(kind: kind, state: state, text: text ?? "", at: at)
         }
@@ -1354,14 +1351,13 @@ final class AppModel {
     }
 
     /// What the incoming lane must not translate: the owner's own voice coming back from the call, with the talk key
-    /// or «Свой голос» (ln_own_talk_drops), and his Ponte's Portuguese voice echoed back (pe_is_peer_voice over
+    /// (ln_own_talk_drops) or «Свой голос», and his Ponte's Portuguese voice echoed back (both pe_is_peer_voice over
     /// selfWindows); with «Русские в звонке», another Ponte's voice (pe_is_peer_voice over peerWindows).
     private func incomingPhraseFilter() -> (String, Date, Date) -> Bool {
-        let ownTalk = self.ownTalk, ownVoice = ownVoiceTalk, mine = selfWindows
+        let ownTalk = self.ownTalk, mine = selfWindows
         let windows: PeerWindows? = peerLink == nil ? nil : peerWindows
         return { text, start, end in
-            ownTalk.drops(start: start, end: end) || ownVoice.drops(start: start, end: end)
-                || mine.isPeerVoice(text, start: start, end: end)
+            ownTalk.drops(start: start, end: end) || mine.isPeerVoice(text, start: start, end: end)
                 || (windows?.isPeerVoice(text, start: start, end: end) ?? false)
         }
     }

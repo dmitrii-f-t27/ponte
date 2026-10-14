@@ -594,8 +594,9 @@ pub fn pe_meets(p_start: i64, p_end: i64, w_from: i64, open: bool, w_until: i64)
 ; The phrase starts at the earlier time and lasts duration = max(1, |phrase_end_ms - phrase_start_ms|); it ends at
 ; start + duration. The window starts PE_WINDOW_BEFORE_MS early (the recognizer's phrase start is early); "lies in"
 ; means at least PE_OWN_OVERLAP_PERMILLE of the phrase's duration does (pe_mostly_in); an open window has no end.
-; - The owner's own voice (PE_VOICE_OWN): never this Ponte's own (the call does not play the owner's microphone back to
-;   him); another Ponte's when the phrase lies in the window ending PE_OWN_AFTER_MS after window_end_ms.
+; - The owner's own voice (PE_VOICE_OWN), this Ponte's or another's: when the phrase lies in the window ending
+;   PE_OWN_AFTER_MS after window_end_ms (the end is stamped at his last voice; a laptop next to the owner can send his
+;   own voice back through the call, review 2026-10-14), so the Brazilian's quick reply right after it is translated.
 ; - TTS (PE_VOICE_TTS), with at least PE_CONTAIN_MIN_MILLI containment:
 ;   (1) while it plays: the phrase lies in the window ending PE_ECHO_LAG_MS after window_end_ms (any length);
 ;   (2) just after: a phrase of at least PE_MIN_WORDS words that meets the window ending PE_WINDOW_AFTER_MS after
@@ -619,7 +620,6 @@ pub fn pe_is_peer_voice(kind: i64, is_self: bool, phrase_words: i64, containment
     var open: bool = window_end_ms < 0;
     var w_from: i64 = window_start_ms - PE_WINDOW_BEFORE_MS;
     if (kind == PE_VOICE_OWN) {
-        if (is_self) { return false; }
         return pe_mostly_in(p_start, duration, w_from, open, window_end_ms + PE_OWN_AFTER_MS);
     }
     if (kind == PE_VOICE_TTS) {
@@ -1243,9 +1243,11 @@ test pe_peer_voice_rules {
     // Open: no end.
     assert pe_is_peer_voice(PE_VOICE_OWN, false, 0, 0, 50000, 51000, 10000, -1) == true;
     assert pe_is_peer_voice(PE_VOICE_OWN, false, 0, 0, 9000, 9600, 10000, -1) == false;
-    // This Ponte's own voice is never matched: the call does not play the owner's microphone back to him.
-    assert pe_is_peer_voice(PE_VOICE_OWN, true, 0, 0, 10200, 12300, 10000, 12000) == false;
-    assert pe_is_peer_voice(PE_VOICE_OWN, true, 9, 1000, 50000, 51000, 10000, -1) == false;
+    // This Ponte's own voice, sent back by a laptop next to the owner: the same window.
+    assert pe_is_peer_voice(PE_VOICE_OWN, true, 0, 0, 10200, 12300, 10000, 12000) == true;
+    assert pe_is_peer_voice(PE_VOICE_OWN, true, 0, 0, 10200, 12400, 10000, 12000) == true;
+    assert pe_is_peer_voice(PE_VOICE_OWN, true, 9, 1000, 50000, 51000, 10000, -1) == true;
+    assert pe_is_peer_voice(PE_VOICE_OWN, true, 0, 0, 12100, 13000, 10000, 12000) == false;
     // TTS while it plays (the window and an 800 ms echo lag, from 9700 to 12800): any length, 800 contained.
     assert pe_is_peer_voice(PE_VOICE_TTS, true, 1, 800, 12000, 13000, 10000, 12000) == true;
     assert pe_is_peer_voice(PE_VOICE_TTS, false, 1, 800, 12000, 13000, 10000, 12000) == true;
@@ -1316,7 +1318,7 @@ test pe_phrase_drop_rules {
     assert sure_words == 2;
     assert pe_is_peer_voice(PE_VOICE_OWN, false, sure_words, 0, 11900, 13200, 10000, 11500) == false;
     assert pe_is_peer_voice(PE_VOICE_OWN, true, sure_words, 0, 11900, 13200, 10000, 11500) == false;
-    assert pe_is_peer_voice(PE_VOICE_OWN, true, sure_words, 0, 10200, 11400, 10000, 11500) == false;
+    assert pe_is_peer_voice(PE_VOICE_OWN, true, sure_words, 0, 10200, 11400, 10000, 11500) == true;
     // Another Ponte's owner still speaking (open window): what is heard meanwhile is his.
     assert pe_is_peer_voice(PE_VOICE_OWN, false, sure_words, 0, 12000, 14000, 10000, -1) == true;
     // The quick reply that repeats the TTS question (750) is translated at any time.

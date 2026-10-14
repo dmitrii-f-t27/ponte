@@ -530,9 +530,6 @@ bool pe_is_peer_voice(int64_t kind, bool is_self, int64_t phrase_words, int64_t 
     bool open = (window_end_ms < 0);
     int64_t w_from = (window_start_ms - PE_WINDOW_BEFORE_MS);
     if ((kind == PE_VOICE_OWN)) {
-        if (is_self) {
-            return false;
-        }
         return pe_mostly_in(p_start, duration, w_from, open, (window_end_ms + PE_OWN_AFTER_MS));
     }
     if ((kind == PE_VOICE_TTS)) {
@@ -1193,8 +1190,10 @@ void test_pe_peer_voice_rules(void) {
     assert((pe_is_peer_voice(PE_VOICE_OWN, false, 0, 0, 9700, 9700, 10000, 12000) == true));
     assert((pe_is_peer_voice(PE_VOICE_OWN, false, 0, 0, 50000, 51000, 10000, -1) == true));
     assert((pe_is_peer_voice(PE_VOICE_OWN, false, 0, 0, 9000, 9600, 10000, -1) == false));
-    assert((pe_is_peer_voice(PE_VOICE_OWN, true, 0, 0, 10200, 12300, 10000, 12000) == false));
-    assert((pe_is_peer_voice(PE_VOICE_OWN, true, 9, 1000, 50000, 51000, 10000, -1) == false));
+    assert((pe_is_peer_voice(PE_VOICE_OWN, true, 0, 0, 10200, 12300, 10000, 12000) == true));
+    assert((pe_is_peer_voice(PE_VOICE_OWN, true, 0, 0, 10200, 12400, 10000, 12000) == true));
+    assert((pe_is_peer_voice(PE_VOICE_OWN, true, 9, 1000, 50000, 51000, 10000, -1) == true));
+    assert((pe_is_peer_voice(PE_VOICE_OWN, true, 0, 0, 12100, 13000, 10000, 12000) == false));
     assert((pe_is_peer_voice(PE_VOICE_TTS, true, 1, 800, 12000, 13000, 10000, 12000) == true));
     assert((pe_is_peer_voice(PE_VOICE_TTS, false, 1, 800, 12000, 13000, 10000, 12000) == true));
     assert((pe_is_peer_voice(PE_VOICE_TTS, false, 1, 799, 12000, 13000, 10000, 12000) == false));
@@ -1253,7 +1252,7 @@ void test_pe_phrase_drop_rules(void) {
     assert((sure_words == 2));
     assert((pe_is_peer_voice(PE_VOICE_OWN, false, sure_words, 0, 11900, 13200, 10000, 11500) == false));
     assert((pe_is_peer_voice(PE_VOICE_OWN, true, sure_words, 0, 11900, 13200, 10000, 11500) == false));
-    assert((pe_is_peer_voice(PE_VOICE_OWN, true, sure_words, 0, 10200, 11400, 10000, 11500) == false));
+    assert((pe_is_peer_voice(PE_VOICE_OWN, true, sure_words, 0, 10200, 11400, 10000, 11500) == true));
     assert((pe_is_peer_voice(PE_VOICE_OWN, false, sure_words, 0, 12000, 14000, 10000, -1) == true));
     int64_t reply = pe_fixture_containment(PE_FX_REPLY, PE_FX_TTS_QUESTION);
     int64_t reply_words = pe_fixture_words(PE_FX_REPLY);
