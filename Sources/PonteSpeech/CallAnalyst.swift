@@ -4,9 +4,9 @@ import PonteCore
 // The call analysis agent. During a call it keeps running notes from the transcript (both directions, original and
 // translation, who spoke) through an OpenAI-compatible chat-completions service the owner chose (Z.ai GLM, DeepSeek,
 // or his own); after the call it writes a report of the important data. Every decision (providers and defaults,
-// the endpoint, limits, when to update, chunks, error classes, retries and backoff) comes from AnalysisRules
-// (Specs/analysis_rules.t27); the prompts, the JSON and URLSession are here. No SDK; the key comes from the
-// Keychain through AnalysisKeyStore and never reaches a log.
+// the endpoint, the key's address binding, limits, when to update, chunks, cut replies, error classes, retries and
+// backoff) comes from AnalysisRules (Specs/analysis_rules.t27); the prompts, the JSON and URLSession are here. No
+// SDK; the key comes from the Keychain through AnalysisKeyStore and never reaches a log.
 
 // MARK: - Lines and facts
 
@@ -71,32 +71,49 @@ func analysisMillis(_ seconds: TimeInterval) -> Int {
     return Int(max(-1e12, min(1e12, (seconds * 1000).rounded())))
 }
 
+
 // MARK: - Settings of a request
 
-/// Where the requests go, which model, which key. `description` never shows the key.
+/// Where the requests go, which model, which key, and the address the key was saved for. `description` never shows
+/// the key.
 public struct AnalysisConfig: Sendable, Equatable, CustomStringConvertible {
     public var provider: Int
     public var baseURL: String
     public var model: String
     public var apiKey: String
+    /// The base URL the key was saved for (AnalysisStoredKey.baseURL); nil for a key of an older Ponte.
+    public var keyBaseURL: String?
 
-    public init(provider: Int, baseURL: String, model: String, apiKey: String) {
+    public init(provider: Int, baseURL: String, model: String, apiKey: String, keyBaseURL: String?) {
         self.provider = AnalysisRules.providerCode(stored: provider)
         self.baseURL = baseURL
         self.model = model
         self.apiKey = apiKey
+        self.keyBaseURL = keyBaseURL
     }
 
     public var trimmedBaseURL: String { baseURL.trimmingCharacters(in: .whitespacesAndNewlines) }
     public var trimmedModel: String { model.trimmingCharacters(in: .whitespacesAndNewlines) }
     public var trimmedKey: String { apiKey.trimmingCharacters(in: .whitespacesAndNewlines) }
+    public var trimmedKeyBaseURL: String? { keyBaseURL?.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     /// AnalysisRules.url* of the base URL.
     public var urlCheck: Int { AnalysisRules.baseURLCheck(utf8: Array(trimmedBaseURL.utf8)) }
 
+    /// AnalysisRules.bind*: whether the key may go to this base URL (only to the address it was saved for).
+    public var bindCheck: Int {
+        let current = Array(trimmedBaseURL.utf8)
+        let bound = trimmedKeyBaseURL.map { Array($0.utf8) }
+        let fallback = Array(AnalysisRules.defaultBaseURL(provider).utf8)
+        return AnalysisRules.bindCheck(hasBound: bound != nil,
+                                       sameAsBound: bound.map { AnalysisRules.sameEndpoint(current, $0) } ?? false,
+                                       provider: provider, sameAsDefault: AnalysisRules.sameEndpoint(current, fallback))
+    }
+
     /// AnalysisRules.config*: whether requests can be made.
     public var check: Int {
-        AnalysisRules.configCheck(keyBytes: trimmedKey.utf8.count, urlCheck: urlCheck, modelBytes: trimmedModel.utf8.count)
+        AnalysisRules.configCheck(keyBytes: trimmedKey.utf8.count, urlCheck: urlCheck, modelBytes: trimmedModel.utf8.count,
+                                  bind: bindCheck)
     }
 
     /// `<base>/chat/completions`; nil when the base URL cannot be used.
@@ -106,7 +123,63 @@ public struct AnalysisConfig: Sendable, Equatable, CustomStringConvertible {
     }
 
     public var description: String {
-        "AnalysisConfig(provider: \(AnalysisRules.providerID(provider)), base: \(trimmedBaseURL), model: \(trimmedModel), key: \(trimmedKey.isEmpty ? "none" : "set"))"
+        "AnalysisConfig(provider: \(AnalysisRules.providerID(provider)), base: \(trimmedBaseURL), model: \(trimmedModel), key: \(trimmedKey.isEmpty ? "none" : "set"), bound: \(trimmedKeyBaseURL ?? "none"))"
+    }
+}
+
+// MARK: - Russian texts of the settings and errors
+
+/// Why a base URL, a model or the settings cannot be used. One text per rule, shown the same in the settings, the
+/// report window and the errors.
+public enum AnalysisTexts {
+    /// The hosts http:// may name (AN_ROW_LOCAL_*).
+    public static let thisMac = "localhost, 127.0.0.1 или [::1]"
+
+    /// AnalysisRules.url*; nil for a usable address.
+    public static func urlProblem(_ check: Int) -> String? {
+        switch check {
+        case AnalysisRules.urlOK: nil
+        case AnalysisRules.urlEmpty: "Укажите базовый URL сервиса."
+        case AnalysisRules.urlNoScheme:
+            "Адрес должен начинаться с https:// (http:// — только для сервера на этом Маке: \(thisMac))."
+        case AnalysisRules.urlNoHost: "После https:// нужен адрес сервера."
+        case AnalysisRules.urlSpace: "В адресе есть пробел или служебный символ."
+        case AnalysisRules.urlHTTPRemote:
+            "http:// разрешён только для сервера на этом Маке: \(thisMac). Для любого другого адреса нужен https://."
+        default: "Слишком длинный адрес."
+        }
+    }
+
+    /// AnalysisRules.model*; nil for a usable model name.
+    public static func modelProblem(_ check: Int) -> String? {
+        switch check {
+        case AnalysisRules.modelOK: nil
+        case AnalysisRules.modelEmpty: "Укажите модель."
+        case AnalysisRules.modelTooLong: "Слишком длинное название модели: не больше \(AnalysisRules.modelMax) байт."
+        default: "В названии модели есть пробел или служебный символ."
+        }
+    }
+
+    /// AnalysisRules.config* of these settings; nil when requests can be made.
+    public static func configProblem(_ config: AnalysisConfig) -> String? {
+        switch config.check {
+        case AnalysisRules.configOK: nil
+        case AnalysisRules.configNoKey: "Сначала сохраните API-ключ."
+        case AnalysisRules.configBadURL: urlProblem(config.urlCheck)
+        case AnalysisRules.configNoModel: "Укажите модель."
+        default: keyElsewhere(config)
+        }
+    }
+
+    /// The key may not go to the configured address (AnalysisRules.bindOther, bindUnbound).
+    public static func keyElsewhere(_ config: AnalysisConfig) -> String {
+        let current = config.trimmedBaseURL
+        if let bound = config.trimmedKeyBaseURL {
+            return "Ключ сохранён для адреса \(bound), а в настройках указан \(current). Ключ отправляется только на адрес, "
+                + "для которого его сохранили: вставьте ключ ещё раз и нажмите «Сохранить ключ» — он будет сохранён для этого адреса."
+        }
+        return "Ключ сохранён прежней версией Ponte без адреса. Вставьте ключ ещё раз и нажмите «Сохранить ключ» — "
+            + "он будет сохранён для адреса \(current)."
     }
 }
 
@@ -117,16 +190,19 @@ public struct AnalysisError: Error, Equatable, Sendable, LocalizedError {
     public let errorClass: Int
     public let status: Int
     public let message: String
+    /// A cut notes reply (AnalysisRules.errCut): how many lines the request took (0: a shortening request).
+    public let lines: Int
 
-    public init(errorClass: Int, status: Int = 0, message: String = "") {
+    public init(errorClass: Int, status: Int = 0, message: String = "", lines: Int = 0) {
         self.errorClass = errorClass
         self.status = status
         self.message = message
+        self.lines = lines
     }
 
     /// From a failure kind (AnalysisRules.kind*) and the HTTP status.
-    public init(kind: Int, status: Int = 0, message: String = "") {
-        self.init(errorClass: AnalysisRules.errorClass(kind: kind, status: status), status: status, message: message)
+    public init(kind: Int, status: Int = 0, message: String = "", lines: Int = 0) {
+        self.init(errorClass: AnalysisRules.errorClass(kind: kind, status: status), status: status, message: message, lines: lines)
     }
 
     public var isTransient: Bool { AnalysisRules.isTransient(errorClass) }
@@ -147,17 +223,21 @@ public struct AnalysisError: Error, Equatable, Sendable, LocalizedError {
         case AnalysisRules.errEmpty: return "Сервис вернул пустой ответ."
         case AnalysisRules.errBadReply: return "Сервис ответил не в формате OpenAI chat-completions. Проверьте базовый URL."
         case AnalysisRules.errNoKey: return "Нет API-ключа: сохраните его в настройках, раздел «Анализ звонка»."
-        case AnalysisRules.errBadURL: return "Настройки анализа не подходят\(detail)"
+        case AnalysisRules.errBadURL: return message.isEmpty ? "Настройки анализа не подходят." : "Настройки анализа не подходят. \(message)"
+        case AnalysisRules.errCut:
+            return "Сервис оборвал ответ, не дописав его (предел длины ответа или фильтр сервиса): неполный ответ не принят."
+        case AnalysisRules.errKeyElsewhere: return message.isEmpty ? "Ключ сохранён для другого адреса." : message
         default: return "Не удалось получить ответ\(detail)"
         }
     }
 
     /// The settings cannot make a request (AnalysisRules.config*).
-    static func config(_ check: Int) -> AnalysisError {
-        switch check {
+    static func config(_ config: AnalysisConfig) -> AnalysisError {
+        let problem = AnalysisTexts.configProblem(config) ?? ""
+        switch config.check {
         case AnalysisRules.configNoKey: return AnalysisError(kind: AnalysisRules.kindNoKey)
-        case AnalysisRules.configNoModel: return AnalysisError(kind: AnalysisRules.kindBadURL, message: "не указана модель")
-        default: return AnalysisError(kind: AnalysisRules.kindBadURL, message: "базовый URL должен начинаться с https://")
+        case AnalysisRules.configKeyElsewhere: return AnalysisError(kind: AnalysisRules.kindKeyElsewhere, message: problem)
+        default: return AnalysisError(kind: AnalysisRules.kindBadURL, message: problem)
         }
     }
 }
@@ -174,9 +254,24 @@ public enum AnalysisProgress: Sendable, Equatable {
 
 // MARK: - OpenAI-compatible chat completions
 
+/// The text of a reply and how it ended (choices[0].finish_reason as AnalysisRules.finish*).
+public struct ChatReply: Sendable, Equatable {
+    public let text: String
+    public let finish: Int
+
+    public init(text: String, finish: Int) {
+        self.text = text
+        self.finish = finish
+    }
+
+    /// The service did not cut the reply (AnalysisRules.replyComplete).
+    public var complete: Bool { AnalysisRules.replyComplete(finish: finish) }
+}
+
 /// One chat-completions request and its reply: POST <base>/chat/completions, Authorization: Bearer <key>, JSON
 /// {model, messages, temperature, max_tokens, stream: false} (Z.ai also gets thinking off). Reads
-/// choices[0].message.content.
+/// choices[0].message.content and choices[0].finish_reason. Nothing is sent unless the settings pass
+/// AnalysisRules.configCheck, the key's address binding included.
 public struct ChatCompletionsClient: Sendable {
     public struct Message: Sendable, Equatable {
         public let role: String
@@ -206,8 +301,8 @@ public struct ChatCompletionsClient: Sendable {
     }
 
     public func urlRequest(messages: [Message], maxTokens: Int, timeoutMs: Int) throws -> URLRequest {
-        guard config.check == AnalysisRules.configOK else { throw AnalysisError.config(config.check) }
-        guard let url = config.endpoint else { throw AnalysisError.config(AnalysisRules.configBadURL) }
+        guard config.check == AnalysisRules.configOK else { throw AnalysisError.config(config) }
+        guard let url = config.endpoint else { throw AnalysisError(kind: AnalysisRules.kindBadURL) }
         guard AnalysisRules.keyCheck(utf8: Array(config.trimmedKey.utf8)) == AnalysisRules.keyOK else {
             throw AnalysisError(kind: AnalysisRules.kindNoKey)
         }
@@ -221,8 +316,8 @@ public struct ChatCompletionsClient: Sendable {
         return request
     }
 
-    /// The reply text. Throws AnalysisError (or CancellationError when the task was cancelled).
-    public func complete(messages: [Message], maxTokens: Int, timeoutMs: Int) async throws -> String {
+    /// The reply. Throws AnalysisError (or CancellationError when the task was cancelled).
+    public func complete(messages: [Message], maxTokens: Int, timeoutMs: Int) async throws -> ChatReply {
         let request = try urlRequest(messages: messages, maxTokens: maxTokens, timeoutMs: timeoutMs)
         let data: Data
         let response: URLResponse
@@ -232,6 +327,7 @@ public struct ChatCompletionsClient: Sendable {
             if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
             throw Self.classify(error, key: config.trimmedKey)
         }
+        try Task.checkCancellation()
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         return try Self.parse(data, status: status, key: config.trimmedKey)
     }
@@ -246,9 +342,10 @@ public struct ChatCompletionsClient: Sendable {
         return AnalysisError(kind: AnalysisRules.kindNetwork, message: redact(error.localizedDescription, key: key))
     }
 
-    /// The text of a reply: choices[0].message.content (a string, or text parts). A non-2xx status is an error by
-    /// its class, with the service's own message (never the key).
-    public static func parse(_ data: Data, status: Int, key: String = "") throws -> String {
+    /// The reply: choices[0].message.content (a string, or text parts) and choices[0].finish_reason. A non-2xx
+    /// status is an error by its class, with the service's own message (never the key). An empty text is an empty
+    /// reply, or a cut one when the service cut it (AnalysisRules.replyComplete).
+    public static func parse(_ data: Data, status: Int, key: String = "") throws -> ChatReply {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         guard AnalysisRules.httpClass(status: status) == AnalysisRules.errNone else {
             let error = json?["error"] as? [String: Any]
@@ -259,7 +356,8 @@ public struct ChatCompletionsClient: Sendable {
         guard let json, let choices = json["choices"] as? [Any] else {
             throw AnalysisError(kind: AnalysisRules.kindBadReply, status: status)
         }
-        let message = (choices.first as? [String: Any])?["message"] as? [String: Any]
+        let choice = choices.first as? [String: Any]
+        let message = choice?["message"] as? [String: Any]
         var text = ""
         if let content = message?["content"] as? String {
             text = content
@@ -267,8 +365,12 @@ public struct ChatCompletionsClient: Sendable {
             text = parts.compactMap { $0["text"] as? String }.joined()
         }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { throw AnalysisError(kind: AnalysisRules.kindEmpty, status: status) }
-        return text
+        let finish = AnalysisRules.finishCode(utf8: Array(((choice?["finish_reason"] as? String) ?? "").utf8))
+        guard !text.isEmpty else {
+            let kind = AnalysisRules.replyComplete(finish: finish) ? AnalysisRules.kindEmpty : AnalysisRules.kindCut
+            throw AnalysisError(kind: kind, status: status)
+        }
+        return ChatReply(text: text, finish: finish)
     }
 
     /// A service message, cut to 300 characters, with the key (should a service echo it) blanked out.
@@ -362,6 +464,21 @@ public enum CallAnalysisPrompts {
         """
     }
 
+    /// Shorter notes after a notes reply was cut (AnalysisRules.afterCut): the same sections, every fact kept.
+    public static func compressUser(notes: String) -> String {
+        """
+        Рабочие заметки по звонку стали слишком длинными:
+        <заметки>
+        \(notes)
+        </заметки>
+
+        Сократи заметки до \(AnalysisRules.compressChars) знаков. Сохрани разделы и все имена, компании, суммы и цены, даты \
+        и сроки, адреса, телефоны, e-mail, ссылки, номера документов, договорённости и задачи с временем реплик; убери \
+        повторы и лишние слова. Ничего не выдумывай.
+        Ответь только текстом сокращённых заметок, без вступления.
+        """
+    }
+
     public static let probeSystem = "Ответь одним словом: OK"
     public static let probeUser = "Проверка связи."
 
@@ -418,11 +535,22 @@ public enum CallAnalysisPrompts {
 
 // MARK: - The agent
 
-/// The result of a report: its text, the notes it was built from, and how many chunks went into the notes first.
+/// The result of a report: its text, the notes it was built from, how many chunks went into the notes first, and
+/// whether the service finished the text (a report cut at max_tokens is kept, marked incomplete).
 public struct AnalysisReport: Sendable, Equatable {
     public let text: String
     public let notes: String
     public let chunks: Int
+    public let complete: Bool
+}
+
+/// A notes update that survived cut replies: the new notes, how many lines they cover, the cut replies on the way,
+/// and the line cap it ended with (nil: no cap).
+public struct NotesStep: Sendable, Equatable {
+    public let notes: String
+    public let covered: Int
+    public let cuts: Int
+    public let lineCap: Int?
 }
 
 /// Requests of the analysis: a notes update, the report (chunked when long, with retries), the connection check.
@@ -439,27 +567,86 @@ public struct CallAnalyst: Sendable {
         self.sleep = sleep
     }
 
-    /// One notes update with the oldest lines that fit one request (AnalysisRules.chunkTake). Returns the new notes
-    /// (cut to AnalysisRules.maxNotesBytes) and how many lines they cover. One attempt: the notebook backs off.
-    public func updateNotes(notes: String, lines: [AnalysisLine]) async throws -> (notes: String, covered: Int) {
+    /// One notes update with the oldest lines that fit one request (AnalysisRules.chunkTake), at most `maxLines` of
+    /// them. Returns the new notes (cut to AnalysisRules.maxNotesBytes) and how many lines they cover. One attempt:
+    /// the notebook backs off. A reply the service cut is never taken: AnalysisError errCut with `lines` = the lines
+    /// the request took.
+    public func updateNotes(notes: String, lines: [AnalysisLine], maxLines: Int? = nil) async throws -> (notes: String, covered: Int) {
         guard !lines.isEmpty else { return (notes, 0) }
-        let formatted = lines.map { CallAnalysisPrompts.formatLine($0, timeZone: timeZone) }
+        let candidates = lines.prefix(max(1, maxLines ?? lines.count))
+        let formatted = candidates.map { CallAnalysisPrompts.formatLine($0, timeZone: timeZone) }
         let used = CallAnalysisPrompts.system.utf8.count + CallAnalysisPrompts.notesUser(notes: notes, lines: "").utf8.count
         let take = AnalysisRules.chunkTake(sizes: formatted.map { $0.utf8.count + 1 }, usedBytes: used)
         let chunk = formatted.prefix(take).joined(separator: "\n")
-        let reply = try await client.complete(
-            messages: [.system(CallAnalysisPrompts.system), .user(CallAnalysisPrompts.notesUser(notes: notes, lines: chunk))],
-            maxTokens: AnalysisRules.maxTokens, timeoutMs: AnalysisRules.requestTimeoutMs)
-        return (CallAnalysisPrompts.cut(reply, maxBytes: AnalysisRules.maxNotesBytes), take)
+        let reply: ChatReply
+        do {
+            reply = try await client.complete(
+                messages: [.system(CallAnalysisPrompts.system), .user(CallAnalysisPrompts.notesUser(notes: notes, lines: chunk))],
+                maxTokens: AnalysisRules.maxTokens, timeoutMs: AnalysisRules.requestTimeoutMs)
+        } catch let error as AnalysisError where error.errorClass == AnalysisRules.errCut {
+            throw AnalysisError(kind: AnalysisRules.kindCut, status: error.status, lines: take)
+        }
+        guard reply.complete else { throw AnalysisError(kind: AnalysisRules.kindCut, status: 200, lines: take) }
+        return (CallAnalysisPrompts.cut(reply.text, maxBytes: AnalysisRules.maxNotesBytes), take)
+    }
+
+    /// Shorter notes (at most AnalysisRules.compressChars characters, nothing important dropped). A cut reply is
+    /// AnalysisError errCut with `lines` 0.
+    public func compressNotes(_ notes: String) async throws -> String {
+        let reply: ChatReply
+        do {
+            reply = try await client.complete(
+                messages: [.system(CallAnalysisPrompts.system), .user(CallAnalysisPrompts.compressUser(notes: notes))],
+                maxTokens: AnalysisRules.maxTokens, timeoutMs: AnalysisRules.requestTimeoutMs)
+        } catch let error as AnalysisError where error.errorClass == AnalysisRules.errCut {
+            throw AnalysisError(kind: AnalysisRules.kindCut, status: error.status, lines: 0)
+        }
+        guard reply.complete else { throw AnalysisError(kind: AnalysisRules.kindCut, status: 200, lines: 0) }
+        return CallAnalysisPrompts.cut(reply.text, maxBytes: AnalysisRules.maxNotesBytes)
+    }
+
+    /// A notes update that survives cut replies (AnalysisRules.afterCut): with long notes it first asks for shorter
+    /// ones; with more than one line it tries again at once with at most half of them (AnalysisRules.cutLineCap);
+    /// after AnalysisRules.maxCuts cuts, a cut of one line or a cut shortening it throws the cut. A cut reply is never
+    /// kept as notes, and its lines stay uncovered.
+    public func updateNotesSafely(notes: String, lines: [AnalysisLine], maxLines: Int? = nil) async throws -> NotesStep {
+        var notes = notes
+        var cap = maxLines
+        var cuts = 0
+        var compress = false
+        while true {
+            try Task.checkCancellation()
+            do {
+                if compress {
+                    compress = false
+                    notes = try await compressNotes(notes)
+                    continue
+                }
+                let update = try await updateNotes(notes: notes, lines: lines, maxLines: cap)
+                return NotesStep(notes: update.notes, covered: update.covered, cuts: cuts, lineCap: cap)
+            } catch let error as AnalysisError where error.errorClass == AnalysisRules.errCut {
+                cuts += 1
+                switch AnalysisRules.afterCut(taken: error.lines, cuts: cuts, notesBytes: notes.utf8.count) {
+                case AnalysisRules.cutCompress: compress = true
+                case AnalysisRules.cutSmaller: cap = AnalysisRules.cutLineCap(taken: error.lines)
+                default: throw error
+                }
+            }
+        }
     }
 
     /// The report from the notes and the lines not in them yet. When notes and lines do not fit one request, the
-    /// oldest lines go into the notes first, chunk by chunk. Transient failures are retried (AnalysisRules.retryAction).
-    public func buildReport(notes: String, lines: [AnalysisLine], facts: CallFacts,
-                            progress: @escaping @Sendable (AnalysisProgress) -> Void = { _ in }) async throws -> AnalysisReport {
+    /// oldest lines go into the notes first, chunk by chunk (at most `maxLines` lines a chunk); `noted` gets each
+    /// chunk's notes and the lines they cover, so the notebook keeps them. Transient failures are retried
+    /// (AnalysisRules.retryAction). A report the service cut is returned with `complete` false.
+    public func buildReport(notes: String, lines: [AnalysisLine], facts: CallFacts, maxLines: Int? = nil,
+                            progress: @escaping @Sendable (AnalysisProgress) -> Void = { _ in },
+                            noted: @escaping @Sendable (_ notes: String, _ covering: [AnalysisLine]) async -> Void = { _, _ in })
+        async throws -> AnalysisReport {
         var notes = notes
         var rest = lines
         var chunks = 0
+        var cap = maxLines
         while true {
             try Task.checkCancellation()
             let formatted = rest.map { CallAnalysisPrompts.formatLine($0, timeZone: timeZone) }
@@ -470,19 +657,25 @@ public struct CallAnalyst: Sendable {
                 progress(.report)
                 let user = CallAnalysisPrompts.reportUser(notes: notes, lines: formatted.joined(separator: "\n"),
                                                           facts: facts, timeZone: timeZone)
-                let text = try await withRetries(progress) {
+                let reply = try await withRetries(progress) {
                     try await client.complete(messages: [.system(CallAnalysisPrompts.system), .user(user)],
                                               maxTokens: AnalysisRules.reportMaxTokens, timeoutMs: AnalysisRules.requestTimeoutMs)
                 }
-                return AnalysisReport(text: text, notes: notes, chunks: chunks)
+                return AnalysisReport(text: reply.text, notes: notes, chunks: chunks, complete: reply.complete)
             }
             chunks += 1
             progress(.notes(chunk: chunks, linesLeft: rest.count))
             let current = notes
             let pending = rest
-            let update = try await withRetries(progress) { try await updateNotes(notes: current, lines: pending) }
-            notes = update.notes
-            rest.removeFirst(max(1, min(update.covered, rest.count)))
+            let currentCap = cap
+            let step = try await withRetries(progress) {
+                try await updateNotesSafely(notes: current, lines: pending, maxLines: currentCap)
+            }
+            notes = step.notes
+            cap = step.lineCap
+            let covered = max(1, min(step.covered, rest.count))
+            await noted(notes, Array(rest.prefix(covered)))
+            rest.removeFirst(covered)
         }
     }
 
@@ -519,7 +712,8 @@ public struct CallAnalyst: Sendable {
 // MARK: - Running notes
 
 /// The state of the background notes of one call: the notes, which lines they cover, when they were last updated,
-/// and the failures in a row with their backoff (AnalysisRules.backgroundAfterError, retryDelayMs).
+/// the failures in a row with their backoff (AnalysisRules.backgroundAfterError, retryDelayMs), and how many lines
+/// a request may take after cut replies (AnalysisRules.cutLineCap).
 public struct AnalysisNotebook: Sendable, Equatable {
     public private(set) var notes = ""
     public private(set) var covered: Set<UUID> = []
@@ -530,6 +724,8 @@ public struct AnalysisNotebook: Sendable, Equatable {
     public private(set) var stopped = false
     public private(set) var lastError: AnalysisError?
     public private(set) var updates = 0
+    /// At most this many lines in one notes request (set after cut replies); nil: no cap.
+    public private(set) var lineCap: Int?
 
     public init(startedAt: Date = Date()) { lastUpdateAt = startedAt }
 
@@ -554,7 +750,7 @@ public struct AnalysisNotebook: Sendable, Equatable {
                                    msUntilRetry: retryAt.map { analysisMillis($0.timeIntervalSince(now)) } ?? 0)
     }
 
-    /// A notes update succeeded: the notes now cover these lines.
+    /// A notes update succeeded (in the background or as a chunk of the report): the notes now cover these lines.
     public mutating func applied(notes: String, covering lines: [AnalysisLine], at now: Date) {
         self.notes = notes
         covered.formUnion(lines.map(\.id))
@@ -563,6 +759,11 @@ public struct AnalysisNotebook: Sendable, Equatable {
         retryAt = nil
         lastError = nil
         updates += 1
+    }
+
+    /// Cut replies taught that a request may take at most `cap` lines (nil keeps the current cap).
+    public mutating func limitLines(_ cap: Int?) {
+        if let cap { lineCap = cap }
     }
 
     /// A notes update failed: back off, or stop the background notes.
@@ -577,11 +778,12 @@ public struct AnalysisNotebook: Sendable, Equatable {
         }
     }
 
-    /// The settings changed (a new key, URL or model): the background notes may try again at once.
+    /// The settings changed (a new key, URL or model): the background notes may try again at once, with no line cap.
     public mutating func resume() {
         stopped = false
         failures = 0
         retryAt = nil
         lastError = nil
+        lineCap = nil
     }
 }

@@ -5,11 +5,28 @@ import os
 import PonteCore
 import PonteSpeech
 
-/// The call analysis in the app: its settings (service, base URL, model, the key in the Keychain, on/off), the
-/// background notes while a call runs, and the report after it. Every decision comes from AnalysisRules
-/// (Specs/analysis_rules.t27); the requests are CallAnalyst's. Failures never interrupt the call: they show as a
-/// quiet status line in the report window and as a warning icon on «Отчёт по звонку», never as an alert.
-/// AppModel owns one (`analysis`) and calls `callStarted` and `callStopped`.
+/// What the call analysis needs from the app: the transcript, the state of the call, the banner and the folder of
+/// the TXT files. AppModel is the host; the tests pass their own.
+@MainActor
+protocol CallAnalysisApp: AnyObject {
+    var lines: [ConversationLine] { get }
+    var isRunning: Bool { get }
+    var callStartedAt: Date? { get }
+    var activeSourceName: String? { get }
+    var banner: Banner? { get set }
+    /// Where reports are written: ~/Documents/Ponte, or the transcript folder of the launch options.
+    var reportFolder: URL { get }
+}
+
+extension AppModel: CallAnalysisApp {
+    var reportFolder: URL { launch.transcriptDir ?? TranscriptExporter.defaultFolder }
+}
+
+/// The call analysis in the app: its settings (service, base URL, model, the key in the Keychain bound to its base
+/// URL, on/off), the background notes while a call runs, and the report after it. Every decision comes from
+/// AnalysisRules (Specs/analysis_rules.t27); the requests are CallAnalyst's. Failures never interrupt the call: they
+/// show as a quiet status line in the report window and as a warning icon on «Отчёт по звонку», never as an alert.
+/// AppModel owns one (`analysis`) and calls `callStarted`, `callStopped` and, on quit, `finishForQuit`.
 @MainActor @Observable
 final class CallAnalysisModel {
     @ObservationIgnored private let defaults: UserDefaults
@@ -17,6 +34,8 @@ final class CallAnalysisModel {
     @ObservationIgnored private let session: URLSession
     @ObservationIgnored private let log = Logger(subsystem: "app.ponte.translator", category: "analysis")
     @ObservationIgnored private let testMode: Bool
+    /// Tests shorten the quit wait; nil: AnalysisRules.quitWaitMs.
+    @ObservationIgnored var quitWaitOverrideMs: Int?
 
     /// The settings keys (UserDefaults); the key itself is only in the Keychain.
     enum Key {
@@ -39,12 +58,14 @@ final class CallAnalysisModel {
 
     // MARK: Settings
 
-    /// AnalysisRules.provider*.
+    /// AnalysisRules.provider*. Another service: its own key, base URL and model; the messages and a check of the
+    /// previous service are dropped.
     var provider: Int {
         didSet {
             guard provider != oldValue else { return }
             defaults.set(provider, forKey: Key.provider)
-            probeResult = nil
+            keyMessage = nil
+            invalidateProbe()
             reloadKey()
             settingsChanged()
         }
@@ -61,30 +82,46 @@ final class CallAnalysisModel {
     var providerName: String { Self.providerName(provider) }
     private var providerID: String { AnalysisRules.providerID(provider) }
 
-    /// The base URL of the current service: the stored one, else the spec's default.
+    /// The applied base URL of the current service: the stored one, else the spec's default. The settings field
+    /// edits a draft; only applyBaseURL changes this, so a half-typed address is never used.
     var baseURL: String {
-        get {
-            _ = settingsRevision
-            return defaults.string(forKey: Key.baseURL(providerID)) ?? AnalysisRules.defaultBaseURL(provider)
-        }
-        set {
-            defaults.set(newValue, forKey: Key.baseURL(providerID))
-            settingsRevision += 1
-            settingsChanged()
-        }
+        _ = settingsRevision
+        return defaults.string(forKey: Key.baseURL(providerID)) ?? AnalysisRules.defaultBaseURL(provider)
     }
 
-    /// The model of the current service: the stored one, else the spec's default.
+    /// The applied model of the current service: the stored one, else the spec's default (applyModel changes it).
     var model: String {
-        get {
-            _ = settingsRevision
-            return defaults.string(forKey: Key.model(providerID)) ?? AnalysisRules.defaultModel(provider)
-        }
-        set {
-            defaults.set(newValue, forKey: Key.model(providerID))
-            settingsRevision += 1
-            settingsChanged()
-        }
+        _ = settingsRevision
+        return defaults.string(forKey: Key.model(providerID)) ?? AnalysisRules.defaultModel(provider)
+    }
+
+    /// Applies a base URL typed in the settings (Enter, leaving the field, «Применить»), only when it can be used
+    /// (AnalysisRules.baseURLCheck). Returns why not, or nil when applied or unchanged.
+    @discardableResult
+    func applyBaseURL(_ typed: String) -> String? {
+        let url = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let problem = AnalysisTexts.urlProblem(AnalysisRules.baseURLCheck(utf8: Array(url.utf8))) { return problem }
+        guard url != baseURL else { return nil }
+        defaults.set(url, forKey: Key.baseURL(providerID))
+        settingsRevision += 1
+        log.info("analysis base URL applied for \(self.providerID, privacy: .public)")
+        invalidateProbe()
+        settingsChanged()
+        return nil
+    }
+
+    /// Applies a model typed in the settings, only when it can be used (AnalysisRules.modelCheck). Returns why not,
+    /// or nil when applied or unchanged.
+    @discardableResult
+    func applyModel(_ typed: String) -> String? {
+        let name = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let problem = AnalysisTexts.modelProblem(AnalysisRules.modelCheck(utf8: Array(name.utf8))) { return problem }
+        guard name != model else { return nil }
+        defaults.set(name, forKey: Key.model(providerID))
+        settingsRevision += 1
+        invalidateProbe()
+        settingsChanged()
+        return nil
     }
 
     /// Back to the spec's base URL and model for the current service.
@@ -92,6 +129,7 @@ final class CallAnalysisModel {
         defaults.removeObject(forKey: Key.baseURL(providerID))
         defaults.removeObject(forKey: Key.model(providerID))
         settingsRevision += 1
+        invalidateProbe()
         settingsChanged()
     }
 
@@ -103,22 +141,25 @@ final class CallAnalysisModel {
     private var settingsRevision = 0
     private var enabledStored: Bool?
 
-    /// «Анализировать звонок» (AnalysisRules.analysisOn).
+    /// «Анализировать звонок» (AnalysisRules.analysisOn). Turning it off stops every request in flight.
     var enabled: Bool {
         get { AnalysisRules.analysisOn(hasStored: enabledStored != nil, stored: enabledStored ?? false, hasKey: hasKey, testMode: testMode) }
         set {
             enabledStored = newValue
             defaults.set(newValue, forKey: Key.enabled)
+            if !newValue { cancelRequests(reason: "анализ звонка выключен", tag: "turned off") }
         }
     }
 
-    // MARK: The key (Keychain only)
+    // MARK: The key (Keychain only, bound to its base URL)
 
-    /// The current service's key, read from the Keychain only when needed (the settings, a call, a report) and again
-    /// when the service or the key changes. Never logged.
-    @ObservationIgnored private var apiKey: String?
+    /// The current service's key and the address it was saved for, read from the Keychain only when needed (the
+    /// settings, a call, a report) and again when the service or the key changes. Never logged.
+    @ObservationIgnored private var storedKey: AnalysisStoredKey?
     @ObservationIgnored private var keyLoaded = false
     private(set) var hasKey = false
+    /// The base URL the saved key is bound to (nil without a key, or for a key of an older Ponte).
+    private(set) var keyBaseURL: String?
     /// What happened to the key last («Ключ сохранён…» or an error).
     var keyMessage: String?
 
@@ -129,12 +170,13 @@ final class CallAnalysisModel {
 
     private func reloadKey() {
         keyLoaded = true
-        apiKey = keyStore.key(for: provider)
-        hasKey = !(apiKey ?? "").isEmpty
+        storedKey = keyStore.stored(for: provider)
+        hasKey = !(storedKey?.key ?? "").isEmpty
+        keyBaseURL = storedKey?.baseURL
     }
 
-    /// «Сохранить ключ»: checks the pasted key (AnalysisRules.keyCheck) and writes it to the Keychain.
-    /// Returns true when saved (the field then clears).
+    /// «Сохранить ключ»: checks the pasted key (AnalysisRules.keyCheck) and writes it to the Keychain bound to the
+    /// applied base URL, which must be usable. Returns true when saved (the field then clears).
     @discardableResult
     func saveKey(_ pasted: String) -> Bool {
         let key = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -151,28 +193,36 @@ final class CallAnalysisModel {
         default:
             break
         }
+        let address = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let problem = AnalysisTexts.urlProblem(AnalysisRules.baseURLCheck(utf8: Array(address.utf8))) {
+            keyMessage = "Ключ не сохранён: он сохраняется для базового URL, а этот адрес не подходит. \(problem)"
+            return false
+        }
         do {
-            try keyStore.save(key, for: provider)
+            try keyStore.save(key, baseURL: address, for: provider)
             reloadKey()
-            keyMessage = "Ключ \(providerName) сохранён в связке ключей macOS."
+            keyMessage = "Ключ \(providerName) сохранён в связке ключей macOS для адреса \(address)."
             log.info("analysis key saved for \(self.providerID, privacy: .public)")
-            probeResult = nil
+            invalidateProbe()
             settingsChanged()
             return true
         } catch {
             keyMessage = error.localizedDescription
+            let outcome = (error as? AnalysisKeychainError)?.outcome ?? AnalysisRules.saveFailed
+            log.error("analysis key not saved for \(self.providerID, privacy: .public): outcome \(outcome, privacy: .public)")
             return false
         }
     }
 
-    /// «Удалить ключ».
+    /// «Удалить ключ»: every request in flight stops first.
     func deleteKey() {
+        cancelRequests(reason: "ключ удалён", tag: "key deleted")
+        invalidateProbe()
         do {
             try keyStore.delete(for: provider)
             reloadKey()
             keyMessage = "Ключ \(providerName) удалён из связки ключей."
             log.info("analysis key deleted for \(self.providerID, privacy: .public)")
-            probeResult = nil
         } catch {
             keyMessage = error.localizedDescription
         }
@@ -181,7 +231,8 @@ final class CallAnalysisModel {
     // MARK: Configuration
 
     var config: AnalysisConfig {
-        AnalysisConfig(provider: provider, baseURL: baseURL, model: model, apiKey: apiKey ?? "")
+        AnalysisConfig(provider: provider, baseURL: baseURL, model: model, apiKey: storedKey?.key ?? "",
+                       keyBaseURL: storedKey?.baseURL)
     }
 
     /// AnalysisRules.config*.
@@ -189,6 +240,8 @@ final class CallAnalysisModel {
     var configured: Bool { configCheck == AnalysisRules.configOK }
     var urlCheck: Int { config.urlCheck }
     var endpointText: String? { config.endpoint?.absoluteString }
+    /// Why no request can be made (AnalysisTexts.configProblem); nil when it can.
+    var configProblem: String? { AnalysisTexts.configProblem(config) }
 
     private func analyst() -> CallAnalyst {
         CallAnalyst(client: ChatCompletionsClient(config: config, session: session))
@@ -197,7 +250,7 @@ final class CallAnalysisModel {
     /// A new key, URL, model or service: the stopped background notes may try again.
     private func settingsChanged() {
         notebook.resume()
-        if app?.isRunning == true { notesStatus = nil }
+        if host?.isRunning == true { notesStatus = nil }
     }
 
     // MARK: «Проверить»
@@ -209,19 +262,32 @@ final class CallAnalysisModel {
     }
 
     var probeResult: ProbeResult?
+    @ObservationIgnored private var probeTask: Task<Void, Never>?
+    /// Each change of the service, key, URL or model starts a new generation; a check of an older one is dropped.
+    @ObservationIgnored private var probeGeneration = 0
+
+    /// The settings changed: a check in flight stops, and its answer (about other settings) is never shown.
+    private func invalidateProbe() {
+        probeGeneration += 1
+        probeTask?.cancel()
+        probeTask = nil
+        probeResult = nil
+    }
 
     func probe() {
         guard probeResult != .running else { return }
         guard configured else {
-            probeResult = .failed(AnalysisError.configMessage(configCheck))
+            probeResult = .failed(configProblem ?? "")
             return
         }
         probeResult = .running
         let analyst = analyst()
         let name = "\(providerName), модель \(config.trimmedModel)"
-        Task { [weak self] in
+        let gen = probeGeneration
+        probeTask = Task { [weak self] in
             let failure = await analyst.probe()
-            guard let self else { return }
+            guard let self, gen == self.probeGeneration else { return }
+            self.probeTask = nil
             if let failure {
                 self.probeResult = .failed(failure.localizedDescription)
             } else {
@@ -232,12 +298,14 @@ final class CallAnalysisModel {
 
     // MARK: The call
 
-    @ObservationIgnored private weak var app: AppModel?
-    /// Each call (and each settings reset) gets a new generation; late answers of an older one are dropped.
+    @ObservationIgnored private weak var host: CallAnalysisApp?
+    /// Each call gets a new generation; late answers of an older one never touch this call's state.
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var notebook = AnalysisNotebook()
     @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private var updateTask: Task<Void, Never>?
+    /// Each notes update gets an ID; one that was stopped or replaced never touches the notebook.
+    @ObservationIgnored private var updateID = 0
     @ObservationIgnored private var callStartedAt: Date?
     @ObservationIgnored private var callEndedAt: Date?
     @ObservationIgnored private var sourceName: String?
@@ -246,28 +314,30 @@ final class CallAnalysisModel {
     private(set) var notesUpdating = false
     /// The last background notes update failed (the toolbar button shows a warning icon).
     private(set) var notesFailing = false
-    /// The app is quitting (AppModel.prepareToQuit): Stop builds no report.
+    /// The app is quitting (AppModel.prepareToQuit): Stop builds no report (AnalysisRules.reportOnStop).
     @ObservationIgnored var quitting = false
 
-    /// A call starts (AppModel.start): a report the owner did not save goes to a file first, then everything resets.
-    func callStarted(_ app: AppModel) {
-        self.app = app
+    /// A call starts (AppModel.start): a report the owner did not save goes to a file first, then this call's state
+    /// starts empty. A report of the previous call still being written goes on in the background: it is written to a
+    /// file when it arrives, and the new call's report window neither waits for it nor shows its errors as its own.
+    func callStarted(_ host: CallAnalysisApp) {
+        self.host = host
         loadKeyIfNeeded()
         autosavedURL = nil
+        previousReportError = nil
         if AnalysisRules.saveBeforeReset(hasReport: report != nil, saved: report?.savedURL != nil), let report {
             autosave(report)
         }
         generation += 1
         tickTask?.cancel()
-        updateTask?.cancel()
-        updateTask = nil
-        notesUpdating = false
+        stopNotesUpdate()
+        finishCurrentBuild()
         report = nil
         reportError = nil
         notesFailing = false
-        callStartedAt = app.callStartedAt ?? Date()
+        callStartedAt = host.callStartedAt ?? Date()
         callEndedAt = nil
-        sourceName = app.activeSourceName
+        sourceName = host.activeSourceName
         notebook = AnalysisNotebook(startedAt: callStartedAt ?? Date())
         notesStatus = nil
         tickTask = Task { [weak self] in
@@ -279,18 +349,17 @@ final class CallAnalysisModel {
         }
     }
 
-    /// The call stopped (AppModel.stop): the background notes end; the report is built when the rules say so.
-    func callStopped(_ app: AppModel) {
-        self.app = app
+    /// The call stopped (AppModel.stop): the background notes end; the report is built when the rules say so (never
+    /// while the app quits).
+    func callStopped(_ host: CallAnalysisApp) {
+        self.host = host
         loadKeyIfNeeded()
         tickTask?.cancel()
         tickTask = nil
         // A notes update in flight is dropped: its lines are still pending, so the report takes them.
-        updateTask?.cancel()
-        updateTask = nil
-        notesUpdating = false
+        stopNotesUpdate()
         callEndedAt = Date()
-        if !quitting, AnalysisRules.reportOnStop(enabled: enabled, configured: configured, lines: app.lines.count) {
+        if AnalysisRules.reportOnStop(enabled: enabled, configured: configured, lines: host.lines.count, quitting: quitting) {
             // A report asked for during the call covers only part of it: the final one replaces it.
             buildReport(replacingRunning: true)
             showReport = true
@@ -299,41 +368,53 @@ final class CallAnalysisModel {
 
     /// One look at the transcript: update the notes when AnalysisRules.shouldUpdate says so.
     func tick(now: Date) {
-        guard let app else { return }
-        let lines = app.lines.map(AnalysisLine.init)
+        guard let host else { return }
+        let lines = host.lines.map(AnalysisLine.init)
         let pending = notebook.pending(lines, now: now, all: false)
-        // A report of this call in progress uses the service too; one of an earlier call does not hold the notes back.
-        let busy = updateTask != nil || (building && buildGeneration == generation)
-        guard notebook.shouldUpdate(running: app.isRunning, enabled: enabled, configured: configured,
+        // A report of this call in progress uses the service and the notebook too.
+        let busy = updateTask != nil || building
+        guard notebook.shouldUpdate(running: host.isRunning, enabled: enabled, configured: configured,
                                     busy: busy, pendingCount: pending.count, now: now) else { return }
         let analyst = analyst()
         let notes = notebook.notes
+        let cap = notebook.lineCap
         let gen = generation
+        updateID += 1
+        let id = updateID
         notesUpdating = true
         updateTask = Task { [weak self] in
             do {
-                let result = try await analyst.updateNotes(notes: notes, lines: pending)
-                self?.notesUpdated(result.notes, covering: Array(pending.prefix(result.covered)), generation: gen)
+                let step = try await analyst.updateNotesSafely(notes: notes, lines: pending, maxLines: cap)
+                self?.notesUpdated(step, covering: Array(pending.prefix(step.covered)), generation: gen, update: id)
             } catch is CancellationError {
                 return
             } catch {
-                self?.notesFailed(ChatCompletionsClient.classify(error), generation: gen)
+                self?.notesFailed(ChatCompletionsClient.classify(error), generation: gen, update: id)
             }
         }
     }
 
-    private func notesUpdated(_ notes: String, covering lines: [AnalysisLine], generation gen: Int) {
-        guard gen == generation else { return }
+    /// Stops the notes update in flight; its answer, should it still come, is dropped.
+    private func stopNotesUpdate() {
+        updateTask?.cancel()
         updateTask = nil
+        updateID += 1
         notesUpdating = false
-        notebook.applied(notes: notes, covering: lines, at: Date())
-        notesFailing = false
-        notesStatus = "Заметки обновлены в \(Self.clock(Date())): в них \(notebook.covered.count) реплик."
-        log.info("analysis notes updated: \(lines.count, privacy: .public) lines")
     }
 
-    private func notesFailed(_ error: AnalysisError, generation gen: Int) {
-        guard gen == generation else { return }
+    private func notesUpdated(_ step: NotesStep, covering lines: [AnalysisLine], generation gen: Int, update id: Int) {
+        guard gen == generation, id == updateID else { return }
+        updateTask = nil
+        notesUpdating = false
+        notebook.applied(notes: step.notes, covering: lines, at: Date())
+        notebook.limitLines(step.lineCap)
+        notesFailing = false
+        notesStatus = "Заметки обновлены в \(Self.clock(Date())): в них \(notebook.covered.count) реплик."
+        log.info("analysis notes updated: \(lines.count, privacy: .public) lines, \(step.cuts, privacy: .public) cut replies")
+    }
+
+    private func notesFailed(_ error: AnalysisError, generation gen: Int, update id: Int) {
+        guard gen == generation, id == updateID else { return }
         updateTask = nil
         notesUpdating = false
         notebook.failed(error, at: Date())
@@ -358,27 +439,36 @@ final class CallAnalysisModel {
         var madeAt: Date
         var service: String
         var savedURL: URL?
+        /// The service finished the text (AnalysisRules.replyComplete); a cut one is shown and saved as incomplete.
+        var complete = true
 
         static func == (a: Report, b: Report) -> Bool {
-            a.text == b.text && a.madeAt == b.madeAt && a.savedURL == b.savedURL && a.lines.map(\.id) == b.lines.map(\.id)
+            a.text == b.text && a.madeAt == b.madeAt && a.savedURL == b.savedURL && a.complete == b.complete
+                && a.lines.map(\.id) == b.lines.map(\.id)
         }
     }
 
     var showReport = false
     private(set) var report: Report?
+    /// A report of the current call is being written (one of an earlier call never counts).
     private(set) var building = false
     private(set) var buildStartedAt: Date?
     private(set) var progressText: String?
     private(set) var reportError: String?
+    /// The report of the previous call, still being written when this call started, did not arrive.
+    private(set) var previousReportError: String?
     /// A report of an earlier call that was written to a file without the owner's «Сохранить в TXT».
     private(set) var autosavedURL: URL?
-    @ObservationIgnored private var reportTask: Task<Void, Never>?
-    /// Each build gets an ID; a build that was replaced never touches the state.
+    /// Every report request in flight, this call's and earlier calls', by build ID with its call generation. A build
+    /// that is no longer here (replaced, stopped, abandoned) never touches the state.
+    @ObservationIgnored private var builds: [Int: (generation: Int, task: Task<Void, Never>)] = [:]
     @ObservationIgnored private var buildID = 0
-    /// The call generation of the build in progress.
-    @ObservationIgnored private var buildGeneration = 0
+    /// The build of the current call the window shows; nil when none.
+    @ObservationIgnored private var currentBuildID: Int?
 
-    var lineCount: Int { app?.lines.count ?? 0 }
+    var lineCount: Int { host?.lines.count ?? 0 }
+    /// Report requests in flight (this call's and earlier calls').
+    var buildsInFlight: Int { builds.count }
 
     /// «Отчёт по звонку» in the toolbar is enabled (AnalysisRules.reportButtonEnabled).
     func reportButtonEnabled(lines: Int) -> Bool {
@@ -386,71 +476,81 @@ final class CallAnalysisModel {
     }
 
     /// «Отчёт по звонку»: show, build or explain (AnalysisRules.reportOnOpen); the window opens in every case.
-    func openReport(_ app: AppModel) {
-        self.app = app
+    func openReport(_ host: CallAnalysisApp) {
+        self.host = host
         loadKeyIfNeeded()
-        if enabled, AnalysisRules.reportOnOpen(busy: building, hasReport: report != nil, reportLines: report?.lines.count ?? 0,
-                                               lines: app.lines.count, configured: configured) == AnalysisRules.openBuild {
+        if AnalysisRules.reportOnOpen(enabled: enabled, busy: building, hasReport: report != nil,
+                                      reportLines: report?.lines.count ?? 0, lines: host.lines.count,
+                                      configured: configured) == AnalysisRules.openBuild {
             buildReport()
         }
         showReport = true
     }
 
-    /// AnalysisRules.check* for «Обновить».
-    var buildCheck: Int { AnalysisRules.buildCheck(busy: building, configured: configured, lines: lineCount) }
+    /// AnalysisRules.check* for «Обновить» and the window's explanation.
+    var buildCheck: Int { AnalysisRules.buildCheck(enabled: enabled, busy: building, configured: configured, lines: lineCount) }
 
-    /// Builds the report from the notes and every line not in them yet. `replacingRunning` drops a build in progress
-    /// (a report asked for during the call) and starts over with every line.
+    /// Builds the report from the notes and every line not in them yet. `replacingRunning` drops this call's build in
+    /// progress (a report asked for during the call) and starts over with every line.
     func buildReport(replacingRunning: Bool = false) {
-        guard let app else { return }
-        guard enabled else {
-            reportError = "Анализ звонка выключен в настройках: стенограмма никуда не отправляется."
-            return
+        guard let host else { return }
+        if replacingRunning, let id = currentBuildID {
+            builds.removeValue(forKey: id)?.task.cancel()
+            finishCurrentBuild()
         }
-        if building, buildGeneration != generation {
-            // A report of an earlier call is still being written: it finishes on its own and goes to a file.
-            reportTask = nil
-            building = false
-        } else if replacingRunning, building {
-            reportTask?.cancel()
-            reportTask = nil
-            building = false
-        }
-        guard AnalysisRules.buildCheck(busy: building, configured: configured, lines: app.lines.count) == AnalysisRules.checkOK
-        else { return }
-        let conversation = app.lines
+        guard AnalysisRules.buildCheck(enabled: enabled, busy: building, configured: configured,
+                                       lines: host.lines.count) == AnalysisRules.checkOK else { return }
+        // A notes update in flight is dropped: its lines are still pending, so the report takes them, and the
+        // notebook gets the report's own chunk notes instead.
+        stopNotesUpdate()
+        let conversation = host.lines
         let lines = conversation.map(AnalysisLine.init)
-        let started = callStartedAt ?? app.callStartedAt ?? lines.first?.at ?? Date()
-        let ended = app.isRunning ? nil : (callEndedAt ?? Date())
-        let facts = CallFacts(startedAt: started, endedAt: ended, sourceName: sourceName ?? app.activeSourceName, lines: lines)
+        let started = callStartedAt ?? host.callStartedAt ?? lines.first?.at ?? Date()
+        let ended = host.isRunning ? nil : (callEndedAt ?? Date())
+        let facts = CallFacts(startedAt: started, endedAt: ended, sourceName: sourceName ?? host.activeSourceName, lines: lines)
         let pending = notebook.pending(lines, now: Date(), all: true)
         let notes = notebook.notes
+        let cap = notebook.lineCap
         let analyst = analyst()
         let service = "\(providerName), модель \(config.trimmedModel)"
         let gen = generation
         buildID += 1
         let id = buildID
-        buildGeneration = gen
+        currentBuildID = id
         building = true
         buildStartedAt = Date()
         reportError = nil
         progressText = "Готовлю отчёт…"
         log.info("analysis report: \(pending.count, privacy: .public) lines beyond the notes")
-        reportTask = Task { [weak self] in
+        let progress: @Sendable (AnalysisProgress) -> Void = { [weak self] progress in
+            Task { @MainActor in self?.show(progress, build: id) }
+        }
+        let noted: @Sendable (String, [AnalysisLine]) async -> Void = { [weak self] notes, lines in
+            await self?.reportNoted(notes, covering: lines, generation: gen, build: id)
+        }
+        let task = Task { [weak self] in
             do {
-                let result = try await analyst.buildReport(notes: notes, lines: pending, facts: facts) { progress in
-                    Task { @MainActor in self?.show(progress, build: id) }
-                }
-                self?.reportBuilt(Report(text: result.text, facts: facts, lines: conversation, madeAt: Date(),
-                                         service: service, savedURL: nil), generation: gen, build: id)
+                let result = try await analyst.buildReport(notes: notes, lines: pending, facts: facts, maxLines: cap,
+                                                           progress: progress, noted: noted)
+                self?.reportBuilt(Report(text: result.text, facts: facts, lines: conversation, madeAt: Date(), service: service,
+                                         savedURL: nil, complete: result.complete), generation: gen, build: id)
             } catch {
-                self?.reportFailed(error, build: id)
+                self?.reportFailed(error, generation: gen, build: id)
             }
         }
+        builds[id] = (gen, task)
+    }
+
+    /// The window no longer shows a build of this call.
+    private func finishCurrentBuild() {
+        currentBuildID = nil
+        building = false
+        progressText = nil
+        buildStartedAt = nil
     }
 
     private func show(_ progress: AnalysisProgress, build id: Int) {
-        guard building, id == buildID else { return }
+        guard building, id == currentBuildID else { return }
         switch progress {
         case .notes(let chunk, let left):
             progressText = "Длинный звонок: сжимаю стенограмму, часть \(chunk) (осталось реплик: \(left))…"
@@ -461,31 +561,85 @@ final class CallAnalysisModel {
         }
     }
 
+    /// A chunk of this call's report went into the notes: the notebook keeps them, so «Обновить» and the report
+    /// after Stop do not send those lines again. A build of an earlier call, or one replaced, changes nothing.
+    private func reportNoted(_ notes: String, covering lines: [AnalysisLine], generation gen: Int, build id: Int) {
+        guard gen == generation, builds[id] != nil else { return }
+        notebook.applied(notes: notes, covering: lines, at: Date())
+    }
+
     private func reportBuilt(_ built: Report, generation gen: Int, build id: Int) {
-        guard id == buildID else {
-            // Replaced by a build of a newer call: an earlier call's report is kept as a file.
-            if gen != generation, AnalysisRules.saveBeforeReset(hasReport: true, saved: built.savedURL != nil) { autosave(built) }
-            return
-        }
-        building = false
-        progressText = nil
-        reportTask = nil
+        // Stopped (the analysis off, the key deleted), replaced or abandoned on quit: dropped.
+        guard builds.removeValue(forKey: id) != nil else { return }
         guard gen == generation else {
-            // A new call started while this report was being written: it is kept as a file, not shown.
+            // A report of an earlier call (a new call started while it was being written): kept as a file, not shown.
             if AnalysisRules.saveBeforeReset(hasReport: true, saved: built.savedURL != nil) { autosave(built) }
             return
         }
+        if id == currentBuildID { finishCurrentBuild() }
         report = built
-        log.info("analysis report ready")
+        log.info("analysis report ready (complete: \(built.complete, privacy: .public))")
     }
 
-    private func reportFailed(_ error: Error, build id: Int) {
-        guard id == buildID else { return }
-        building = false
-        progressText = nil
-        reportTask = nil
-        if error is CancellationError { return }
-        reportError = "Отчёт не получен. " + ChatCompletionsClient.classify(error).localizedDescription
+    private func reportFailed(_ error: Error, generation gen: Int, build id: Int) {
+        guard builds.removeValue(forKey: id) != nil else { return }
+        if error is CancellationError {
+            if gen == generation, id == currentBuildID { finishCurrentBuild() }
+            return
+        }
+        let failure = ChatCompletionsClient.classify(error)
+        guard gen == generation else {
+            // The report of the previous call: never shown as this call's error.
+            previousReportError = "Отчёт прошлого звонка не получен. " + failure.localizedDescription
+            log.error("analysis report of an earlier call failed: class \(failure.errorClass, privacy: .public)")
+            return
+        }
+        if id == currentBuildID { finishCurrentBuild() }
+        reportError = "Отчёт не получен. " + failure.localizedDescription
+    }
+
+    /// The analysis was turned off or the key deleted: every request in flight stops at once (the notes update and
+    /// every report being written, this call's or an earlier call's); nothing more is sent.
+    private func cancelRequests(reason: String, tag: String) {
+        let count = builds.count + (updateTask == nil ? 0 : 1)
+        stopNotesUpdate()
+        for build in builds.values { build.task.cancel() }
+        builds = [:]
+        if currentBuildID != nil {
+            finishCurrentBuild()
+            reportError = "Отчёт не составлен: \(reason)."
+        }
+        if count > 0 { log.info("analysis: \(count, privacy: .public) requests stopped (\(tag, privacy: .public))") }
+    }
+
+    /// The app quits (AppModel.prepareToQuit, after Stop). Reports still being written (of this call or an earlier
+    /// one) get AnalysisRules.quitWaitMs to arrive and are written to a file; the ones still out after it are
+    /// abandoned, with a line in the log. A report the owner has not saved is written to a file
+    /// (AnalysisRules.saveBeforeReset).
+    func finishForQuit() async {
+        quitting = true
+        tickTask?.cancel()
+        tickTask = nil
+        stopNotesUpdate()
+        let rule = AnalysisRules.quitWaitMs(builds: builds.count)
+        let wait = rule > 0 ? (quitWaitOverrideMs ?? rule) : 0
+        if wait > 0 {
+            log.info("quit: waiting up to \(wait, privacy: .public) ms for \(self.builds.count, privacy: .public) report(s)")
+            let deadline = ContinuousClock.now + .milliseconds(wait)
+            while !builds.isEmpty, ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            if !builds.isEmpty {
+                log.error("quit: \(self.builds.count, privacy: .public) report request(s) abandoned")
+                for build in builds.values { build.task.cancel() }
+                builds = [:]
+                finishCurrentBuild()
+            }
+        }
+        if AnalysisRules.saveBeforeReset(hasReport: report != nil, saved: report?.savedURL != nil), let report {
+            // Marked saved, so a second quit request (SIGTERM, then terminate) does not write it twice.
+            self.report?.savedURL = autosave(report)
+        }
     }
 
     /// «Сохранить в TXT»: the file in ~/Documents/Ponte, then a banner with «Показать».
@@ -495,8 +649,8 @@ final class CallAnalysisModel {
         do {
             let url = try write(report)
             self.report?.savedURL = url
-            app?.banner = Banner(kind: .info, text: "Отчёт сохранён: \((url.path as NSString).abbreviatingWithTildeInPath)",
-                                 action: .reveal(url), actionTitle: "Показать")
+            host?.banner = Banner(kind: .info, text: "Отчёт сохранён: \((url.path as NSString).abbreviatingWithTildeInPath)",
+                                  action: .reveal(url), actionTitle: "Показать")
             return url
         } catch {
             reportError = "Не удалось сохранить отчёт: \(error.localizedDescription)"
@@ -513,17 +667,21 @@ final class CallAnalysisModel {
 
     private func write(_ report: Report) throws -> URL {
         let text = CallReportExporter.text(report: report.text, lines: report.lines, facts: report.facts,
-                                           service: report.service, madeAt: report.madeAt)
+                                           service: report.service, madeAt: report.madeAt, complete: report.complete)
         return try CallReportExporter.write(text, startedAt: report.facts.startedAt,
-                                            to: app?.launch.transcriptDir ?? TranscriptExporter.defaultFolder)
+                                            to: host?.reportFolder ?? TranscriptExporter.defaultFolder)
     }
 
-    private func autosave(_ report: Report) {
+    @discardableResult
+    private func autosave(_ report: Report) -> URL? {
         do {
-            autosavedURL = try write(report)
+            let url = try write(report)
+            autosavedURL = url
             log.info("analysis report autosaved")
+            return url
         } catch {
             log.error("analysis report autosave failed: \(error.localizedDescription, privacy: .public)")
+            return nil
         }
     }
 
@@ -532,17 +690,5 @@ final class CallAnalysisModel {
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "HH:mm"
         return f.string(from: date)
-    }
-}
-
-extension AnalysisError {
-    /// Why the settings cannot make a request (AnalysisRules.config*), in Russian.
-    static func configMessage(_ check: Int) -> String {
-        switch check {
-        case AnalysisRules.configNoKey: "Сначала сохраните API-ключ."
-        case AnalysisRules.configBadURL: "Базовый URL должен начинаться с https:// (или http:// для своего сервера)."
-        case AnalysisRules.configNoModel: "Укажите модель."
-        default: ""
-        }
     }
 }

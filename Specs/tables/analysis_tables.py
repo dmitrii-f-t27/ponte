@@ -9,8 +9,9 @@ arrays that reach C). Run by Specs/generate.sh; edit the lists here, not the spe
 ponte_tables.table, so every spec's tables read the same way.
 
 - AN_ROW: the providers (their IDs, default base URLs and models, in AN_PROVIDER_* order), the request path,
-  the Keychain service prefix, the Authorization scheme, the URL schemes the base URL may start with, and the
-  report file name's prefix and suffix.
+  the Keychain service prefix, the Authorization scheme, the URL schemes the base URL may start with, the
+  report file name's prefix and suffix, the hosts of this Mac that http:// may name, and the finish_reason
+  values of a reply (complete, cut at max_tokens, cut by the service).
 - AN_FX: the texts the spec's own tests use.
 """
 import pathlib
@@ -39,7 +40,16 @@ WORDS = [
     ("HTTP", "http://"),
     ("REPORT_PREFIX", "Ponte-report-"),       # Ponte-report-YYYY-MM-DD-HHmm[-N].txt
     ("REPORT_SUFFIX", ".txt"),
+    ("FINISH_STOP", "stop"),                  # finish_reason of a reply that ended by itself
+    ("FINISH_LENGTH", "length"),              # finish_reason of a reply cut at max_tokens
 ]
+
+# The only hosts http:// may name (an_base_url_check): this Mac. Lowercase; compared ASCII case folded.
+LOCAL_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
+
+# finish_reason values of a reply the service itself stopped before its end (DeepSeek, Z.ai, OpenAI docs):
+# a content filter, a blocked topic, no capacity left, a broken connection on the service side.
+FINISH_CUT = ["content_filter", "sensitive", "insufficient_system_resource", "network_error"]
 
 FIXTURES = [
     ("ZAI_BASE", "https://api.z.ai/api/paas/v4"),
@@ -63,6 +73,25 @@ FIXTURES = [
     ("REPORT_2359_2", "Ponte-report-2026-01-02-2359-2.txt"),
     ("REPORT_0000_12", "Ponte-report-2027-12-31-0000-12.txt"),
     ("CYRILLIC", "https://пример.рф/v1"),
+    ("HTTP_LOCAL_IP", "http://127.0.0.1:8080/v1"),
+    ("HTTP_LOCAL_V6", "http://[::1]:11434"),
+    ("HTTP_LOCAL_UPPER", "HTTP://LocalHost/v1"),
+    ("HTTP_LOCAL_QUERY", "http://localhost?x=1"),
+    ("HTTP_REMOTE", "http://example.com/v1"),
+    ("HTTP_USERINFO", "http://localhost@evil.example/v1"),
+    ("HTTP_SUBDOMAIN", "http://localhost.evil.example/v1"),
+    ("HTTP_EMPTY_PORT", "http://localhost:/v1"),
+    ("HTTP_BAD_PORT", "http://127.0.0.1:80a/v1"),
+    ("HTTP_NO_AUTHORITY", "http:///localhost"),
+    ("HTTP_ONLY", "http://"),
+    ("ZAI_CODING", "https://api.z.ai/api/coding/paas/v4"),
+    ("FINISH_STOP", "stop"),
+    ("FINISH_LENGTH", "length"),
+    ("FINISH_FILTER", "content_filter"),
+    ("FINISH_TOOLS", "tool_calls"),
+    ("FINISH_UPPER", "STOP"),
+    ("MODEL_SLASH", "deepseek/deepseek-chat:free"),
+    ("MODEL_SPACE", "glm 4.5"),
 ]
 
 
@@ -88,12 +117,20 @@ def main():
     first_model = len(rows)
     rows += [(f"MODEL_{i}", model) for i, (_, _, model) in enumerate(PROVIDERS)]
     rows += WORDS
+    first_local = len(rows)
+    rows += [(f"LOCAL_{i}", host) for i, host in enumerate(LOCAL_HOSTS)]
+    first_cut = len(rows)
+    rows += [(f"FINISH_CUT_{i}", reason) for i, reason in enumerate(FINISH_CUT)]
     constants = [
         f"pub const AN_ROW_FIRST_ID : i64 = {first_id};",
         f"pub const AN_ROW_FIRST_BASE : i64 = {first_base};",
         f"pub const AN_ROW_FIRST_MODEL : i64 = {first_model};",
+        f"pub const AN_ROW_FIRST_LOCAL : i64 = {first_local};",
+        f"pub const AN_LOCAL_COUNT : i64 = {len(LOCAL_HOSTS)};",
+        f"pub const AN_ROW_FIRST_FINISH_CUT : i64 = {first_cut};",
+        f"pub const AN_FINISH_CUT_COUNT : i64 = {len(FINISH_CUT)};",
     ]
-    lines = table("AN_ROW", "Rows: provider IDs, default base URLs and models (AN_PROVIDER_* order), then words",
+    lines = table("AN_ROW", "Rows: provider IDs, default base URLs and models (AN_PROVIDER_* order), words, local hosts, cut finish reasons",
                   rows, constants)
     lines += table("AN_FX", "Texts for the tests", FIXTURES, [])
     write_block("analysis_rules.t27", lines)

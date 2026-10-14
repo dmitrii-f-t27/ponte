@@ -1119,8 +1119,9 @@ final class AppModel {
 
     /// Stops cleanly before the app quits (and saves the transcript).
     func prepareToQuit() async {
-        analysis.quitting = true   // no report request: the app is about to exit
+        analysis.quitting = true   // Stop starts no report (AnalysisRules.reportOnStop): the app is about to exit
         await stop()
+        await analysis.finishForQuit()   // an unsaved report to a file; one being written gets a short wait
     }
 
     /// Apple on the device; Claude only when chosen and its key exists (then Apple is the fallback).

@@ -1,7 +1,8 @@
 // The call analysis rules (Specs/analysis_rules.t27, through the AnalysisRules facade) against their Swift oracle
 // (AnalysisRulesLegacy), bit for bit: exhaustive over flags, codes and small ranges, seeded random elsewhere
-// (base URLs built from schemes, hosts and paths that matter, random and invalid bytes, keys, line size lists,
-// times around every threshold, file name components over the whole Int32 range).
+// (base URLs built from schemes, hosts and paths that matter, random and invalid bytes, pairs of base URLs for the
+// key binding, keys, model names, finish reasons, line size lists, times around every threshold, file name
+// components over the whole Int32 range).
 import Foundation
 import PonteSpecs
 import PonteSpeech
@@ -23,28 +24,40 @@ private typealias L = AnalysisRulesLegacy
                    L.maxNotesBytes, L.notesChars, L.listMax, L.requestTimeoutMs, L.probeTimeoutMs, L.maxTokens,
                    L.reportMaxTokens, L.probeMaxTokens, L.temperatureMilli, L.textOutMax, L.urlMax, L.keyMax], "limits")
         log.check(F.temperature, Double(L.temperatureMilli) / 1000, "temperature")
-        log.check([F.kindHTTP, F.kindTimeout, F.kindNetwork, F.kindEmpty, F.kindBadReply, F.kindNoKey, F.kindBadURL],
-                  [L.kindHTTP, L.kindTimeout, L.kindNetwork, L.kindEmpty, L.kindBadReply, L.kindNoKey, L.kindBadURL], "kinds")
+        log.check([F.kindHTTP, F.kindTimeout, F.kindNetwork, F.kindEmpty, F.kindBadReply, F.kindNoKey, F.kindBadURL, F.kindCut,
+                   F.kindKeyElsewhere],
+                  [L.kindHTTP, L.kindTimeout, L.kindNetwork, L.kindEmpty, L.kindBadReply, L.kindNoKey, L.kindBadURL, L.kindCut,
+                   L.kindKeyElsewhere], "kinds")
         log.check([F.errNone, F.errNetwork, F.errTimeout, F.errAuth, F.errPayment, F.errRateLimit, F.errServer, F.errNotFound,
-                   F.errRejected, F.errEmpty, F.errBadReply, F.errNoKey, F.errBadURL, F.errOther],
+                   F.errRejected, F.errEmpty, F.errBadReply, F.errNoKey, F.errBadURL, F.errOther, F.errCut, F.errKeyElsewhere],
                   [L.errNone, L.errNetwork, L.errTimeout, L.errAuth, L.errPayment, L.errRateLimit, L.errServer, L.errNotFound,
-                   L.errRejected, L.errEmpty, L.errBadReply, L.errNoKey, L.errBadURL, L.errOther], "error classes")
+                   L.errRejected, L.errEmpty, L.errBadReply, L.errNoKey, L.errBadURL, L.errOther, L.errCut, L.errKeyElsewhere],
+                  "error classes")
         log.check([F.maxAttempts, F.retryGiveUp, F.retryAgain, F.retryBaseMs, F.retryMaxMs, F.maxBackgroundFailures,
                    F.backgroundRetry, F.backgroundStop],
                   [L.maxAttempts, L.retryGiveUp, L.retryAgain, L.retryBaseMs, L.retryMaxMs, L.maxBackgroundFailures,
                    L.backgroundRetry, L.backgroundStop], "retries")
-        log.check([F.urlOK, F.urlEmpty, F.urlNoScheme, F.urlNoHost, F.urlSpace, F.urlTooLong, F.keyOK, F.keyEmpty, F.keyBadChar,
-                   F.keyTooLong, F.configOK, F.configNoKey, F.configBadURL, F.configNoModel],
-                  [L.urlOK, L.urlEmpty, L.urlNoScheme, L.urlNoHost, L.urlSpace, L.urlTooLong, L.keyOK, L.keyEmpty, L.keyBadChar,
-                   L.keyTooLong, L.configOK, L.configNoKey, L.configBadURL, L.configNoModel], "check codes")
+        log.check([F.urlOK, F.urlEmpty, F.urlNoScheme, F.urlNoHost, F.urlSpace, F.urlTooLong, F.urlHTTPRemote, F.keyOK, F.keyEmpty,
+                   F.keyBadChar, F.keyTooLong, F.configOK, F.configNoKey, F.configBadURL, F.configNoModel, F.configKeyElsewhere],
+                  [L.urlOK, L.urlEmpty, L.urlNoScheme, L.urlNoHost, L.urlSpace, L.urlTooLong, L.urlHTTPRemote, L.keyOK, L.keyEmpty,
+                   L.keyBadChar, L.keyTooLong, L.configOK, L.configNoKey, L.configBadURL, L.configNoModel, L.configKeyElsewhere],
+                  "check codes")
+        log.check([F.bindOK, F.bindOther, F.bindUnbound, F.modelMax, F.modelOK, F.modelEmpty, F.modelTooLong, F.modelBadChar,
+                   F.kcOK, F.kcNotFound, F.kcDuplicate, F.kcOther, F.saveOK, F.saveForeign, F.saveFailed],
+                  [L.bindOK, L.bindOther, L.bindUnbound, L.modelMax, L.modelOK, L.modelEmpty, L.modelTooLong, L.modelBadChar,
+                   L.kcOK, L.kcNotFound, L.kcDuplicate, L.kcOther, L.saveOK, L.saveForeign, L.saveFailed], "binding, model, Keychain codes")
+        log.check([F.finishNone, F.finishStop, F.finishLength, F.finishCut, F.finishOther, F.cutSmaller, F.cutCompress, F.cutFail,
+                   F.maxCuts, F.compressFromBytes, F.compressChars],
+                  [L.finishNone, L.finishStop, L.finishLength, L.finishCut, L.finishOther, L.cutSmaller, L.cutCompress, L.cutFail,
+                   L.maxCuts, L.compressFromBytes, L.compressChars], "reply codes")
         log.check([F.directionIncoming, F.directionOutgoing, F.speakerThem, F.speakerMe, F.openShow, F.openBuild, F.openExplain,
-                   F.checkOK, F.checkBusy, F.checkNotSet, F.checkNoLines],
+                   F.checkOK, F.checkBusy, F.checkNotSet, F.checkNoLines, F.checkOff, F.quitWaitLimitMs],
                   [L.directionIncoming, L.directionOutgoing, L.speakerThem, L.speakerMe, L.openShow, L.openBuild, L.openExplain,
-                   L.checkOK, L.checkBusy, L.checkNotSet, L.checkNoLines], "line and report codes")
+                   L.checkOK, L.checkBusy, L.checkNotSet, L.checkNoLines, L.checkOff, L.quitWaitLimitMs], "line and report codes")
         log.check(F.firstAttempt, L.firstAttempt, "first attempt")
         log.check(F.bearerPrefix, L.bearerPrefix, "bearer")
         log.check(F.chatPath, L.path, "path")
-        log.finish(minimumCases: 11)
+        log.finish(minimumCases: 13)
     }
 
     @Test func providers() {
@@ -63,16 +76,22 @@ private typealias L = AnalysisRulesLegacy
         log.finish(minimumCases: 30_000)
     }
 
+    static let schemes = ["https://", "http://", "HTTPS://", "Http://", "hTtPs://", "ftp://", "", "https:/", "https:", "https//",
+                          "http:///", "https:///", " https://", "ws://"]
+    static let hosts = ["api.z.ai", "api.deepseek.com", "localhost:11434", "127.0.0.1:8080", "пример.рф", "", "a", "a b", "x\ty",
+                        "ex\u{7F}", "host\r\n", "API.Z.AI", "é", "\u{00A0}", "openrouter.ai", "%20",
+                        // http:// is only for this Mac: the local names, with and without ports, and look-alikes.
+                        "localhost", "LocalHost", "127.0.0.1", "[::1]", "[::1]:11434", "localhost:", "localhost:8a", "localhost:0",
+                        "localhost@evil.example", "localhost.evil.example", "127.0.0.1.nip.io", "[::1", "::1", "127.0.0.2",
+                        "localhost:11434@x", "user@localhost", "LOCALHOST:65535", "localhost\\@x", "localhos", "localhostt"]
+    static let paths = ["/api/paas/v4", "/v1", "/", "//", "///", "/chat/completions", "/chat/completions/", "/chat/completions//",
+                        "/CHAT/completions", "", "/v1/chat/completions", "chat/completions", "/api/paas/v4/", "?q=1", "#x", "/v1 "]
+
     @Test func baseURLsAndEndpoints() {
-        let log = DiffLog("baseURLCheck, endpoint")
+        let log = DiffLog("baseURLCheck, endpoint, endpointCore")
         var r = DiffRandom(seed: 2027)
         var urls: [[UInt8]] = Self.fixtures()
-        let schemes = ["https://", "http://", "HTTPS://", "Http://", "hTtPs://", "ftp://", "", "https:/", "https:", "https//",
-                       "http:///", "https:///", " https://", "ws://"]
-        let hosts = ["api.z.ai", "api.deepseek.com", "localhost:11434", "127.0.0.1:8080", "пример.рф", "", "a", "a b", "x\ty",
-                     "ex\u{7F}", "host\r\n", "API.Z.AI", "é", "\u{00A0}", "openrouter.ai", "%20"]
-        let paths = ["/api/paas/v4", "/v1", "/", "//", "///", "/chat/completions", "/chat/completions/", "/chat/completions//",
-                     "/CHAT/completions", "", "/v1/chat/completions", "chat/completions", "/api/paas/v4/", "?q=1", "#x", "/v1 "]
+        let schemes = Self.schemes, hosts = Self.hosts, paths = Self.paths
         for scheme in schemes {
             for host in hosts {
                 for path in paths { urls.append(Array((scheme + host + path).utf8)) }
@@ -96,8 +115,118 @@ private typealias L = AnalysisRulesLegacy
         for url in urls {
             log.check(F.baseURLCheck(utf8: url), L.baseURLCheck(utf8: url), "\(url.count) bytes: \(String(decoding: url.prefix(80), as: UTF8.self))")
             log.check(F.endpoint(utf8: url), L.endpoint(utf8: url), "\(url.count) bytes: \(String(decoding: url.prefix(80), as: UTF8.self))")
+            log.check(F.endpointCore(utf8: url), L.endpointCore(utf8: url), "\(url.count) bytes: \(String(decoding: url.prefix(80), as: UTF8.self))")
         }
-        log.finish(minimumCases: 20_000)
+        log.finish(minimumCases: 40_000)
+    }
+
+    /// The key binding: pairs of base URLs (variants of one address that send to the same endpoint, and look-alikes
+    /// that do not), the binding rule over every flag and provider code, the configuration check with it.
+    @Test func keyBinding() {
+        let log = DiffLog("sameEndpoint, bindCheck, configCheck")
+        var r = DiffRandom(seed: 0xB1D)
+        let bases = ["https://api.z.ai/api/paas/v4", "https://api.deepseek.com", "http://localhost:11434/v1", "https://x.ponte.test/v1",
+                     "http://[::1]:8080", "https://api.z.ai/api/coding/paas/v4", "HTTPS://API.DEEPSEEK.COM", "http://example.com/v1"]
+        let tails = ["", "/", "//", "/chat/completions", "/chat/completions/", "/chat/completions//", "/v1", "/CHAT/COMPLETIONS",
+                     " ", "/chat/completions/chat/completions", "?a", "#"]
+        var urls: [[UInt8]] = Self.fixtures()
+        for base in bases { for tail in tails { urls.append(Array((base + tail).utf8)) } }
+        for _ in 0..<400 {
+            urls.append(Array((r.pick(Self.schemes) + r.pick(Self.hosts) + r.pick(Self.paths) + r.pick(tails)).utf8))
+        }
+        for _ in 0..<100 { urls.append(r.bytes(maxCount: 40)) }
+        for a in urls.prefix(250) {
+            for b in urls.prefix(250) {
+                log.check(F.sameEndpoint(a, b), L.sameEndpoint(a, b), "\(String(decoding: a, as: UTF8.self)) | \(String(decoding: b, as: UTF8.self))")
+            }
+        }
+        for _ in 0..<40_000 {
+            let a = r.pick(urls), b = r.bool() ? r.pick(urls) : a + Array(r.pick(tails).utf8)
+            log.check(F.sameEndpoint(a, b), L.sameEndpoint(a, b), "\(String(decoding: a, as: UTF8.self)) | \(String(decoding: b, as: UTF8.self))")
+        }
+        // Long addresses around the buffer.
+        for length in [2014, 2030, 2031, 2032, 2048, 2049, 4000] {
+            let a = Array(("https://" + String(repeating: "a", count: max(0, length - 8))).utf8)
+            log.check(F.sameEndpoint(a, a), L.sameEndpoint(a, a), "\(length) bytes")
+            log.check(F.sameEndpoint(a, a + [0x2F]), L.sameEndpoint(a, a + [0x2F]), "\(length) bytes + /")
+        }
+        let bools = [false, true]
+        for hasBound in bools { for same in bools { for def in bools {
+            for provider in Array(-3...6) + [Int.min, Int.max] {
+                log.check(F.bindCheck(hasBound: hasBound, sameAsBound: same, provider: provider, sameAsDefault: def),
+                          L.bindCheck(hasBound: hasBound, sameAsBound: same, provider: provider, sameAsDefault: def),
+                          describe(hasBound, same, provider, def))
+            }
+        } } }
+        let sizes = [-3, -1, 0, 1, 2, 5, 100, Int(Int32.max), 1 << 40]
+        for key in sizes {
+            for url in -2...8 {
+                for model in sizes {
+                    for bind in -2...4 {
+                        log.check(F.configCheck(keyBytes: key, urlCheck: url, modelBytes: model, bind: bind),
+                                  L.configCheck(keyBytes: key, urlCheck: url, modelBytes: model, bind: bind), describe(key, url, model, bind))
+                    }
+                }
+            }
+        }
+        log.finish(minimumCases: 100_000)
+    }
+
+    @Test func modelsAndKeychainOutcomes() {
+        let log = DiffLog("modelCheck, keyWriteOutcome")
+        var r = DiffRandom(seed: 4096)
+        var models: [[UInt8]] = Self.fixtures() + [[], [0x7F], [0x20], [0x21], [0xFF]]
+        for c in 0...255 { models.append(Array("glm-".utf8) + [UInt8(c)]) }
+        for length in [255, 256, 257, 1000, 2047, 2048, 2049, 5000] {
+            models.append([UInt8](repeating: 0x61, count: length))
+            models.append([UInt8](repeating: 0x61, count: length - 1) + [0x20])
+        }
+        for _ in 0..<6000 { models.append(Array(r.text(maxPieces: r.pick([3, 12, 60])).utf8)) }
+        for _ in 0..<4000 { models.append(r.bytes(maxCount: r.pick([8, 64, 300]))) }
+        for model in models {
+            log.check(F.modelCheck(utf8: model), L.modelCheck(utf8: model), "\(model.count) bytes")
+        }
+        for added in Array(-5...10) + [Int.min, Int.max] {
+            log.check(F.keyWriteOutcome(added: added), L.keyWriteOutcome(added: added), "\(added)")
+        }
+        log.finish(minimumCases: 10_000)
+    }
+
+    @Test func replies() {
+        let log = DiffLog("finishCode, replyComplete, afterCut, cutLineCap")
+        var r = DiffRandom(seed: 0xF1)
+        var words: [[UInt8]] = Self.fixtures()
+        for word in ["stop", "length", "content_filter", "sensitive", "insufficient_system_resource", "network_error", "tool_calls",
+                     "function_call", "eos", "end_turn", "STOP", "Length", "stop ", " stop", "stopp", "sto", "lengt", "", "null",
+                     "content_filter\n", "network_error\u{0}", "sensitivé"] {
+            words.append(Array(word.utf8))
+        }
+        words.append([UInt8](repeating: 0x61, count: 256))
+        words.append([UInt8](repeating: 0x61, count: 257))
+        words.append(Array("stop".utf8) + [UInt8](repeating: 0, count: 300))
+        for _ in 0..<5000 { words.append(Array(r.text(maxPieces: 6).utf8)) }
+        for _ in 0..<3000 { words.append(r.bytes(maxCount: r.pick([6, 30, 300]))) }
+        for word in words {
+            log.check(F.finishCode(utf8: word), L.finishCode(utf8: word), "\(String(decoding: word.prefix(40), as: UTF8.self))")
+        }
+        for finish in Array(-3...8) + [Int.min, Int.max] {
+            log.check(F.replyComplete(finish: finish), L.replyComplete(finish: finish), "\(finish)")
+        }
+        let taken = Array(-3...300) + [Int.min, Int.max]
+        for t in taken {
+            log.check(F.cutLineCap(taken: t), L.cutLineCap(taken: t), "\(t)")
+            for cuts in [Int.min, -1, 0, 1, 2, 5, 6, 7, 100] {
+                for notes in [Int.min, -1, 0, 100, 5999, 6000, 6001, 24_000, Int.max] {
+                    log.check(F.afterCut(taken: t, cuts: cuts, notesBytes: notes), L.afterCut(taken: t, cuts: cuts, notesBytes: notes),
+                              describe(t, cuts, notes))
+                }
+            }
+        }
+        for _ in 0..<20_000 {
+            let t = r.int(-1_000_000...1_000_000), c = r.int(-100...100), n = r.int(-1_000_000...1_000_000)
+            log.check(F.afterCut(taken: t, cuts: c, notesBytes: n), L.afterCut(taken: t, cuts: c, notesBytes: n), describe(t, c, n))
+        }
+        log.finish(minimumCases: 50_000)
     }
 
     @Test func keys() {
@@ -129,8 +258,11 @@ private typealias L = AnalysisRulesLegacy
         for key in sizes {
             for url in -2...8 {
                 for model in sizes {
-                    log.check(F.configCheck(keyBytes: key, urlCheck: url, modelBytes: model),
-                              L.configCheck(keyBytes: key, urlCheck: url, modelBytes: model), describe(key, url, model))
+                    for bind in [F.bindOK, F.bindUnbound] {
+                        log.check(F.configCheck(keyBytes: key, urlCheck: url, modelBytes: model, bind: bind),
+                                  L.configCheck(keyBytes: key, urlCheck: url, modelBytes: model, bind: bind),
+                                  describe(key, url, model, bind))
+                    }
                 }
             }
         }
@@ -270,28 +402,33 @@ private typealias L = AnalysisRulesLegacy
     }
 
     @Test func reportRules() {
-        let log = DiffLog("reportOnStop, reportOnOpen, buildCheck, reportButtonEnabled, saveBeforeReset, durationMinutes")
+        let log = DiffLog("reportOnStop, reportOnOpen, buildCheck, reportButtonEnabled, saveBeforeReset, quitWaitMs, durationMinutes")
         let bools = [false, true]
         let counts = Array(-3...12) + [Int.min, Int.max, 1000]
         for a in bools {
             for b in bools {
                 log.check(F.saveBeforeReset(hasReport: a, saved: b), L.saveBeforeReset(hasReport: a, saved: b), describe(a, b))
                 for n in counts {
-                    log.check(F.reportOnStop(enabled: a, configured: b, lines: n), L.reportOnStop(enabled: a, configured: b, lines: n),
-                              describe(a, b, n))
-                    log.check(F.buildCheck(busy: a, configured: b, lines: n), L.buildCheck(busy: a, configured: b, lines: n),
-                              describe(a, b, n))
                     log.check(F.reportButtonEnabled(lines: n, hasReport: a, busy: b), L.reportButtonEnabled(lines: n, hasReport: a, busy: b),
                               describe(n, a, b))
                     for c in bools {
-                        for reportLines in counts {
-                            log.check(F.reportOnOpen(busy: a, hasReport: b, reportLines: reportLines, lines: n, configured: c),
-                                      L.reportOnOpen(busy: a, hasReport: b, reportLines: reportLines, lines: n, configured: c),
-                                      describe(a, b, reportLines, n, c))
+                        log.check(F.reportOnStop(enabled: a, configured: b, lines: n, quitting: c),
+                                  L.reportOnStop(enabled: a, configured: b, lines: n, quitting: c), describe(a, b, n, c))
+                        for e in bools {
+                            log.check(F.buildCheck(enabled: e, busy: a, configured: b, lines: n),
+                                      L.buildCheck(enabled: e, busy: a, configured: b, lines: n), describe(e, a, b, n))
+                            for reportLines in counts {
+                                log.check(F.reportOnOpen(enabled: e, busy: a, hasReport: b, reportLines: reportLines, lines: n, configured: c),
+                                          L.reportOnOpen(enabled: e, busy: a, hasReport: b, reportLines: reportLines, lines: n, configured: c),
+                                          describe(e, a, b, reportLines, n, c))
+                            }
                         }
                     }
                 }
             }
+        }
+        for builds in Array(-5...20) + [Int.min, Int.max] {
+            log.check(F.quitWaitMs(builds: builds), L.quitWaitMs(builds: builds), "\(builds)")
         }
         var r = DiffRandom(seed: 60_000)
         var times = Array(-5...5) + [29_999, 30_000, 89_999, 90_000, 149_999, 150_000, Int.min, Int.max - 30_000]

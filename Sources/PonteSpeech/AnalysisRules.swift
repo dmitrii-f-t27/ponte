@@ -2,8 +2,8 @@
 //
 // The decisions are written in t27 (Specs/analysis_rules.t27) and compiled to C (Sources/PonteSpecs). This facade
 // only marshals: integers to and from Int64, Bool straight through, UTF-8 text into the fixed buffers the C takes
-// (AN_URL_MAX bytes for a base URL or a key, AN_TEXT_OUT_MAX for names) and byte strings back. Constants come
-// from the C #defines. The test oracle is AnalysisRulesLegacy (Tests/PonteTests/Oracles), a separate plain-Swift
+// (AN_URL_MAX bytes for a base URL, a key or a model name, AN_TEXT_OUT_MAX for names and a finish_reason) and byte
+// strings back. Constants come from the C #defines. The test oracle is AnalysisRulesLegacy (Tests/PonteTests/Oracles), a separate plain-Swift
 // implementation of the same rules; AnalysisRulesDifferentialTests compare both bit for bit.
 // Units: times are integer milliseconds, sizes UTF-8 bytes.
 // Domains: a base URL or a key longer than AN_URL_MAX bytes is reported as too long without being read past the
@@ -77,6 +77,8 @@ public enum AnalysisRules {
     public static let kindBadReply = Int(AN_KIND_BAD_REPLY)
     public static let kindNoKey = Int(AN_KIND_NO_KEY)
     public static let kindBadURL = Int(AN_KIND_BAD_URL)
+    public static let kindCut = Int(AN_KIND_CUT)
+    public static let kindKeyElsewhere = Int(AN_KIND_KEY_ELSEWHERE)
 
     public static let errNone = Int(AN_ERR_NONE)
     public static let errNetwork = Int(AN_ERR_NETWORK)
@@ -92,6 +94,8 @@ public enum AnalysisRules {
     public static let errNoKey = Int(AN_ERR_NO_KEY)
     public static let errBadURL = Int(AN_ERR_BAD_URL)
     public static let errOther = Int(AN_ERR_OTHER)
+    public static let errCut = Int(AN_ERR_CUT)
+    public static let errKeyElsewhere = Int(AN_ERR_KEY_ELSEWHERE)
 
     public static func httpClass(status: Int) -> Int { Int(an_http_class(Int64(status))) }
     public static func errorClass(kind: Int, status: Int) -> Int { Int(an_error_class(Int64(kind), Int64(status))) }
@@ -117,6 +121,37 @@ public enum AnalysisRules {
     /// «Проверить»: the service answered.
     public static func probeOK(error: Int) -> Bool { an_probe_ok(Int64(error)) }
 
+    // MARK: - Replies
+
+    public static let finishNone = Int(AN_FINISH_NONE)
+    public static let finishStop = Int(AN_FINISH_STOP)
+    public static let finishLength = Int(AN_FINISH_LENGTH)
+    public static let finishCut = Int(AN_FINISH_CUT)
+    public static let finishOther = Int(AN_FINISH_OTHER)
+    public static let cutSmaller = Int(AN_CUT_SMALLER)
+    public static let cutCompress = Int(AN_CUT_COMPRESS)
+    public static let cutFail = Int(AN_CUT_FAIL)
+    public static let maxCuts = Int(AN_MAX_CUTS)
+    public static let compressFromBytes = Int(AN_COMPRESS_FROM_BYTES)
+    public static let compressChars = Int(AN_COMPRESS_CHARS)
+
+    /// The code of choices[0].finish_reason (its UTF-8 bytes; the C reads at most AN_TEXT_OUT_MAX of them).
+    public static func finishCode(utf8: [UInt8]) -> Int {
+        var buffer = [UInt8](repeating: 0, count: textOutMax)
+        let n = min(utf8.count, textOutMax)
+        buffer.replaceSubrange(0..<n, with: utf8[0..<n])
+        return Int(an_finish_code(&buffer, Int64(utf8.count)))
+    }
+
+    /// The reply ended by itself (not cut at max_tokens or by the service).
+    public static func replyComplete(finish: Int) -> Bool { an_reply_complete(Int64(finish)) }
+    /// After a cut notes reply: AnalysisRules.cutSmaller, cutCompress or cutFail.
+    public static func afterCut(taken: Int, cuts: Int, notesBytes: Int) -> Int {
+        Int(an_after_cut(Int64(taken), Int64(cuts), Int64(notesBytes)))
+    }
+    /// At most this many lines in the next notes request after a cut one that took `taken`.
+    public static func cutLineCap(taken: Int) -> Int { Int(an_cut_line_cap(Int64(taken))) }
+
     // MARK: - Base URL, key and configuration
 
     public static let urlOK = Int(AN_URL_OK)
@@ -125,6 +160,7 @@ public enum AnalysisRules {
     public static let urlNoHost = Int(AN_URL_NO_HOST)
     public static let urlSpace = Int(AN_URL_SPACE)
     public static let urlTooLong = Int(AN_URL_TOO_LONG)
+    public static let urlHTTPRemote = Int(AN_URL_HTTP_REMOTE)
 
     /// Whether a base URL (trimmed) can be used.
     public static func baseURLCheck(utf8: [UInt8]) -> Int {
@@ -151,14 +187,60 @@ public enum AnalysisRules {
         return Int(an_key_check(&b.bytes, b.length))
     }
 
+    /// The length of the part of a base URL the endpoint is built on (no trailing slashes, no final path).
+    public static func endpointCore(utf8: [UInt8]) -> Int {
+        var b = URLBuffer(utf8)
+        return Int(an_endpoint_core(&b.bytes, b.length))
+    }
+
+    /// Both base URLs are usable and send to the same endpoint.
+    public static func sameEndpoint(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+        var x = URLBuffer(a)
+        var y = URLBuffer(b)
+        return an_same_endpoint(&x.bytes, x.length, &y.bytes, y.length)
+    }
+
+    public static let bindOK = Int(AN_BIND_OK)
+    public static let bindOther = Int(AN_BIND_OTHER)
+    public static let bindUnbound = Int(AN_BIND_UNBOUND)
+
+    /// Whether the saved key may go to the configured base URL (AnalysisRules.bind*).
+    public static func bindCheck(hasBound: Bool, sameAsBound: Bool, provider: Int, sameAsDefault: Bool) -> Int {
+        Int(an_bind_check(hasBound, sameAsBound, Int64(provider), sameAsDefault))
+    }
+
     public static let configOK = Int(AN_CFG_OK)
     public static let configNoKey = Int(AN_CFG_NO_KEY)
     public static let configBadURL = Int(AN_CFG_BAD_URL)
     public static let configNoModel = Int(AN_CFG_NO_MODEL)
+    public static let configKeyElsewhere = Int(AN_CFG_KEY_ELSEWHERE)
 
-    public static func configCheck(keyBytes: Int, urlCheck: Int, modelBytes: Int) -> Int {
-        Int(an_config_check(Int64(keyBytes), Int64(urlCheck), Int64(modelBytes)))
+    public static func configCheck(keyBytes: Int, urlCheck: Int, modelBytes: Int, bind: Int) -> Int {
+        Int(an_config_check(Int64(keyBytes), Int64(urlCheck), Int64(modelBytes), Int64(bind)))
     }
+
+    public static let modelMax = Int(AN_MODEL_MAX)
+    public static let modelOK = Int(AN_MODEL_OK)
+    public static let modelEmpty = Int(AN_MODEL_EMPTY)
+    public static let modelTooLong = Int(AN_MODEL_TOO_LONG)
+    public static let modelBadChar = Int(AN_MODEL_BAD_CHAR)
+
+    /// Whether a model name (trimmed) can be applied.
+    public static func modelCheck(utf8: [UInt8]) -> Int {
+        var b = URLBuffer(utf8)
+        return Int(an_model_check(&b.bytes, b.length))
+    }
+
+    public static let kcOK = Int(AN_KC_OK)
+    public static let kcNotFound = Int(AN_KC_NOT_FOUND)
+    public static let kcDuplicate = Int(AN_KC_DUPLICATE)
+    public static let kcOther = Int(AN_KC_OTHER)
+    public static let saveOK = Int(AN_SAVE_OK)
+    public static let saveForeign = Int(AN_SAVE_FOREIGN)
+    public static let saveFailed = Int(AN_SAVE_FAILED)
+
+    /// What saving a key did, from what adding the Keychain item returned (AnalysisRules.kc*).
+    public static func keyWriteOutcome(added: Int) -> Int { Int(an_key_write_outcome(Int64(added))) }
 
     /// «Анализировать звонок»: never without a key or in test mode; else the stored choice, on by default.
     public static func analysisOn(hasStored: Bool, stored: Bool, hasKey: Bool, testMode: Bool) -> Bool {
@@ -216,18 +298,24 @@ public enum AnalysisRules {
     public static let checkBusy = Int(AN_CHECK_BUSY)
     public static let checkNotSet = Int(AN_CHECK_NOT_SET)
     public static let checkNoLines = Int(AN_CHECK_NO_LINES)
+    public static let checkOff = Int(AN_CHECK_OFF)
+    /// AN_QUIT_WAIT_MS.
+    public static let quitWaitLimitMs = Int(AN_QUIT_WAIT_MS)
 
-    public static func reportOnStop(enabled: Bool, configured: Bool, lines: Int) -> Bool {
-        an_report_on_stop(enabled, configured, Int64(lines))
+    public static func reportOnStop(enabled: Bool, configured: Bool, lines: Int, quitting: Bool) -> Bool {
+        an_report_on_stop(enabled, configured, Int64(lines), quitting)
     }
 
-    public static func reportOnOpen(busy: Bool, hasReport: Bool, reportLines: Int, lines: Int, configured: Bool) -> Int {
-        Int(an_report_on_open(busy, hasReport, Int64(reportLines), Int64(lines), configured))
+    public static func reportOnOpen(enabled: Bool, busy: Bool, hasReport: Bool, reportLines: Int, lines: Int, configured: Bool) -> Int {
+        Int(an_report_on_open(enabled, busy, hasReport, Int64(reportLines), Int64(lines), configured))
     }
 
-    public static func buildCheck(busy: Bool, configured: Bool, lines: Int) -> Int {
-        Int(an_build_check(busy, configured, Int64(lines)))
+    public static func buildCheck(enabled: Bool, busy: Bool, configured: Bool, lines: Int) -> Int {
+        Int(an_build_check(enabled, busy, configured, Int64(lines)))
     }
+
+    /// On quit: how long to wait for `builds` reports still being written.
+    public static func quitWaitMs(builds: Int) -> Int { Int(an_quit_wait_ms(Int64(builds))) }
 
     public static func reportButtonEnabled(lines: Int, hasReport: Bool, busy: Bool) -> Bool {
         an_report_button_enabled(Int64(lines), hasReport, busy)

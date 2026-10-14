@@ -45,6 +45,8 @@
 #define AN_KIND_BAD_REPLY 4
 #define AN_KIND_NO_KEY 5
 #define AN_KIND_BAD_URL 6
+#define AN_KIND_CUT 7
+#define AN_KIND_KEY_ELSEWHERE 8
 #define AN_ERR_NONE 0
 #define AN_ERR_NETWORK 1
 #define AN_ERR_TIMEOUT 2
@@ -59,6 +61,8 @@
 #define AN_ERR_NO_KEY 11
 #define AN_ERR_BAD_URL 12
 #define AN_ERR_OTHER 13
+#define AN_ERR_CUT 14
+#define AN_ERR_KEY_ELSEWHERE 15
 #define AN_HTTP_NO_RESPONSE 0
 #define AN_HTTP_OK_FIRST 200
 #define AN_HTTP_OK_END 300
@@ -85,16 +89,48 @@
 #define AN_URL_NO_HOST 3
 #define AN_URL_SPACE 4
 #define AN_URL_TOO_LONG 5
+#define AN_URL_HTTP_REMOTE 6
 #define AN_CFG_OK 0
 #define AN_CFG_NO_KEY 1
 #define AN_CFG_BAD_URL 2
 #define AN_CFG_NO_MODEL 3
+#define AN_CFG_KEY_ELSEWHERE 4
+#define AN_BIND_OK 0
+#define AN_BIND_OTHER 1
+#define AN_BIND_UNBOUND 2
+#define AN_MODEL_MAX 256
+#define AN_MODEL_OK 0
+#define AN_MODEL_EMPTY 1
+#define AN_MODEL_TOO_LONG 2
+#define AN_MODEL_BAD_CHAR 3
+#define AN_KC_OK 0
+#define AN_KC_NOT_FOUND 1
+#define AN_KC_DUPLICATE 2
+#define AN_KC_OTHER 3
+#define AN_SAVE_OK 0
+#define AN_SAVE_FOREIGN 1
+#define AN_SAVE_FAILED 2
 #define AN_KEY_MAX 1024
 #define AN_KEY_OK 0
 #define AN_KEY_EMPTY 1
 #define AN_KEY_BAD_CHAR 2
 #define AN_KEY_TOO_LONG 3
 #define AN_TILDE 126
+#define AN_COLON 58
+#define AN_QUESTION 63
+#define AN_HASH 35
+#define AN_DIGIT_9 57
+#define AN_FINISH_NONE 0
+#define AN_FINISH_STOP 1
+#define AN_FINISH_LENGTH 2
+#define AN_FINISH_CUT 3
+#define AN_FINISH_OTHER 4
+#define AN_CUT_SMALLER 0
+#define AN_CUT_COMPRESS 1
+#define AN_CUT_FAIL 2
+#define AN_MAX_CUTS 6
+#define AN_COMPRESS_FROM_BYTES 6000
+#define AN_COMPRESS_CHARS 3000
 #define AN_OPEN_SHOW 0
 #define AN_OPEN_BUILD 1
 #define AN_OPEN_EXPLAIN 2
@@ -102,6 +138,8 @@
 #define AN_CHECK_BUSY 1
 #define AN_CHECK_NOT_SET 2
 #define AN_CHECK_NO_LINES 3
+#define AN_CHECK_OFF 4
+#define AN_QUIT_WAIT_MS 10000
 #define AN_DIR_INCOMING 0
 #define AN_DIR_OUTGOING 1
 #define AN_SPEAKER_THEM 0
@@ -120,6 +158,10 @@
 #define AN_ROW_FIRST_ID 0
 #define AN_ROW_FIRST_BASE 3
 #define AN_ROW_FIRST_MODEL 6
+#define AN_ROW_FIRST_LOCAL 18
+#define AN_LOCAL_COUNT 3
+#define AN_ROW_FIRST_FINISH_CUT 21
+#define AN_FINISH_CUT_COUNT 4
 #define AN_ROW_ID_0 0
 #define AN_ROW_ID_1 1
 #define AN_ROW_ID_2 2
@@ -136,10 +178,19 @@
 #define AN_ROW_HTTP 13
 #define AN_ROW_REPORT_PREFIX 14
 #define AN_ROW_REPORT_SUFFIX 15
-#define AN_ROW_COUNT 16
-static const uint8_t AN_ROW_TEXT[167] = { 122, 97, 105, 100, 101, 101, 112, 115, 101, 101, 107, 99, 117, 115, 116, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 103, 108, 109, 45, 52, 46, 53, 45, 102, 108, 97, 115, 104, 100, 101, 101, 112, 115, 101, 101, 107, 45, 102, 108, 97, 115, 104, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 66, 101, 97, 114, 101, 114, 32, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 58, 47, 47, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 46, 116, 120, 116 };
-static const uint32_t AN_ROW_OFFSETS[16] = { 0, 3, 11, 17, 45, 69, 69, 82, 96, 96, 113, 128, 135, 143, 150, 163 };
-static const uint32_t AN_ROW_LENGTHS[16] = { 3, 8, 6, 28, 24, 0, 13, 14, 0, 17, 15, 7, 8, 7, 13, 4 };
+#define AN_ROW_FINISH_STOP 16
+#define AN_ROW_FINISH_LENGTH 17
+#define AN_ROW_LOCAL_0 18
+#define AN_ROW_LOCAL_1 19
+#define AN_ROW_LOCAL_2 20
+#define AN_ROW_FINISH_CUT_0 21
+#define AN_ROW_FINISH_CUT_1 22
+#define AN_ROW_FINISH_CUT_2 23
+#define AN_ROW_FINISH_CUT_3 24
+#define AN_ROW_COUNT 25
+static const uint8_t AN_ROW_TEXT[264] = { 122, 97, 105, 100, 101, 101, 112, 115, 101, 101, 107, 99, 117, 115, 116, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 103, 108, 109, 45, 52, 46, 53, 45, 102, 108, 97, 115, 104, 100, 101, 101, 112, 115, 101, 101, 107, 45, 102, 108, 97, 115, 104, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 66, 101, 97, 114, 101, 114, 32, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 58, 47, 47, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 46, 116, 120, 116, 115, 116, 111, 112, 108, 101, 110, 103, 116, 104, 108, 111, 99, 97, 108, 104, 111, 115, 116, 49, 50, 55, 46, 48, 46, 48, 46, 49, 91, 58, 58, 49, 93, 99, 111, 110, 116, 101, 110, 116, 95, 102, 105, 108, 116, 101, 114, 115, 101, 110, 115, 105, 116, 105, 118, 101, 105, 110, 115, 117, 102, 102, 105, 99, 105, 101, 110, 116, 95, 115, 121, 115, 116, 101, 109, 95, 114, 101, 115, 111, 117, 114, 99, 101, 110, 101, 116, 119, 111, 114, 107, 95, 101, 114, 114, 111, 114 };
+static const uint32_t AN_ROW_OFFSETS[25] = { 0, 3, 11, 17, 45, 69, 69, 82, 96, 96, 113, 128, 135, 143, 150, 163, 167, 171, 177, 186, 195, 200, 214, 223, 251 };
+static const uint32_t AN_ROW_LENGTHS[25] = { 3, 8, 6, 28, 24, 0, 13, 14, 0, 17, 15, 7, 8, 7, 13, 4, 4, 6, 9, 9, 5, 14, 9, 28, 13 };
 #define AN_FX_ZAI_BASE 0
 #define AN_FX_ZAI_SLASH 1
 #define AN_FX_ZAI_ENDPOINT 2
@@ -161,10 +212,29 @@ static const uint32_t AN_ROW_LENGTHS[16] = { 3, 8, 6, 28, 24, 0, 13, 14, 0, 17, 
 #define AN_FX_REPORT_2359_2 18
 #define AN_FX_REPORT_0000_12 19
 #define AN_FX_CYRILLIC 20
-#define AN_FX_COUNT 21
-static const uint8_t AN_FX_TEXT[524] = { 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 72, 84, 84, 80, 83, 58, 47, 47, 65, 80, 73, 46, 68, 69, 69, 80, 83, 69, 69, 75, 46, 67, 79, 77, 102, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 32, 98, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 122, 97, 105, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 99, 117, 115, 116, 111, 109, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 49, 48, 45, 49, 51, 45, 49, 52, 48, 53, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 48, 49, 45, 48, 50, 45, 50, 51, 53, 57, 45, 50, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 55, 45, 49, 50, 45, 51, 49, 45, 48, 48, 48, 48, 45, 49, 50, 46, 116, 120, 116, 104, 116, 116, 112, 115, 58, 47, 47, 208, 191, 209, 128, 208, 184, 208, 188, 208, 181, 209, 128, 46, 209, 128, 209, 132, 47, 118, 49 };
-static const uint32_t AN_FX_OFFSETS[21] = { 0, 28, 58, 103, 149, 190, 215, 257, 281, 298, 306, 315, 335, 355, 355, 356, 374, 395, 427, 461, 496 };
-static const uint32_t AN_FX_LENGTHS[21] = { 28, 30, 45, 46, 41, 25, 42, 24, 17, 8, 9, 20, 20, 0, 1, 18, 21, 32, 34, 35, 28 };
+#define AN_FX_HTTP_LOCAL_IP 21
+#define AN_FX_HTTP_LOCAL_V6 22
+#define AN_FX_HTTP_LOCAL_UPPER 23
+#define AN_FX_HTTP_LOCAL_QUERY 24
+#define AN_FX_HTTP_REMOTE 25
+#define AN_FX_HTTP_USERINFO 26
+#define AN_FX_HTTP_SUBDOMAIN 27
+#define AN_FX_HTTP_EMPTY_PORT 28
+#define AN_FX_HTTP_BAD_PORT 29
+#define AN_FX_HTTP_NO_AUTHORITY 30
+#define AN_FX_HTTP_ONLY 31
+#define AN_FX_ZAI_CODING 32
+#define AN_FX_FINISH_STOP 33
+#define AN_FX_FINISH_LENGTH 34
+#define AN_FX_FINISH_FILTER 35
+#define AN_FX_FINISH_TOOLS 36
+#define AN_FX_FINISH_UPPER 37
+#define AN_FX_MODEL_SLASH 38
+#define AN_FX_MODEL_SPACE 39
+#define AN_FX_COUNT 40
+static const uint8_t AN_FX_TEXT[864] = { 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 72, 84, 84, 80, 83, 58, 47, 47, 65, 80, 73, 46, 68, 69, 69, 80, 83, 69, 69, 75, 46, 67, 79, 77, 102, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 32, 98, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 122, 97, 105, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 99, 117, 115, 116, 111, 109, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 49, 48, 45, 49, 51, 45, 49, 52, 48, 53, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 48, 49, 45, 48, 50, 45, 50, 51, 53, 57, 45, 50, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 55, 45, 49, 50, 45, 51, 49, 45, 48, 48, 48, 48, 45, 49, 50, 46, 116, 120, 116, 104, 116, 116, 112, 115, 58, 47, 47, 208, 191, 209, 128, 208, 184, 208, 188, 208, 181, 209, 128, 46, 209, 128, 209, 132, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58, 56, 48, 56, 48, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 91, 58, 58, 49, 93, 58, 49, 49, 52, 51, 52, 72, 84, 84, 80, 58, 47, 47, 76, 111, 99, 97, 108, 72, 111, 115, 116, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 63, 120, 61, 49, 104, 116, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 64, 101, 118, 105, 108, 46, 101, 120, 97, 109, 112, 108, 101, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 46, 101, 118, 105, 108, 46, 101, 120, 97, 109, 112, 108, 101, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58, 56, 48, 97, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 104, 116, 116, 112, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 99, 111, 100, 105, 110, 103, 47, 112, 97, 97, 115, 47, 118, 52, 115, 116, 111, 112, 108, 101, 110, 103, 116, 104, 99, 111, 110, 116, 101, 110, 116, 95, 102, 105, 108, 116, 101, 114, 116, 111, 111, 108, 95, 99, 97, 108, 108, 115, 83, 84, 79, 80, 100, 101, 101, 112, 115, 101, 101, 107, 47, 100, 101, 101, 112, 115, 101, 101, 107, 45, 99, 104, 97, 116, 58, 102, 114, 101, 101, 103, 108, 109, 32, 52, 46, 53 };
+static const uint32_t AN_FX_OFFSETS[40] = { 0, 28, 58, 103, 149, 190, 215, 257, 281, 298, 306, 315, 335, 355, 355, 356, 374, 395, 427, 461, 496, 524, 548, 566, 585, 605, 626, 658, 690, 710, 733, 750, 757, 792, 796, 802, 816, 826, 830, 857 };
+static const uint32_t AN_FX_LENGTHS[40] = { 28, 30, 45, 46, 41, 25, 42, 24, 17, 8, 9, 20, 20, 0, 1, 18, 21, 32, 34, 35, 28, 24, 18, 19, 20, 21, 32, 32, 20, 23, 17, 7, 35, 4, 6, 14, 10, 4, 27, 7 };
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -178,9 +248,16 @@ bool an_thinking_off(int64_t provider);
 uint8_t an_lower(uint8_t byte);
 bool an_starts_with_row(uint8_t text[static 2048], int64_t len, int64_t row);
 int64_t an_scheme_length(uint8_t text[static 2048], int64_t len);
+bool an_authority_is(uint8_t text[static 2048], int64_t from, int64_t end, int64_t row);
+bool an_http_local(uint8_t text[static 2048], int64_t len, int64_t from);
 int64_t an_base_url_check(uint8_t text[static 2048], int64_t len);
 int64_t an_endpoint(uint8_t base[static 2048], int64_t len, uint8_t out[static 2048]);
-int64_t an_config_check(int64_t key_bytes, int64_t url_check, int64_t model_bytes);
+int64_t an_endpoint_core(uint8_t base[static 2048], int64_t len);
+bool an_same_endpoint(uint8_t a[static 2048], int64_t a_len, uint8_t b[static 2048], int64_t b_len);
+int64_t an_bind_check(bool has_bound, bool same_as_bound, int64_t provider, bool same_as_default);
+int64_t an_config_check(int64_t key_bytes, int64_t url_check, int64_t model_bytes, int64_t bind);
+int64_t an_model_check(uint8_t text[static 2048], int64_t len);
+int64_t an_key_write_outcome(int64_t added);
 int64_t an_key_check(uint8_t text[static 2048], int64_t len);
 bool an_analysis_on(bool has_stored, bool stored, bool has_key, bool test_mode);
 int64_t an_speaker(int64_t direction);
@@ -196,11 +273,17 @@ int64_t an_retry_action(int64_t err, int64_t attempt);
 int64_t an_retry_delay_ms(int64_t failures);
 int64_t an_background_after_error(int64_t err, int64_t failures);
 bool an_probe_ok(int64_t err);
-bool an_report_on_stop(bool enabled, bool configured, int64_t lines);
-int64_t an_report_on_open(bool busy, bool has_report, int64_t report_lines, int64_t lines, bool configured);
-int64_t an_build_check(bool busy, bool configured, int64_t lines);
+bool an_text_is_row(uint8_t text[static 256], int64_t len, int64_t row);
+int64_t an_finish_code(uint8_t text[static 256], int64_t len);
+bool an_reply_complete(int64_t finish);
+int64_t an_after_cut(int64_t taken, int64_t cuts, int64_t notes_bytes);
+int64_t an_cut_line_cap(int64_t taken);
+bool an_report_on_stop(bool enabled, bool configured, int64_t lines, bool quitting);
+int64_t an_report_on_open(bool enabled, bool busy, bool has_report, int64_t report_lines, int64_t lines, bool configured);
+int64_t an_build_check(bool enabled, bool busy, bool configured, int64_t lines);
 bool an_report_button_enabled(int64_t lines, bool has_report, bool busy);
 bool an_save_before_reset(bool has_report, bool saved);
+int64_t an_quit_wait_ms(int64_t builds);
 int64_t an_duration_minutes(int64_t ms);
 int64_t an_append_digits(uint8_t out[static 256], int64_t at, int32_t value, int64_t width);
 int64_t an_report_file_name(int32_t year, int32_t month, int32_t day, int32_t hour, int32_t minute, int32_t attempt, uint8_t out[static 256]);

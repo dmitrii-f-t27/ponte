@@ -49,6 +49,8 @@
 #define AN_KIND_BAD_REPLY 4
 #define AN_KIND_NO_KEY 5
 #define AN_KIND_BAD_URL 6
+#define AN_KIND_CUT 7
+#define AN_KIND_KEY_ELSEWHERE 8
 #define AN_ERR_NONE 0
 #define AN_ERR_NETWORK 1
 #define AN_ERR_TIMEOUT 2
@@ -63,6 +65,8 @@
 #define AN_ERR_NO_KEY 11
 #define AN_ERR_BAD_URL 12
 #define AN_ERR_OTHER 13
+#define AN_ERR_CUT 14
+#define AN_ERR_KEY_ELSEWHERE 15
 #define AN_HTTP_NO_RESPONSE 0
 #define AN_HTTP_OK_FIRST 200
 #define AN_HTTP_OK_END 300
@@ -89,16 +93,48 @@
 #define AN_URL_NO_HOST 3
 #define AN_URL_SPACE 4
 #define AN_URL_TOO_LONG 5
+#define AN_URL_HTTP_REMOTE 6
 #define AN_CFG_OK 0
 #define AN_CFG_NO_KEY 1
 #define AN_CFG_BAD_URL 2
 #define AN_CFG_NO_MODEL 3
+#define AN_CFG_KEY_ELSEWHERE 4
+#define AN_BIND_OK 0
+#define AN_BIND_OTHER 1
+#define AN_BIND_UNBOUND 2
+#define AN_MODEL_MAX 256
+#define AN_MODEL_OK 0
+#define AN_MODEL_EMPTY 1
+#define AN_MODEL_TOO_LONG 2
+#define AN_MODEL_BAD_CHAR 3
+#define AN_KC_OK 0
+#define AN_KC_NOT_FOUND 1
+#define AN_KC_DUPLICATE 2
+#define AN_KC_OTHER 3
+#define AN_SAVE_OK 0
+#define AN_SAVE_FOREIGN 1
+#define AN_SAVE_FAILED 2
 #define AN_KEY_MAX 1024
 #define AN_KEY_OK 0
 #define AN_KEY_EMPTY 1
 #define AN_KEY_BAD_CHAR 2
 #define AN_KEY_TOO_LONG 3
 #define AN_TILDE 126
+#define AN_COLON 58
+#define AN_QUESTION 63
+#define AN_HASH 35
+#define AN_DIGIT_9 57
+#define AN_FINISH_NONE 0
+#define AN_FINISH_STOP 1
+#define AN_FINISH_LENGTH 2
+#define AN_FINISH_CUT 3
+#define AN_FINISH_OTHER 4
+#define AN_CUT_SMALLER 0
+#define AN_CUT_COMPRESS 1
+#define AN_CUT_FAIL 2
+#define AN_MAX_CUTS 6
+#define AN_COMPRESS_FROM_BYTES 6000
+#define AN_COMPRESS_CHARS 3000
 #define AN_OPEN_SHOW 0
 #define AN_OPEN_BUILD 1
 #define AN_OPEN_EXPLAIN 2
@@ -106,6 +142,8 @@
 #define AN_CHECK_BUSY 1
 #define AN_CHECK_NOT_SET 2
 #define AN_CHECK_NO_LINES 3
+#define AN_CHECK_OFF 4
+#define AN_QUIT_WAIT_MS 10000
 #define AN_DIR_INCOMING 0
 #define AN_DIR_OUTGOING 1
 #define AN_SPEAKER_THEM 0
@@ -124,6 +162,10 @@
 #define AN_ROW_FIRST_ID 0
 #define AN_ROW_FIRST_BASE 3
 #define AN_ROW_FIRST_MODEL 6
+#define AN_ROW_FIRST_LOCAL 18
+#define AN_LOCAL_COUNT 3
+#define AN_ROW_FIRST_FINISH_CUT 21
+#define AN_FINISH_CUT_COUNT 4
 #define AN_ROW_ID_0 0
 #define AN_ROW_ID_1 1
 #define AN_ROW_ID_2 2
@@ -140,10 +182,19 @@
 #define AN_ROW_HTTP 13
 #define AN_ROW_REPORT_PREFIX 14
 #define AN_ROW_REPORT_SUFFIX 15
-#define AN_ROW_COUNT 16
-static const uint8_t AN_ROW_TEXT[167] = { 122, 97, 105, 100, 101, 101, 112, 115, 101, 101, 107, 99, 117, 115, 116, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 103, 108, 109, 45, 52, 46, 53, 45, 102, 108, 97, 115, 104, 100, 101, 101, 112, 115, 101, 101, 107, 45, 102, 108, 97, 115, 104, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 66, 101, 97, 114, 101, 114, 32, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 58, 47, 47, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 46, 116, 120, 116 };
-static const uint32_t AN_ROW_OFFSETS[16] = { 0, 3, 11, 17, 45, 69, 69, 82, 96, 96, 113, 128, 135, 143, 150, 163 };
-static const uint32_t AN_ROW_LENGTHS[16] = { 3, 8, 6, 28, 24, 0, 13, 14, 0, 17, 15, 7, 8, 7, 13, 4 };
+#define AN_ROW_FINISH_STOP 16
+#define AN_ROW_FINISH_LENGTH 17
+#define AN_ROW_LOCAL_0 18
+#define AN_ROW_LOCAL_1 19
+#define AN_ROW_LOCAL_2 20
+#define AN_ROW_FINISH_CUT_0 21
+#define AN_ROW_FINISH_CUT_1 22
+#define AN_ROW_FINISH_CUT_2 23
+#define AN_ROW_FINISH_CUT_3 24
+#define AN_ROW_COUNT 25
+static const uint8_t AN_ROW_TEXT[264] = { 122, 97, 105, 100, 101, 101, 112, 115, 101, 101, 107, 99, 117, 115, 116, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 103, 108, 109, 45, 52, 46, 53, 45, 102, 108, 97, 115, 104, 100, 101, 101, 112, 115, 101, 101, 107, 45, 102, 108, 97, 115, 104, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 66, 101, 97, 114, 101, 114, 32, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 58, 47, 47, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 46, 116, 120, 116, 115, 116, 111, 112, 108, 101, 110, 103, 116, 104, 108, 111, 99, 97, 108, 104, 111, 115, 116, 49, 50, 55, 46, 48, 46, 48, 46, 49, 91, 58, 58, 49, 93, 99, 111, 110, 116, 101, 110, 116, 95, 102, 105, 108, 116, 101, 114, 115, 101, 110, 115, 105, 116, 105, 118, 101, 105, 110, 115, 117, 102, 102, 105, 99, 105, 101, 110, 116, 95, 115, 121, 115, 116, 101, 109, 95, 114, 101, 115, 111, 117, 114, 99, 101, 110, 101, 116, 119, 111, 114, 107, 95, 101, 114, 114, 111, 114 };
+static const uint32_t AN_ROW_OFFSETS[25] = { 0, 3, 11, 17, 45, 69, 69, 82, 96, 96, 113, 128, 135, 143, 150, 163, 167, 171, 177, 186, 195, 200, 214, 223, 251 };
+static const uint32_t AN_ROW_LENGTHS[25] = { 3, 8, 6, 28, 24, 0, 13, 14, 0, 17, 15, 7, 8, 7, 13, 4, 4, 6, 9, 9, 5, 14, 9, 28, 13 };
 #define AN_FX_ZAI_BASE 0
 #define AN_FX_ZAI_SLASH 1
 #define AN_FX_ZAI_ENDPOINT 2
@@ -165,10 +216,29 @@ static const uint32_t AN_ROW_LENGTHS[16] = { 3, 8, 6, 28, 24, 0, 13, 14, 0, 17, 
 #define AN_FX_REPORT_2359_2 18
 #define AN_FX_REPORT_0000_12 19
 #define AN_FX_CYRILLIC 20
-#define AN_FX_COUNT 21
-static const uint8_t AN_FX_TEXT[524] = { 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 72, 84, 84, 80, 83, 58, 47, 47, 65, 80, 73, 46, 68, 69, 69, 80, 83, 69, 69, 75, 46, 67, 79, 77, 102, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 32, 98, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 122, 97, 105, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 99, 117, 115, 116, 111, 109, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 49, 48, 45, 49, 51, 45, 49, 52, 48, 53, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 48, 49, 45, 48, 50, 45, 50, 51, 53, 57, 45, 50, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 55, 45, 49, 50, 45, 51, 49, 45, 48, 48, 48, 48, 45, 49, 50, 46, 116, 120, 116, 104, 116, 116, 112, 115, 58, 47, 47, 208, 191, 209, 128, 208, 184, 208, 188, 208, 181, 209, 128, 46, 209, 128, 209, 132, 47, 118, 49 };
-static const uint32_t AN_FX_OFFSETS[21] = { 0, 28, 58, 103, 149, 190, 215, 257, 281, 298, 306, 315, 335, 355, 355, 356, 374, 395, 427, 461, 496 };
-static const uint32_t AN_FX_LENGTHS[21] = { 28, 30, 45, 46, 41, 25, 42, 24, 17, 8, 9, 20, 20, 0, 1, 18, 21, 32, 34, 35, 28 };
+#define AN_FX_HTTP_LOCAL_IP 21
+#define AN_FX_HTTP_LOCAL_V6 22
+#define AN_FX_HTTP_LOCAL_UPPER 23
+#define AN_FX_HTTP_LOCAL_QUERY 24
+#define AN_FX_HTTP_REMOTE 25
+#define AN_FX_HTTP_USERINFO 26
+#define AN_FX_HTTP_SUBDOMAIN 27
+#define AN_FX_HTTP_EMPTY_PORT 28
+#define AN_FX_HTTP_BAD_PORT 29
+#define AN_FX_HTTP_NO_AUTHORITY 30
+#define AN_FX_HTTP_ONLY 31
+#define AN_FX_ZAI_CODING 32
+#define AN_FX_FINISH_STOP 33
+#define AN_FX_FINISH_LENGTH 34
+#define AN_FX_FINISH_FILTER 35
+#define AN_FX_FINISH_TOOLS 36
+#define AN_FX_FINISH_UPPER 37
+#define AN_FX_MODEL_SLASH 38
+#define AN_FX_MODEL_SPACE 39
+#define AN_FX_COUNT 40
+static const uint8_t AN_FX_TEXT[864] = { 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 72, 84, 84, 80, 83, 58, 47, 47, 65, 80, 73, 46, 68, 69, 69, 80, 83, 69, 69, 75, 46, 67, 79, 77, 102, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 32, 98, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 122, 97, 105, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 99, 117, 115, 116, 111, 109, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 49, 48, 45, 49, 51, 45, 49, 52, 48, 53, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 48, 49, 45, 48, 50, 45, 50, 51, 53, 57, 45, 50, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 55, 45, 49, 50, 45, 51, 49, 45, 48, 48, 48, 48, 45, 49, 50, 46, 116, 120, 116, 104, 116, 116, 112, 115, 58, 47, 47, 208, 191, 209, 128, 208, 184, 208, 188, 208, 181, 209, 128, 46, 209, 128, 209, 132, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58, 56, 48, 56, 48, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 91, 58, 58, 49, 93, 58, 49, 49, 52, 51, 52, 72, 84, 84, 80, 58, 47, 47, 76, 111, 99, 97, 108, 72, 111, 115, 116, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 63, 120, 61, 49, 104, 116, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 64, 101, 118, 105, 108, 46, 101, 120, 97, 109, 112, 108, 101, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 46, 101, 118, 105, 108, 46, 101, 120, 97, 109, 112, 108, 101, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58, 56, 48, 97, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 104, 116, 116, 112, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 99, 111, 100, 105, 110, 103, 47, 112, 97, 97, 115, 47, 118, 52, 115, 116, 111, 112, 108, 101, 110, 103, 116, 104, 99, 111, 110, 116, 101, 110, 116, 95, 102, 105, 108, 116, 101, 114, 116, 111, 111, 108, 95, 99, 97, 108, 108, 115, 83, 84, 79, 80, 100, 101, 101, 112, 115, 101, 101, 107, 47, 100, 101, 101, 112, 115, 101, 101, 107, 45, 99, 104, 97, 116, 58, 102, 114, 101, 101, 103, 108, 109, 32, 52, 46, 53 };
+static const uint32_t AN_FX_OFFSETS[40] = { 0, 28, 58, 103, 149, 190, 215, 257, 281, 298, 306, 315, 335, 355, 355, 356, 374, 395, 427, 461, 496, 524, 548, 566, 585, 605, 626, 658, 690, 710, 733, 750, 757, 792, 796, 802, 816, 826, 830, 857 };
+static const uint32_t AN_FX_LENGTHS[40] = { 28, 30, 45, 46, 41, 25, 42, 24, 17, 8, 9, 20, 20, 0, 1, 18, 21, 32, 34, 35, 28, 24, 18, 19, 20, 21, 32, 32, 20, 23, 17, 7, 35, 4, 6, 14, 10, 4, 27, 7 };
 
 /* -------------------------------------------------------
    Function prototypes
@@ -184,9 +254,16 @@ bool an_thinking_off(int64_t provider);
 uint8_t an_lower(uint8_t byte);
 bool an_starts_with_row(uint8_t text[static 2048], int64_t len, int64_t row);
 int64_t an_scheme_length(uint8_t text[static 2048], int64_t len);
+bool an_authority_is(uint8_t text[static 2048], int64_t from, int64_t end, int64_t row);
+bool an_http_local(uint8_t text[static 2048], int64_t len, int64_t from);
 int64_t an_base_url_check(uint8_t text[static 2048], int64_t len);
 int64_t an_endpoint(uint8_t base[static 2048], int64_t len, uint8_t out[static 2048]);
-int64_t an_config_check(int64_t key_bytes, int64_t url_check, int64_t model_bytes);
+int64_t an_endpoint_core(uint8_t base[static 2048], int64_t len);
+bool an_same_endpoint(uint8_t a[static 2048], int64_t a_len, uint8_t b[static 2048], int64_t b_len);
+int64_t an_bind_check(bool has_bound, bool same_as_bound, int64_t provider, bool same_as_default);
+int64_t an_config_check(int64_t key_bytes, int64_t url_check, int64_t model_bytes, int64_t bind);
+int64_t an_model_check(uint8_t text[static 2048], int64_t len);
+int64_t an_key_write_outcome(int64_t added);
 int64_t an_key_check(uint8_t text[static 2048], int64_t len);
 bool an_analysis_on(bool has_stored, bool stored, bool has_key, bool test_mode);
 int64_t an_speaker(int64_t direction);
@@ -202,11 +279,17 @@ int64_t an_retry_action(int64_t err, int64_t attempt);
 int64_t an_retry_delay_ms(int64_t failures);
 int64_t an_background_after_error(int64_t err, int64_t failures);
 bool an_probe_ok(int64_t err);
-bool an_report_on_stop(bool enabled, bool configured, int64_t lines);
-int64_t an_report_on_open(bool busy, bool has_report, int64_t report_lines, int64_t lines, bool configured);
-int64_t an_build_check(bool busy, bool configured, int64_t lines);
+bool an_text_is_row(uint8_t text[static 256], int64_t len, int64_t row);
+int64_t an_finish_code(uint8_t text[static 256], int64_t len);
+bool an_reply_complete(int64_t finish);
+int64_t an_after_cut(int64_t taken, int64_t cuts, int64_t notes_bytes);
+int64_t an_cut_line_cap(int64_t taken);
+bool an_report_on_stop(bool enabled, bool configured, int64_t lines, bool quitting);
+int64_t an_report_on_open(bool enabled, bool busy, bool has_report, int64_t report_lines, int64_t lines, bool configured);
+int64_t an_build_check(bool enabled, bool busy, bool configured, int64_t lines);
 bool an_report_button_enabled(int64_t lines, bool has_report, bool busy);
 bool an_save_before_reset(bool has_report, bool saved);
+int64_t an_quit_wait_ms(int64_t builds);
 int64_t an_duration_minutes(int64_t ms);
 int64_t an_append_digits(uint8_t out[static 256], int64_t at, int32_t value, int64_t width);
 int64_t an_report_file_name(int32_t year, int32_t month, int32_t day, int32_t hour, int32_t minute, int32_t attempt, uint8_t out[static 256]);
@@ -301,6 +384,64 @@ int64_t an_scheme_length(uint8_t text[static 2048], int64_t len) {
     return n;
 }
 
+bool an_authority_is(uint8_t text[static 2048], int64_t from, int64_t end, int64_t row) {
+    int64_t off = AN_ROW_OFFSETS[row];
+    int64_t n = AN_ROW_LENGTHS[row];
+    if (((end - from) < n)) {
+        return false;
+    }
+    int64_t i = 0;
+    while ((i < n)) {
+        if ((an_lower(text[(from + i)]) != AN_ROW_TEXT[(off + i)])) {
+            return false;
+        }
+        i = (i + 1);
+    }
+    int64_t k = (from + n);
+    if ((k == end)) {
+        return true;
+    }
+    if ((text[k] != AN_COLON)) {
+        return false;
+    }
+    k = (k + 1);
+    if ((k == end)) {
+        return false;
+    }
+    while ((k < end)) {
+        if (((text[k] < AN_DIGIT_0) || (text[k] > AN_DIGIT_9))) {
+            return false;
+        }
+        k = (k + 1);
+    }
+    return true;
+}
+
+bool an_http_local(uint8_t text[static 2048], int64_t len, int64_t from) {
+    int64_t end = from;
+    bool scanning = true;
+    while (scanning) {
+        if ((end < len)) {
+            if ((((text[end] == AN_SLASH) || (text[end] == AN_QUESTION)) || (text[end] == AN_HASH))) {
+                scanning = false;
+            } else {
+                end = (end + 1);
+            }
+        } else {
+            scanning = false;
+        }
+    }
+    bool local = false;
+    int64_t r = 0;
+    while ((r < AN_LOCAL_COUNT)) {
+        if (an_authority_is(text, from, end, (AN_ROW_FIRST_LOCAL + r))) {
+            local = true;
+        }
+        r = (r + 1);
+    }
+    return local;
+}
+
 int64_t an_base_url_check(uint8_t text[static 2048], int64_t len) {
     if ((len <= 0)) {
         return AN_URL_EMPTY;
@@ -320,14 +461,23 @@ int64_t an_base_url_check(uint8_t text[static 2048], int64_t len) {
     if ((scheme == 0)) {
         return AN_URL_NO_SCHEME;
     }
+    bool has_host = false;
     int64_t k = scheme;
     while ((k < len)) {
         if ((text[k] != AN_SLASH)) {
-            return AN_URL_OK;
+            has_host = true;
         }
         k = (k + 1);
     }
-    return AN_URL_NO_HOST;
+    if ((has_host == false)) {
+        return AN_URL_NO_HOST;
+    }
+    if (an_starts_with_row(text, len, AN_ROW_HTTP)) {
+        if ((an_http_local(text, len, scheme) == false)) {
+            return AN_URL_HTTP_REMOTE;
+        }
+    }
+    return AN_URL_OK;
 }
 
 int64_t an_endpoint(uint8_t base[static 2048], int64_t len, uint8_t out[static 2048]) {
@@ -379,7 +529,76 @@ int64_t an_endpoint(uint8_t base[static 2048], int64_t len, uint8_t out[static 2
     return (n + path_len);
 }
 
-int64_t an_config_check(int64_t key_bytes, int64_t url_check, int64_t model_bytes) {
+int64_t an_endpoint_core(uint8_t base[static 2048], int64_t len) {
+    int64_t path_off = AN_ROW_OFFSETS[AN_ROW_PATH];
+    int64_t path_len = AN_ROW_LENGTHS[AN_ROW_PATH];
+    int64_t n = len;
+    if ((n < 0)) {
+        n = 0;
+    }
+    if ((n > (AN_URL_MAX - path_len))) {
+        n = (AN_URL_MAX - path_len);
+    }
+    bool trimming = true;
+    while (trimming) {
+        if ((n > 0)) {
+            if ((base[(n - 1)] == AN_SLASH)) {
+                n = (n - 1);
+            } else {
+                trimming = false;
+            }
+        } else {
+            trimming = false;
+        }
+    }
+    if ((n < path_len)) {
+        return n;
+    }
+    int64_t k = 0;
+    while ((k < path_len)) {
+        if ((base[((n - path_len) + k)] != AN_ROW_TEXT[(path_off + k)])) {
+            return n;
+        }
+        k = (k + 1);
+    }
+    return (n - path_len);
+}
+
+bool an_same_endpoint(uint8_t a[static 2048], int64_t a_len, uint8_t b[static 2048], int64_t b_len) {
+    if ((an_base_url_check(a, a_len) != AN_URL_OK)) {
+        return false;
+    }
+    if ((an_base_url_check(b, b_len) != AN_URL_OK)) {
+        return false;
+    }
+    int64_t n = an_endpoint_core(a, a_len);
+    if ((an_endpoint_core(b, b_len) != n)) {
+        return false;
+    }
+    int64_t i = 0;
+    while ((i < n)) {
+        if ((a[i] != b[i])) {
+            return false;
+        }
+        i = (i + 1);
+    }
+    return true;
+}
+
+int64_t an_bind_check(bool has_bound, bool same_as_bound, int64_t provider, bool same_as_default) {
+    if (has_bound) {
+        if (same_as_bound) {
+            return AN_BIND_OK;
+        }
+        return AN_BIND_OTHER;
+    }
+    if (((an_provider_code(provider) != AN_PROVIDER_CUSTOM) && same_as_default)) {
+        return AN_BIND_OK;
+    }
+    return AN_BIND_UNBOUND;
+}
+
+int64_t an_config_check(int64_t key_bytes, int64_t url_check, int64_t model_bytes, int64_t bind) {
     if ((key_bytes <= 0)) {
         return AN_CFG_NO_KEY;
     }
@@ -389,7 +608,37 @@ int64_t an_config_check(int64_t key_bytes, int64_t url_check, int64_t model_byte
     if ((model_bytes <= 0)) {
         return AN_CFG_NO_MODEL;
     }
+    if ((bind != AN_BIND_OK)) {
+        return AN_CFG_KEY_ELSEWHERE;
+    }
     return AN_CFG_OK;
+}
+
+int64_t an_model_check(uint8_t text[static 2048], int64_t len) {
+    if ((len <= 0)) {
+        return AN_MODEL_EMPTY;
+    }
+    if ((len > AN_MODEL_MAX)) {
+        return AN_MODEL_TOO_LONG;
+    }
+    int64_t i = 0;
+    while ((i < len)) {
+        if (((text[i] <= AN_SPACE) || (text[i] == AN_DEL))) {
+            return AN_MODEL_BAD_CHAR;
+        }
+        i = (i + 1);
+    }
+    return AN_MODEL_OK;
+}
+
+int64_t an_key_write_outcome(int64_t added) {
+    if ((added == AN_KC_OK)) {
+        return AN_SAVE_OK;
+    }
+    if ((added == AN_KC_DUPLICATE)) {
+        return AN_SAVE_FOREIGN;
+    }
+    return AN_SAVE_FAILED;
 }
 
 int64_t an_key_check(uint8_t text[static 2048], int64_t len) {
@@ -534,6 +783,12 @@ int64_t an_error_class(int64_t kind, int64_t status) {
     if ((kind == AN_KIND_BAD_URL)) {
         return AN_ERR_BAD_URL;
     }
+    if ((kind == AN_KIND_CUT)) {
+        return AN_ERR_CUT;
+    }
+    if ((kind == AN_KIND_KEY_ELSEWHERE)) {
+        return AN_ERR_KEY_ELSEWHERE;
+    }
     return AN_ERR_OTHER;
 }
 
@@ -575,21 +830,82 @@ int64_t an_background_after_error(int64_t err, int64_t failures) {
 }
 
 bool an_probe_ok(int64_t err) {
-    return ((err == AN_ERR_NONE) || (err == AN_ERR_EMPTY));
+    return (((err == AN_ERR_NONE) || (err == AN_ERR_EMPTY)) || (err == AN_ERR_CUT));
 }
 
-bool an_report_on_stop(bool enabled, bool configured, int64_t lines) {
-    return ((enabled && configured) && (lines >= 1));
+bool an_text_is_row(uint8_t text[static 256], int64_t len, int64_t row) {
+    int64_t off = AN_ROW_OFFSETS[row];
+    int64_t n = AN_ROW_LENGTHS[row];
+    if ((len != n)) {
+        return false;
+    }
+    int64_t i = 0;
+    while ((i < n)) {
+        if ((text[i] != AN_ROW_TEXT[(off + i)])) {
+            return false;
+        }
+        i = (i + 1);
+    }
+    return true;
 }
 
-int64_t an_report_on_open(bool busy, bool has_report, int64_t report_lines, int64_t lines, bool configured) {
+int64_t an_finish_code(uint8_t text[static 256], int64_t len) {
+    if ((len <= 0)) {
+        return AN_FINISH_NONE;
+    }
+    if (an_text_is_row(text, len, AN_ROW_FINISH_STOP)) {
+        return AN_FINISH_STOP;
+    }
+    if (an_text_is_row(text, len, AN_ROW_FINISH_LENGTH)) {
+        return AN_FINISH_LENGTH;
+    }
+    int64_t r = 0;
+    while ((r < AN_FINISH_CUT_COUNT)) {
+        if (an_text_is_row(text, len, (AN_ROW_FIRST_FINISH_CUT + r))) {
+            return AN_FINISH_CUT;
+        }
+        r = (r + 1);
+    }
+    return AN_FINISH_OTHER;
+}
+
+bool an_reply_complete(int64_t finish) {
+    return ((finish != AN_FINISH_LENGTH) && (finish != AN_FINISH_CUT));
+}
+
+int64_t an_after_cut(int64_t taken, int64_t cuts, int64_t notes_bytes) {
+    if (((cuts >= AN_MAX_CUTS) || (taken <= 0))) {
+        return AN_CUT_FAIL;
+    }
+    if ((notes_bytes >= AN_COMPRESS_FROM_BYTES)) {
+        return AN_CUT_COMPRESS;
+    }
+    if ((taken > 1)) {
+        return AN_CUT_SMALLER;
+    }
+    return AN_CUT_FAIL;
+}
+
+int64_t an_cut_line_cap(int64_t taken) {
+    int64_t cap = (taken / 2);
+    if ((cap < 1)) {
+        return 1;
+    }
+    return cap;
+}
+
+bool an_report_on_stop(bool enabled, bool configured, int64_t lines, bool quitting) {
+    return (((enabled && configured) && (lines >= 1)) && (quitting == false));
+}
+
+int64_t an_report_on_open(bool enabled, bool busy, bool has_report, int64_t report_lines, int64_t lines, bool configured) {
     if (busy) {
         return AN_OPEN_SHOW;
     }
     if ((has_report && (report_lines == lines))) {
         return AN_OPEN_SHOW;
     }
-    if (((lines <= 0) || (configured == false))) {
+    if ((((enabled == false) || (lines <= 0)) || (configured == false))) {
         if (has_report) {
             return AN_OPEN_SHOW;
         }
@@ -598,7 +914,10 @@ int64_t an_report_on_open(bool busy, bool has_report, int64_t report_lines, int6
     return AN_OPEN_BUILD;
 }
 
-int64_t an_build_check(bool busy, bool configured, int64_t lines) {
+int64_t an_build_check(bool enabled, bool busy, bool configured, int64_t lines) {
+    if ((enabled == false)) {
+        return AN_CHECK_OFF;
+    }
     if (busy) {
         return AN_CHECK_BUSY;
     }
@@ -617,6 +936,13 @@ bool an_report_button_enabled(int64_t lines, bool has_report, bool busy) {
 
 bool an_save_before_reset(bool has_report, bool saved) {
     return (has_report && (saved == false));
+}
+
+int64_t an_quit_wait_ms(int64_t builds) {
+    if ((builds > 0)) {
+        return AN_QUIT_WAIT_MS;
+    }
+    return 0;
 }
 
 int64_t an_duration_minutes(int64_t ms) {
@@ -858,11 +1184,15 @@ void test_an_url_rules(void) {
         b = (b + 1);
     }
     assert((bad == 0));
-    assert((an_config_check(0, AN_URL_OK, 5) == AN_CFG_NO_KEY));
-    assert((an_config_check(10, AN_URL_EMPTY, 5) == AN_CFG_BAD_URL));
-    assert((an_config_check(10, AN_URL_OK, 0) == AN_CFG_NO_MODEL));
-    assert((an_config_check(10, AN_URL_OK, 5) == AN_CFG_OK));
-    assert((an_config_check(-1, AN_URL_NO_HOST, 0) == AN_CFG_NO_KEY));
+    assert((an_config_check(0, AN_URL_OK, 5, AN_BIND_OK) == AN_CFG_NO_KEY));
+    assert((an_config_check(10, AN_URL_EMPTY, 5, AN_BIND_OK) == AN_CFG_BAD_URL));
+    assert((an_config_check(10, AN_URL_HTTP_REMOTE, 5, AN_BIND_OK) == AN_CFG_BAD_URL));
+    assert((an_config_check(10, AN_URL_OK, 0, AN_BIND_OK) == AN_CFG_NO_MODEL));
+    assert((an_config_check(10, AN_URL_OK, 5, AN_BIND_OK) == AN_CFG_OK));
+    assert((an_config_check(10, AN_URL_OK, 5, AN_BIND_OTHER) == AN_CFG_KEY_ELSEWHERE));
+    assert((an_config_check(10, AN_URL_OK, 5, AN_BIND_UNBOUND) == AN_CFG_KEY_ELSEWHERE));
+    assert((an_config_check(10, AN_URL_OK, 0, AN_BIND_OTHER) == AN_CFG_NO_MODEL));
+    assert((an_config_check(-1, AN_URL_NO_HOST, 0, AN_BIND_OTHER) == AN_CFG_NO_KEY));
     assert((an_analysis_on(false, false, true, false) == true));
     assert((an_analysis_on(true, false, true, false) == false));
     assert((an_analysis_on(true, true, true, false) == true));
@@ -1071,25 +1401,65 @@ void test_an_error_rules(void) {
     assert((an_background_after_error(AN_ERR_PAYMENT, 1) == AN_BG_STOP));
     assert((an_probe_ok(AN_ERR_NONE) == true));
     assert((an_probe_ok(AN_ERR_EMPTY) == true));
+    assert((an_probe_ok(AN_ERR_CUT) == true));
     assert((an_probe_ok(AN_ERR_AUTH) == false));
+    assert((an_probe_ok(AN_ERR_KEY_ELSEWHERE) == false));
+    assert((an_error_class(AN_KIND_CUT, 200) == AN_ERR_CUT));
+    assert((an_error_class(AN_KIND_KEY_ELSEWHERE, 0) == AN_ERR_KEY_ELSEWHERE));
+    assert((an_is_transient(AN_ERR_CUT) == false));
+    assert((an_is_transient(AN_ERR_KEY_ELSEWHERE) == false));
+    assert((an_background_after_error(AN_ERR_CUT, 1) == AN_BG_STOP));
 }
 
 void test_an_report_rules(void) {
-    assert((an_report_on_stop(true, true, 1) == true));
-    assert((an_report_on_stop(true, true, 0) == false));
-    assert((an_report_on_stop(false, true, 5) == false));
-    assert((an_report_on_stop(true, false, 5) == false));
-    assert((an_report_on_open(true, false, 0, 0, false) == AN_OPEN_SHOW));
-    assert((an_report_on_open(false, true, 10, 10, true) == AN_OPEN_SHOW));
-    assert((an_report_on_open(false, true, 10, 12, true) == AN_OPEN_BUILD));
-    assert((an_report_on_open(false, false, 0, 12, true) == AN_OPEN_BUILD));
-    assert((an_report_on_open(false, false, 0, 0, true) == AN_OPEN_EXPLAIN));
-    assert((an_report_on_open(false, false, 0, 12, false) == AN_OPEN_EXPLAIN));
-    assert((an_report_on_open(false, true, 10, 12, false) == AN_OPEN_SHOW));
-    assert((an_build_check(true, false, 0) == AN_CHECK_BUSY));
-    assert((an_build_check(false, false, 5) == AN_CHECK_NOT_SET));
-    assert((an_build_check(false, true, 0) == AN_CHECK_NO_LINES));
-    assert((an_build_check(false, true, 5) == AN_CHECK_OK));
+    assert((an_report_on_stop(true, true, 1, false) == true));
+    assert((an_report_on_stop(true, true, 0, false) == false));
+    assert((an_report_on_stop(false, true, 5, false) == false));
+    assert((an_report_on_stop(true, false, 5, false) == false));
+    assert((an_report_on_stop(true, true, 5, true) == false));
+    assert((an_report_on_open(true, true, false, 0, 0, false) == AN_OPEN_SHOW));
+    assert((an_report_on_open(true, false, true, 10, 10, true) == AN_OPEN_SHOW));
+    assert((an_report_on_open(true, false, true, 10, 12, true) == AN_OPEN_BUILD));
+    assert((an_report_on_open(true, false, false, 0, 12, true) == AN_OPEN_BUILD));
+    assert((an_report_on_open(true, false, false, 0, 0, true) == AN_OPEN_EXPLAIN));
+    assert((an_report_on_open(true, false, false, 0, 12, false) == AN_OPEN_EXPLAIN));
+    assert((an_report_on_open(true, false, true, 10, 12, false) == AN_OPEN_SHOW));
+    assert((an_report_on_open(false, false, false, 0, 12, true) == AN_OPEN_EXPLAIN));
+    assert((an_report_on_open(false, false, true, 10, 12, true) == AN_OPEN_SHOW));
+    assert((an_build_check(true, true, false, 0) == AN_CHECK_BUSY));
+    assert((an_build_check(true, false, false, 5) == AN_CHECK_NOT_SET));
+    assert((an_build_check(true, false, true, 0) == AN_CHECK_NO_LINES));
+    assert((an_build_check(true, false, true, 5) == AN_CHECK_OK));
+    assert((an_build_check(false, false, true, 5) == AN_CHECK_OFF));
+    assert((an_build_check(false, true, false, 0) == AN_CHECK_OFF));
+    uint32_t bad = 0;
+    int64_t flags = 0;
+    while ((flags < 8)) {
+        bool en = ((flags & 1) == 1);
+        bool busy = ((flags & 2) == 2);
+        bool conf = ((flags & 4) == 4);
+        int64_t n = -1;
+        while ((n < 3)) {
+            int64_t c = an_build_check(en, busy, conf, n);
+            if (((en == false) && (c != AN_CHECK_OFF))) {
+                bad = (bad + 1);
+            }
+            if (((c == AN_CHECK_OK) != (((en && (busy == false)) && conf) && (n > 0)))) {
+                bad = (bad + 1);
+            }
+            int64_t o = an_report_on_open(en, busy, false, 0, n, conf);
+            if (((o == AN_OPEN_BUILD) != (((en && (busy == false)) && conf) && (n > 0)))) {
+                bad = (bad + 1);
+            }
+            n = (n + 1);
+        }
+        flags = (flags + 1);
+    }
+    assert((bad == 0));
+    assert((an_quit_wait_ms(0) == 0));
+    assert((an_quit_wait_ms(-1) == 0));
+    assert((an_quit_wait_ms(1) == AN_QUIT_WAIT_MS));
+    assert((an_quit_wait_ms(3) == 10000));
     assert((an_report_button_enabled(0, false, false) == false));
     assert((an_report_button_enabled(1, false, false) == true));
     assert((an_report_button_enabled(0, true, false) == true));
@@ -1108,6 +1478,188 @@ void test_an_report_rules(void) {
     assert((AN_TEMPERATURE_MILLI == 200));
     assert((AN_MAX_LINE_BYTES < AN_MAX_REQUEST_BYTES));
     assert((AN_MAX_NOTES_BYTES < AN_MAX_REQUEST_BYTES));
+}
+
+void test_an_http_rules(void) {
+    uint8_t url[2048] = { [0 ... (2048) - 1] = 0 };
+    int64_t n = an_fixture(AN_FX_LOCAL, url);
+    assert((an_base_url_check(url, n) == AN_URL_OK));
+    n = an_fixture(AN_FX_HTTP_LOCAL_IP, url);
+    assert((an_base_url_check(url, n) == AN_URL_OK));
+    n = an_fixture(AN_FX_HTTP_LOCAL_V6, url);
+    assert((an_base_url_check(url, n) == AN_URL_OK));
+    n = an_fixture(AN_FX_HTTP_LOCAL_UPPER, url);
+    assert((an_base_url_check(url, n) == AN_URL_OK));
+    n = an_fixture(AN_FX_HTTP_LOCAL_QUERY, url);
+    assert((an_base_url_check(url, n) == AN_URL_OK));
+    n = an_fixture(AN_FX_HTTP_REMOTE, url);
+    assert((an_base_url_check(url, n) == AN_URL_HTTP_REMOTE));
+    n = an_fixture(AN_FX_HTTP_USERINFO, url);
+    assert((an_base_url_check(url, n) == AN_URL_HTTP_REMOTE));
+    n = an_fixture(AN_FX_HTTP_SUBDOMAIN, url);
+    assert((an_base_url_check(url, n) == AN_URL_HTTP_REMOTE));
+    n = an_fixture(AN_FX_HTTP_EMPTY_PORT, url);
+    assert((an_base_url_check(url, n) == AN_URL_HTTP_REMOTE));
+    n = an_fixture(AN_FX_HTTP_BAD_PORT, url);
+    assert((an_base_url_check(url, n) == AN_URL_HTTP_REMOTE));
+    n = an_fixture(AN_FX_HTTP_NO_AUTHORITY, url);
+    assert((an_base_url_check(url, n) == AN_URL_HTTP_REMOTE));
+    n = an_fixture(AN_FX_HTTP_ONLY, url);
+    assert((an_base_url_check(url, n) == AN_URL_NO_HOST));
+    n = an_fixture(AN_FX_ZAI_BASE, url);
+    assert((an_base_url_check(url, n) == AN_URL_OK));
+    assert((an_http_local(url, n, 8) == false));
+    n = an_fixture(AN_FX_LOCAL, url);
+    assert((an_http_local(url, n, 7) == true));
+    assert((an_http_local(url, n, 8) == false));
+    assert((an_authority_is(url, 7, 16, AN_ROW_FIRST_LOCAL) == true));
+    assert((an_authority_is(url, 7, 22, AN_ROW_FIRST_LOCAL) == true));
+    assert((an_authority_is(url, 7, 17, AN_ROW_FIRST_LOCAL) == false));
+    assert((an_authority_is(url, 7, 15, AN_ROW_FIRST_LOCAL) == false));
+    assert((an_authority_is(url, 7, 22, (AN_ROW_FIRST_LOCAL + 1)) == false));
+}
+
+void test_an_binding_rules(void) {
+    uint8_t a[2048] = { [0 ... (2048) - 1] = 0 };
+    uint8_t b[2048] = { [0 ... (2048) - 1] = 0 };
+    int64_t na = an_fixture(AN_FX_ZAI_BASE, a);
+    int64_t nb = an_fixture(AN_FX_ZAI_SLASH, b);
+    assert((an_same_endpoint(a, na, b, nb) == true));
+    nb = an_fixture(AN_FX_ZAI_ENDPOINT, b);
+    assert((an_same_endpoint(a, na, b, nb) == true));
+    nb = an_fixture(AN_FX_ZAI_ENDPOINT_SLASH, b);
+    assert((an_same_endpoint(a, na, b, nb) == true));
+    assert((an_same_endpoint(b, nb, a, na) == true));
+    nb = an_fixture(AN_FX_ZAI_CODING, b);
+    assert((an_same_endpoint(a, na, b, nb) == false));
+    nb = an_fixture(AN_FX_UPPER, b);
+    assert((an_same_endpoint(a, na, b, nb) == false));
+    na = an_fixture(AN_FX_UPPER, a);
+    assert((an_same_endpoint(a, na, b, nb) == true));
+    na = an_fixture(AN_FX_HTTP_REMOTE, a);
+    nb = an_fixture(AN_FX_HTTP_REMOTE, b);
+    assert((an_same_endpoint(a, na, b, nb) == false));
+    na = an_fixture(AN_FX_EMPTY, a);
+    nb = an_fixture(AN_FX_EMPTY, b);
+    assert((an_same_endpoint(a, na, b, nb) == false));
+    na = an_fixture(AN_FX_LOCAL, a);
+    nb = an_fixture(AN_FX_LOCAL_ENDPOINT, b);
+    assert((an_same_endpoint(a, na, b, nb) == true));
+    assert((an_endpoint_core(a, na) == 25));
+    assert((an_endpoint_core(b, nb) == 25));
+    assert((an_endpoint_core(b, 0) == 0));
+    assert((an_endpoint_core(b, -4) == 0));
+    assert((an_bind_check(true, true, AN_PROVIDER_CUSTOM, false) == AN_BIND_OK));
+    assert((an_bind_check(true, false, AN_PROVIDER_ZAI, true) == AN_BIND_OTHER));
+    assert((an_bind_check(false, false, AN_PROVIDER_ZAI, true) == AN_BIND_OK));
+    assert((an_bind_check(false, false, AN_PROVIDER_DEEPSEEK, true) == AN_BIND_OK));
+    assert((an_bind_check(false, false, AN_PROVIDER_ZAI, false) == AN_BIND_UNBOUND));
+    assert((an_bind_check(false, true, AN_PROVIDER_CUSTOM, true) == AN_BIND_UNBOUND));
+    assert((an_bind_check(false, false, 77, true) == AN_BIND_OK));
+    uint8_t m[2048] = { [0 ... (2048) - 1] = 0 };
+    int64_t nm = an_fixture(AN_FX_MODEL_SLASH, m);
+    assert((an_model_check(m, nm) == AN_MODEL_OK));
+    nm = an_fixture(AN_FX_MODEL_SPACE, m);
+    assert((an_model_check(m, nm) == AN_MODEL_BAD_CHAR));
+    assert((an_model_check(m, 0) == AN_MODEL_EMPTY));
+    int64_t i = 0;
+    while ((i < 300)) {
+        m[i] = 97;
+        i = (i + 1);
+    }
+    assert((an_model_check(m, 256) == AN_MODEL_OK));
+    assert((an_model_check(m, 257) == AN_MODEL_TOO_LONG));
+    m[10] = 127;
+    assert((an_model_check(m, 20) == AN_MODEL_BAD_CHAR));
+    m[10] = 200;
+    assert((an_model_check(m, 20) == AN_MODEL_OK));
+    assert((an_key_write_outcome(AN_KC_OK) == AN_SAVE_OK));
+    assert((an_key_write_outcome(AN_KC_DUPLICATE) == AN_SAVE_FOREIGN));
+    assert((an_key_write_outcome(AN_KC_OTHER) == AN_SAVE_FAILED));
+    assert((an_key_write_outcome(AN_KC_NOT_FOUND) == AN_SAVE_FAILED));
+}
+
+void test_an_reply_rules(void) {
+    uint8_t wide[2048] = { [0 ... (2048) - 1] = 0 };
+    uint8_t word[256] = { [0 ... (256) - 1] = 0 };
+    int64_t fx = AN_FX_FINISH_STOP;
+    int64_t codes = 0;
+    while ((fx <= AN_FX_FINISH_UPPER)) {
+        int64_t n = an_fixture(fx, wide);
+        int64_t i = 0;
+        while ((i < n)) {
+            word[i] = wide[i];
+            i = (i + 1);
+        }
+        int64_t c = an_finish_code(word, n);
+        if (((fx == AN_FX_FINISH_STOP) && (c == AN_FINISH_STOP))) {
+            codes = (codes + 1);
+        }
+        if (((fx == AN_FX_FINISH_LENGTH) && (c == AN_FINISH_LENGTH))) {
+            codes = (codes + 1);
+        }
+        if (((fx == AN_FX_FINISH_FILTER) && (c == AN_FINISH_CUT))) {
+            codes = (codes + 1);
+        }
+        if (((fx == AN_FX_FINISH_TOOLS) && (c == AN_FINISH_OTHER))) {
+            codes = (codes + 1);
+        }
+        if (((fx == AN_FX_FINISH_UPPER) && (c == AN_FINISH_OTHER))) {
+            codes = (codes + 1);
+        }
+        fx = (fx + 1);
+    }
+    assert((codes == 5));
+    assert((an_finish_code(word, 0) == AN_FINISH_NONE));
+    assert((an_finish_code(word, 300) == AN_FINISH_OTHER));
+    word[0] = 115;
+    word[1] = 116;
+    word[2] = 111;
+    word[3] = 112;
+    word[4] = 115;
+    assert((an_finish_code(word, 4) == AN_FINISH_STOP));
+    assert((an_finish_code(word, 5) == AN_FINISH_OTHER));
+    assert((an_finish_code(word, 3) == AN_FINISH_OTHER));
+    assert((an_reply_complete(AN_FINISH_NONE) == true));
+    assert((an_reply_complete(AN_FINISH_STOP) == true));
+    assert((an_reply_complete(AN_FINISH_OTHER) == true));
+    assert((an_reply_complete(AN_FINISH_LENGTH) == false));
+    assert((an_reply_complete(AN_FINISH_CUT) == false));
+    assert((an_after_cut(40, 1, 100) == AN_CUT_SMALLER));
+    assert((an_after_cut(2, 1, 100) == AN_CUT_SMALLER));
+    assert((an_after_cut(1, 1, 100) == AN_CUT_FAIL));
+    assert((an_after_cut(40, 1, 6000) == AN_CUT_COMPRESS));
+    assert((an_after_cut(1, 1, 5999) == AN_CUT_FAIL));
+    assert((an_after_cut(1, 2, 9000) == AN_CUT_COMPRESS));
+    assert((an_after_cut(0, 1, 9000) == AN_CUT_FAIL));
+    assert((an_after_cut(40, 6, 100) == AN_CUT_FAIL));
+    assert((an_after_cut(40, 5, 100) == AN_CUT_SMALLER));
+    assert((an_cut_line_cap(40) == 20));
+    assert((an_cut_line_cap(3) == 1));
+    assert((an_cut_line_cap(1) == 1));
+    assert((an_cut_line_cap(0) == 1));
+    assert((an_cut_line_cap(-7) == 1));
+    uint32_t bad = 0;
+    int64_t start = 1;
+    while ((start <= 256)) {
+        int64_t taken = start;
+        int64_t cuts = 1;
+        int64_t action = an_after_cut(taken, cuts, 0);
+        while ((action == AN_CUT_SMALLER)) {
+            int64_t next = an_cut_line_cap(taken);
+            if (((next >= taken) || (next < 1))) {
+                bad = (bad + 1);
+            }
+            taken = next;
+            cuts = (cuts + 1);
+            action = an_after_cut(taken, cuts, 0);
+        }
+        if (((action != AN_CUT_FAIL) || (cuts > AN_MAX_CUTS))) {
+            bad = (bad + 1);
+        }
+        start = (start + 1);
+    }
+    assert((bad == 0));
 }
 
 void test_an_file_names(void) {
@@ -1136,8 +1688,11 @@ int main(void) {
     test_an_chunk_rules();
     test_an_error_rules();
     test_an_report_rules();
+    test_an_http_rules();
+    test_an_binding_rules();
+    test_an_reply_rules();
     test_an_file_names();
-    printf("All %d tests passed.\n", 7);
+    printf("All %d tests passed.\n", 10);
     return 0;
 }
 #endif /* T27_TEST_MAIN */
