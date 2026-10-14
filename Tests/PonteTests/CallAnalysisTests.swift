@@ -1,6 +1,7 @@
 // Tests of the call analysis (CallAnalyst, ChatCompletionsClient, AnalysisNotebook, CallReportExporter,
 // CallAnalysisModel's settings) without the network: every request goes to a fake URLProtocol that answers per
-// test host. Keys here are fake ("test-key-…"); no test touches the Keychain (MemoryAnalysisKeyStore).
+// test host, at once or when a gate opens, and records the requests the client cancelled. Keys here are fake
+// ("test-key-…"); no test touches the Keychain (MemoryAnalysisKeyStore, or KeychainAnalysisKeyStore over fake calls).
 // All fakes are prefixed `Analysis` to avoid clashing with other tests.
 import Foundation
 @testable import PonteApp
@@ -16,6 +17,14 @@ final class AnalysisTestService: @unchecked Sendable {
         var status = 200
         var body = Data()
         var error: URLError.Code?
+        /// The reply waits until this gate opens (a request in flight).
+        var gate: AnalysisGate?
+
+        func gated(_ gate: AnalysisGate) -> Reply {
+            var reply = self
+            reply.gate = gate
+            return reply
+        }
     }
 
     let host = "t\(UUID().uuidString.lowercased().prefix(12)).ponte.test"
@@ -25,6 +34,7 @@ final class AnalysisTestService: @unchecked Sendable {
     /// Answers by the user message instead of the queue.
     private let responder: (@Sendable (String) -> Reply)?
     private var recorded: [(request: URLRequest, body: Data)] = []
+    private var cancels = 0
 
     init(_ replies: [Reply]) {
         self.replies = replies
@@ -45,6 +55,9 @@ final class AnalysisTestService: @unchecked Sendable {
     }
 
     var requests: [(request: URLRequest, body: Data)] { lock.withLock { recorded } }
+    /// Requests the client cancelled before their reply.
+    var cancelled: Int { lock.withLock { cancels } }
+    func recordCancel() { lock.withLock { cancels += 1 } }
 
     /// The JSON bodies of the requests.
     var bodies: [[String: Any]] {
@@ -70,9 +83,10 @@ final class AnalysisTestService: @unchecked Sendable {
 
     var baseURL: String { "https://\(host)/api/paas/v4" }
 
+    /// The key is bound to the base URL used (`bound` names another one).
     func config(provider: Int = AnalysisRules.providerZai, key: String = "test-key-not-real", base: String? = nil,
-                model: String = "glm-4.5-flash") -> AnalysisConfig {
-        AnalysisConfig(provider: provider, baseURL: base ?? baseURL, model: model, apiKey: key)
+                model: String = "glm-4.5-flash", bound: String? = nil) -> AnalysisConfig {
+        AnalysisConfig(provider: provider, baseURL: base ?? baseURL, model: model, apiKey: key, keyBaseURL: bound ?? base ?? baseURL)
     }
 
     func analyst(_ config: AnalysisConfig? = nil, waits: AnalysisWaits = AnalysisWaits()) -> CallAnalyst {
@@ -80,10 +94,10 @@ final class AnalysisTestService: @unchecked Sendable {
                     timeZone: TimeZone(identifier: "UTC")!, sleep: { ms in waits.add(ms) })
     }
 
-    static func chat(_ content: String) -> Reply {
-        let json: [String: Any] = ["id": "x", "object": "chat.completion",
-                                   "choices": [["index": 0, "message": ["role": "assistant", "content": content],
-                                                "finish_reason": "stop"]]]
+    static func chat(_ content: String, finish: String? = "stop") -> Reply {
+        var choice: [String: Any] = ["index": 0, "message": ["role": "assistant", "content": content]]
+        if let finish { choice["finish_reason"] = finish }
+        let json: [String: Any] = ["id": "x", "object": "chat.completion", "choices": [choice]]
         return Reply(status: 200, body: try! JSONSerialization.data(withJSONObject: json))
     }
 
@@ -92,6 +106,31 @@ final class AnalysisTestService: @unchecked Sendable {
     }
 
     static func failure(_ code: URLError.Code) -> Reply { Reply(status: 0, error: code) }
+}
+
+/// Holds replies back until opened.
+final class AnalysisGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = false
+    private var waiting: [@Sendable () -> Void] = []
+
+    func wait(_ then: @escaping @Sendable () -> Void) {
+        let now = lock.withLock { () -> Bool in
+            if isOpen { return true }
+            waiting.append(then)
+            return false
+        }
+        if now { then() }
+    }
+
+    func open() {
+        let all = lock.withLock { () -> [@Sendable () -> Void] in
+            isOpen = true
+            defer { waiting = [] }
+            return waiting
+        }
+        for then in all { DispatchQueue.global().async(execute: then) }
+    }
 }
 
 final class AnalysisWaits: @unchecked Sendable {
@@ -108,22 +147,41 @@ final class AnalysisProgressLog: @unchecked Sendable {
     var values: [AnalysisProgress] { lock.withLock { all } }
 }
 
-final class AnalysisTestURLProtocol: URLProtocol {
+final class AnalysisTestURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var services: [String: AnalysisTestService] = [:]
+    private let stateLock = NSLock()
+    /// The reply was delivered or the client stopped the request: nothing more is sent.
+    private var finished = false
 
     static func register(_ service: AnalysisTestService) { lock.withLock { services[service.host] = service } }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
+    private var service: AnalysisTestService? {
+        guard let host = request.url?.host else { return nil }
+        return Self.lock.withLock { Self.services[host] }
+    }
+
     override func startLoading() {
-        guard let url = request.url, let host = url.host,
-              let service = Self.lock.withLock({ Self.services[host] }) else {
+        guard let url = request.url, let service else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost))
             return
         }
         let reply = service.reply(to: request, body: Self.body(of: request))
+        if let gate = reply.gate {
+            gate.wait { self.deliver(reply, url: url) }
+        } else {
+            deliver(reply, url: url)
+        }
+    }
+
+    private func deliver(_ reply: AnalysisTestService.Reply, url: URL) {
+        guard stateLock.withLock({ () -> Bool in
+            defer { finished = true }
+            return !finished
+        }) else { return }
         if let code = reply.error {
             client?.urlProtocol(self, didFailWithError: URLError(code))
             return
@@ -135,7 +193,13 @@ final class AnalysisTestURLProtocol: URLProtocol {
         client?.urlProtocolDidFinishLoading(self)
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        let cancelled = stateLock.withLock { () -> Bool in
+            defer { finished = true }
+            return !finished
+        }
+        if cancelled { service?.recordCancel() }
+    }
 
     /// URLSession hands a protocol the body as a stream.
     private static func body(of request: URLRequest) -> Data {
@@ -184,9 +248,11 @@ private let shortCall = [
         #expect(AnalysisRules.keychainService(AnalysisRules.providerDeepSeek) == "ponte-analysis-deepseek")
         #expect(AnalysisRules.keychainService(AnalysisRules.providerCustom) == "ponte-analysis-custom")
         let deepseek = AnalysisConfig(provider: AnalysisRules.providerDeepSeek, baseURL: "https://api.deepseek.com/",
-                                      model: "deepseek-flash", apiKey: "k-1")
+                                      model: "deepseek-flash", apiKey: "k-1", keyBaseURL: nil)
         #expect(deepseek.endpoint?.absoluteString == "https://api.deepseek.com/chat/completions")
         #expect(!deepseek.description.contains("k-1"))
+        // A key of an older Ponte (no address) counts as saved for the default of a built-in service only.
+        #expect(deepseek.check == AnalysisRules.configOK)
         #expect(AnalysisRules.requestTimeoutMs == 90_000)
     }
 
@@ -222,7 +288,8 @@ private let shortCall = [
 
     @Test func onlyZaiGetsTheThinkingSwitch() throws {
         for provider in [AnalysisRules.providerDeepSeek, AnalysisRules.providerCustom] {
-            let config = AnalysisConfig(provider: provider, baseURL: "https://api.deepseek.com", model: "deepseek-flash", apiKey: "k-1")
+            let config = AnalysisConfig(provider: provider, baseURL: "https://api.deepseek.com", model: "deepseek-flash", apiKey: "k-1",
+                                        keyBaseURL: "https://api.deepseek.com/")
             let request = try ChatCompletionsClient(config: config).urlRequest(messages: [.user("x")], maxTokens: 10, timeoutMs: 1000)
             let json = try #require((try JSONSerialization.jsonObject(with: request.httpBody ?? Data())) as? [String: Any])
             #expect(json["thinking"] == nil)
@@ -232,9 +299,24 @@ private let shortCall = [
 
     @Test func parseReplies() throws {
         let ok = #"{"choices":[{"message":{"role":"assistant","content":"  Отчёт  \n"}}]}"#
-        #expect(try ChatCompletionsClient.parse(Data(ok.utf8), status: 200) == "Отчёт")
-        let parts = #"{"choices":[{"message":{"content":[{"type":"text","text":"А"},{"type":"text","text":"Б"}]}}]}"#
-        #expect(try ChatCompletionsClient.parse(Data(parts.utf8), status: 200) == "АБ")
+        #expect(try ChatCompletionsClient.parse(Data(ok.utf8), status: 200) == ChatReply(text: "Отчёт", finish: AnalysisRules.finishNone))
+        let parts = #"{"choices":[{"message":{"content":[{"type":"text","text":"А"},{"type":"text","text":"Б"}]},"finish_reason":"stop"}]}"#
+        #expect(try ChatCompletionsClient.parse(Data(parts.utf8), status: 200) == ChatReply(text: "АБ", finish: AnalysisRules.finishStop))
+        // finish_reason: cut at max_tokens or by the service is not complete; tool calls and unknown words are.
+        let cases: [(String, Int, Bool)] = [("length", AnalysisRules.finishLength, false),
+                                            ("content_filter", AnalysisRules.finishCut, false),
+                                            ("insufficient_system_resource", AnalysisRules.finishCut, false),
+                                            ("tool_calls", AnalysisRules.finishOther, true), ("stop", AnalysisRules.finishStop, true)]
+        for (word, code, complete) in cases {
+            let json = #"{"choices":[{"message":{"content":"Заметки"},"finish_reason":"\#(word)"}]}"#
+            let reply = try ChatCompletionsClient.parse(Data(json.utf8), status: 200)
+            #expect(reply.finish == code, "\(word)")
+            #expect(reply.complete == complete, "\(word)")
+        }
+        // Nothing but a cut (the thinking ate the tokens): a cut, not an empty reply.
+        #expect(throws: AnalysisError(errorClass: AnalysisRules.errCut, status: 200)) {
+            try ChatCompletionsClient.parse(Data(#"{"choices":[{"message":{"content":""},"finish_reason":"length"}]}"#.utf8), status: 200)
+        }
         let thinkingOnly = #"{"choices":[{"message":{"content":"","reasoning_content":"думаю"}}]}"#
         #expect(throws: AnalysisError(errorClass: AnalysisRules.errEmpty, status: 200)) {
             try ChatCompletionsClient.parse(Data(thinkingOnly.utf8), status: 200)
@@ -292,6 +374,13 @@ private let shortCall = [
             (service.config(base: "api.z.ai/api/paas/v4"), AnalysisRules.errBadURL),
             (service.config(base: "https://"), AnalysisRules.errBadURL),
             (service.config(model: " "), AnalysisRules.errBadURL),
+            (service.config(base: "http://\(service.host)/v1"), AnalysisRules.errBadURL),
+            // The key was saved for another address, or (custom service) by an older Ponte without one.
+            (service.config(bound: "https://other.ponte.test/v1"), AnalysisRules.errKeyElsewhere),
+            (AnalysisConfig(provider: AnalysisRules.providerCustom, baseURL: service.baseURL, model: "m", apiKey: "k-1",
+                            keyBaseURL: nil), AnalysisRules.errKeyElsewhere),
+            (AnalysisConfig(provider: AnalysisRules.providerZai, baseURL: service.baseURL, model: "m", apiKey: "k-1",
+                            keyBaseURL: nil), AnalysisRules.errKeyElsewhere),
         ]
         for (config, expected) in configs {
             do {
@@ -521,9 +610,11 @@ private let shortCall = [
 
     #expect(!model.saveKey("bad key with spaces"))
     #expect(!model.saveKey("   "))
-    #expect(store.key(for: AnalysisRules.providerZai) == nil)
+    #expect(store.stored(for: AnalysisRules.providerZai) == nil)
     #expect(model.saveKey("  test-key-123\n"))
-    #expect(store.key(for: AnalysisRules.providerZai) == "test-key-123")
+    // The key is saved bound to the applied base URL.
+    #expect(store.stored(for: AnalysisRules.providerZai) == AnalysisStoredKey(key: "test-key-123", baseURL: "https://api.z.ai/api/paas/v4"))
+    #expect(model.keyBaseURL == "https://api.z.ai/api/paas/v4")
     #expect(model.hasKey && model.enabled && model.configured)   // on by default once a key is saved
     #expect(model.endpointText == "https://api.z.ai/api/paas/v4/chat/completions")
     model.enabled = false
@@ -535,7 +626,7 @@ private let shortCall = [
     #expect(defaults.integer(forKey: "analysis.provider") == AnalysisRules.providerDeepSeek)
     #expect(!model.hasKey && !model.configured)
     #expect(model.baseURL == "https://api.deepseek.com" && model.model == "deepseek-flash")
-    model.baseURL = "https://example.test/v1"
+    #expect(model.applyBaseURL("https://example.test/v1") == nil)
     #expect(defaults.string(forKey: "analysis.baseURL.deepseek") == "https://example.test/v1")
     #expect(!model.isDefault)
     model.resetToDefaults()
@@ -544,10 +635,11 @@ private let shortCall = [
     model.provider = AnalysisRules.providerZai
     #expect(model.hasKey && model.baseURL == "https://api.z.ai/api/paas/v4")
     model.deleteKey()
-    #expect(!model.hasKey && store.key(for: AnalysisRules.providerZai) == nil)
+    #expect(!model.hasKey && store.stored(for: AnalysisRules.providerZai) == nil)
 
     // Test mode (files instead of devices): nothing is analysed even with a key.
-    let test = CallAnalysisModel(defaults: defaults, keyStore: MemoryAnalysisKeyStore([0: "test-key-9"]), testMode: true)
+    let test = CallAnalysisModel(defaults: defaults, keyStore: MemoryAnalysisKeyStore([0: AnalysisStoredKey(key: "test-key-9", baseURL: nil)]),
+                                 testMode: true)
     test.loadKeyIfNeeded()
     #expect(test.hasKey && !test.enabled)
 }

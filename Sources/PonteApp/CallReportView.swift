@@ -60,10 +60,11 @@ struct CallReportView: View {
                 progressRow(analysis)
             }
             if let error = analysis.reportError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                warning(error)
+            }
+            if let report = analysis.report, !report.complete {
+                warning("Отчёт неполный: сервис оборвал ответ, не дописав его (предел длины ответа или фильтр сервиса). "
+                        + "Нажмите «Обновить» или выберите в настройках модель с большим пределом ответа.")
             }
             content(analysis)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -78,6 +79,13 @@ struct CallReportView: View {
             }
             if let url = analysis.autosavedURL {
                 savedRow("Отчёт прошлого звонка сохранён: \((url.path as NSString).abbreviatingWithTildeInPath)", url)
+            }
+            if let error = analysis.previousReportError {
+                Label(error, systemImage: "exclamationmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
             buttons(analysis)
         }
@@ -138,11 +146,24 @@ struct CallReportView: View {
         }
     }
 
+    private func warning(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.triangle.fill")
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+    }
+
     @ViewBuilder private func explanation(_ analysis: CallAnalysisModel) -> some View {
         switch analysis.buildCheck {
+        case AnalysisRules.checkOff:
+            VStack(spacing: 12) {
+                placeholder("pause.circle", "Анализ звонка выключен",
+                            "Переключатель «Анализировать звонок» в настройках выключен: стенограмма никуда не отправляется.")
+                SettingsLink { Text("Открыть настройки") }
+            }
         case AnalysisRules.checkNotSet:
             VStack(spacing: 12) {
-                placeholder("key", "Анализ не настроен", AnalysisError.configMessage(analysis.configCheck)
+                placeholder("key", "Анализ не настроен", (analysis.configProblem ?? "")
                             + " Настройки → «Анализ звонка»: сервис, модель и API-ключ.")
                 SettingsLink { Text("Открыть настройки") }
             }

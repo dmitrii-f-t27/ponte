@@ -4,9 +4,11 @@
 ; call an agent keeps running notes from the transcript (both directions, original and translation, who
 ; spoke); after the call it writes a report of the important data, saved as plain text. This spec decides:
 ; the providers and their defaults (byte tables), the request endpoint and limits, whether a base URL can be
-; used, when the analysis is on, when the notes are updated, which lines are ready, how many lines go into
-; one request, how an error is classified, retried and backed off, when the report is built or shown, and
-; the report file name. Swift (PonteSpeech/AnalysisRules.swift) only marshals; the prompts, the JSON, the
+; used (http:// only for this Mac), whether the saved key may go to the configured address (a key is bound to
+; the address it was saved for), whether a model name can be used, what a Keychain write did, when the analysis
+; is on, when the notes are updated, which lines are ready, how many lines go into one request, whether a reply
+; is complete (finish_reason) and what to do with a cut one, how an error is classified, retried and backed
+; off, when the report is built or shown, what happens on quit, and the report file name. Swift (PonteSpeech/AnalysisRules.swift) only marshals; the prompts, the JSON, the
 ; Keychain, URLSession and the views stay in Swift. The test oracle is AnalysisRulesLegacy
 ; (Tests/PonteTests/Oracles), a separate plain-Swift implementation of the same rules.
 ; Times are integer milliseconds, sizes UTF-8 bytes. ASCII only.
@@ -71,6 +73,10 @@ pub const AN_KIND_EMPTY : i64 = 3;
 pub const AN_KIND_BAD_REPLY : i64 = 4;
 pub const AN_KIND_NO_KEY : i64 = 5;
 pub const AN_KIND_BAD_URL : i64 = 6;
+; A 2xx reply the service cut before its end (an_reply_complete is false).
+pub const AN_KIND_CUT : i64 = 7;
+; The saved key belongs to another base URL (an_bind_check): nothing is sent.
+pub const AN_KIND_KEY_ELSEWHERE : i64 = 8;
 ; Error classes.
 pub const AN_ERR_NONE : i64 = 0;
 pub const AN_ERR_NETWORK : i64 = 1;
@@ -90,6 +96,8 @@ pub const AN_ERR_BAD_REPLY : i64 = 10;
 pub const AN_ERR_NO_KEY : i64 = 11;
 pub const AN_ERR_BAD_URL : i64 = 12;
 pub const AN_ERR_OTHER : i64 = 13;
+pub const AN_ERR_CUT : i64 = 14;
+pub const AN_ERR_KEY_ELSEWHERE : i64 = 15;
 ; HTTP statuses an_http_class tells apart (0 = no response).
 pub const AN_HTTP_NO_RESPONSE : i64 = 0;
 pub const AN_HTTP_OK_FIRST : i64 = 200;
@@ -124,10 +132,36 @@ pub const AN_URL_NO_SCHEME : i64 = 2;
 pub const AN_URL_NO_HOST : i64 = 3;
 pub const AN_URL_SPACE : i64 = 4;
 pub const AN_URL_TOO_LONG : i64 = 5;
+; http:// to a host that is not this Mac (localhost, 127.0.0.1, [::1]): the key would cross the network in clear.
+pub const AN_URL_HTTP_REMOTE : i64 = 6;
 pub const AN_CFG_OK : i64 = 0;
 pub const AN_CFG_NO_KEY : i64 = 1;
 pub const AN_CFG_BAD_URL : i64 = 2;
 pub const AN_CFG_NO_MODEL : i64 = 3;
+; The key was saved for another base URL (or before keys were bound to one): save it again for this address.
+pub const AN_CFG_KEY_ELSEWHERE : i64 = 4;
+; Whether the saved key may go to the configured base URL (an_bind_check).
+pub const AN_BIND_OK : i64 = 0;
+; Saved for another address.
+pub const AN_BIND_OTHER : i64 = 1;
+; Saved without an address (by Ponte before the binding) and no default stands in for it.
+pub const AN_BIND_UNBOUND : i64 = 2;
+; A model name (trimmed by Swift) goes into the request JSON: at most AN_MODEL_MAX bytes, no space or control byte.
+pub const AN_MODEL_MAX : i64 = 256;
+pub const AN_MODEL_OK : i64 = 0;
+pub const AN_MODEL_EMPTY : i64 = 1;
+pub const AN_MODEL_TOO_LONG : i64 = 2;
+pub const AN_MODEL_BAD_CHAR : i64 = 3;
+; What a Keychain call returned (Swift reads OSStatus into these).
+pub const AN_KC_OK : i64 = 0;
+pub const AN_KC_NOT_FOUND : i64 = 1;
+pub const AN_KC_DUPLICATE : i64 = 2;
+pub const AN_KC_OTHER : i64 = 3;
+; What saving a key did: saved; refused because an item of the same name that Ponte could not delete (another
+; app's) is there; failed.
+pub const AN_SAVE_OK : i64 = 0;
+pub const AN_SAVE_FOREIGN : i64 = 1;
+pub const AN_SAVE_FAILED : i64 = 2;
 ; A pasted API key (trimmed by Swift) goes into an HTTP header: printable ASCII only, at most AN_KEY_MAX bytes.
 pub const AN_KEY_MAX : i64 = 1024;
 pub const AN_KEY_OK : i64 = 0;
@@ -135,6 +169,29 @@ pub const AN_KEY_EMPTY : i64 = 1;
 pub const AN_KEY_BAD_CHAR : i64 = 2;
 pub const AN_KEY_TOO_LONG : i64 = 3;
 pub const AN_TILDE : u8 = 126;
+pub const AN_COLON : u8 = 58;
+pub const AN_QUESTION : u8 = 63;
+pub const AN_HASH : u8 = 35;
+pub const AN_DIGIT_9 : u8 = 57;
+
+; --- Replies --------------------------------------------------------------------------------------------------------
+; choices[0].finish_reason: absent; "stop"; "length" (cut at max_tokens); a cut by the service (AN_ROW_FINISH_CUT_*);
+; anything else (tool_calls, unknown words).
+pub const AN_FINISH_NONE : i64 = 0;
+pub const AN_FINISH_STOP : i64 = 1;
+pub const AN_FINISH_LENGTH : i64 = 2;
+pub const AN_FINISH_CUT : i64 = 3;
+pub const AN_FINISH_OTHER : i64 = 4;
+; After a cut notes reply: try again at once with fewer lines, ask for shorter notes first, or fail.
+pub const AN_CUT_SMALLER : i64 = 0;
+pub const AN_CUT_COMPRESS : i64 = 1;
+pub const AN_CUT_FAIL : i64 = 2;
+; Cut replies in a row (the last one included) after which a notes update fails.
+pub const AN_MAX_CUTS : i64 = 6;
+; Notes of at least this many bytes (about 3000 Cyrillic characters) are shortened first when a reply is cut.
+pub const AN_COMPRESS_FROM_BYTES : i64 = 6000;
+; The shortening request asks for notes of at most this many characters.
+pub const AN_COMPRESS_CHARS : i64 = 3000;
 
 ; --- The report ------------------------------------------------------------------------------------------------------
 ; What the report button of the toolbar does: show what there is, build (or rebuild) the report, or explain why not.
@@ -146,6 +203,11 @@ pub const AN_CHECK_OK : i64 = 0;
 pub const AN_CHECK_BUSY : i64 = 1;
 pub const AN_CHECK_NOT_SET : i64 = 2;
 pub const AN_CHECK_NO_LINES : i64 = 3;
+; The toggle "analyse the call" is off: nothing is sent.
+pub const AN_CHECK_OFF : i64 = 4;
+; On quit, a report still being written gets at most this long to arrive (it is then written to a file); after it
+; the request is abandoned.
+pub const AN_QUIT_WAIT_MS : i64 = 10000;
 
 ; --- Lines ---------------------------------------------------------------------------------------------------------
 ; Direction codes (incoming: the other side in pt-BR; outgoing: the owner in ru) and who spoke.
@@ -171,10 +233,14 @@ pub const AN_UPPER_Z : u8 = 90;
 pub const AN_CASE_OFFSET : u8 = 32;
 
 ; >>> generated by Specs/tables/analysis_tables.py -- edit the lists there, not here
-; Rows: provider IDs, default base URLs and models (AN_PROVIDER_* order), then words
+; Rows: provider IDs, default base URLs and models (AN_PROVIDER_* order), words, local hosts, cut finish reasons
 pub const AN_ROW_FIRST_ID : i64 = 0;
 pub const AN_ROW_FIRST_BASE : i64 = 3;
 pub const AN_ROW_FIRST_MODEL : i64 = 6;
+pub const AN_ROW_FIRST_LOCAL : i64 = 18;
+pub const AN_LOCAL_COUNT : i64 = 3;
+pub const AN_ROW_FIRST_FINISH_CUT : i64 = 21;
+pub const AN_FINISH_CUT_COUNT : i64 = 4;
 ; zai
 pub const AN_ROW_ID_0 : i64 = 0;
 ; deepseek
@@ -207,10 +273,28 @@ pub const AN_ROW_HTTP : i64 = 13;
 pub const AN_ROW_REPORT_PREFIX : i64 = 14;
 ; .txt
 pub const AN_ROW_REPORT_SUFFIX : i64 = 15;
-pub const AN_ROW_COUNT : i64 = 16;
-pub const AN_ROW_TEXT : [167]u8 = [122, 97, 105, 100, 101, 101, 112, 115, 101, 101, 107, 99, 117, 115, 116, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 103, 108, 109, 45, 52, 46, 53, 45, 102, 108, 97, 115, 104, 100, 101, 101, 112, 115, 101, 101, 107, 45, 102, 108, 97, 115, 104, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 66, 101, 97, 114, 101, 114, 32, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 58, 47, 47, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 46, 116, 120, 116];
-pub const AN_ROW_OFFSETS : [16]u32 = [0, 3, 11, 17, 45, 69, 69, 82, 96, 96, 113, 128, 135, 143, 150, 163];
-pub const AN_ROW_LENGTHS : [16]u32 = [3, 8, 6, 28, 24, 0, 13, 14, 0, 17, 15, 7, 8, 7, 13, 4];
+; stop
+pub const AN_ROW_FINISH_STOP : i64 = 16;
+; length
+pub const AN_ROW_FINISH_LENGTH : i64 = 17;
+; localhost
+pub const AN_ROW_LOCAL_0 : i64 = 18;
+; 127.0.0.1
+pub const AN_ROW_LOCAL_1 : i64 = 19;
+; [::1]
+pub const AN_ROW_LOCAL_2 : i64 = 20;
+; content_filter
+pub const AN_ROW_FINISH_CUT_0 : i64 = 21;
+; sensitive
+pub const AN_ROW_FINISH_CUT_1 : i64 = 22;
+; insufficient_system_resource
+pub const AN_ROW_FINISH_CUT_2 : i64 = 23;
+; network_error
+pub const AN_ROW_FINISH_CUT_3 : i64 = 24;
+pub const AN_ROW_COUNT : i64 = 25;
+pub const AN_ROW_TEXT : [264]u8 = [122, 97, 105, 100, 101, 101, 112, 115, 101, 101, 107, 99, 117, 115, 116, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 103, 108, 109, 45, 52, 46, 53, 45, 102, 108, 97, 115, 104, 100, 101, 101, 112, 115, 101, 101, 107, 45, 102, 108, 97, 115, 104, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 66, 101, 97, 114, 101, 114, 32, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 58, 47, 47, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 46, 116, 120, 116, 115, 116, 111, 112, 108, 101, 110, 103, 116, 104, 108, 111, 99, 97, 108, 104, 111, 115, 116, 49, 50, 55, 46, 48, 46, 48, 46, 49, 91, 58, 58, 49, 93, 99, 111, 110, 116, 101, 110, 116, 95, 102, 105, 108, 116, 101, 114, 115, 101, 110, 115, 105, 116, 105, 118, 101, 105, 110, 115, 117, 102, 102, 105, 99, 105, 101, 110, 116, 95, 115, 121, 115, 116, 101, 109, 95, 114, 101, 115, 111, 117, 114, 99, 101, 110, 101, 116, 119, 111, 114, 107, 95, 101, 114, 114, 111, 114];
+pub const AN_ROW_OFFSETS : [25]u32 = [0, 3, 11, 17, 45, 69, 69, 82, 96, 96, 113, 128, 135, 143, 150, 163, 167, 171, 177, 186, 195, 200, 214, 223, 251];
+pub const AN_ROW_LENGTHS : [25]u32 = [3, 8, 6, 28, 24, 0, 13, 14, 0, 17, 15, 7, 8, 7, 13, 4, 4, 6, 9, 9, 5, 14, 9, 28, 13];
 ; Texts for the tests
 ; https://api.z.ai/api/paas/v4
 pub const AN_FX_ZAI_BASE : i64 = 0;
@@ -254,10 +338,48 @@ pub const AN_FX_REPORT_2359_2 : i64 = 18;
 pub const AN_FX_REPORT_0000_12 : i64 = 19;
 ; https://\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444/v1
 pub const AN_FX_CYRILLIC : i64 = 20;
-pub const AN_FX_COUNT : i64 = 21;
-pub const AN_FX_TEXT : [524]u8 = [104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 72, 84, 84, 80, 83, 58, 47, 47, 65, 80, 73, 46, 68, 69, 69, 80, 83, 69, 69, 75, 46, 67, 79, 77, 102, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 32, 98, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 122, 97, 105, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 99, 117, 115, 116, 111, 109, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 49, 48, 45, 49, 51, 45, 49, 52, 48, 53, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 48, 49, 45, 48, 50, 45, 50, 51, 53, 57, 45, 50, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 55, 45, 49, 50, 45, 51, 49, 45, 48, 48, 48, 48, 45, 49, 50, 46, 116, 120, 116, 104, 116, 116, 112, 115, 58, 47, 47, 208, 191, 209, 128, 208, 184, 208, 188, 208, 181, 209, 128, 46, 209, 128, 209, 132, 47, 118, 49];
-pub const AN_FX_OFFSETS : [21]u32 = [0, 28, 58, 103, 149, 190, 215, 257, 281, 298, 306, 315, 335, 355, 355, 356, 374, 395, 427, 461, 496];
-pub const AN_FX_LENGTHS : [21]u32 = [28, 30, 45, 46, 41, 25, 42, 24, 17, 8, 9, 20, 20, 0, 1, 18, 21, 32, 34, 35, 28];
+; http://127.0.0.1:8080/v1
+pub const AN_FX_HTTP_LOCAL_IP : i64 = 21;
+; http://[::1]:11434
+pub const AN_FX_HTTP_LOCAL_V6 : i64 = 22;
+; HTTP://LocalHost/v1
+pub const AN_FX_HTTP_LOCAL_UPPER : i64 = 23;
+; http://localhost?x=1
+pub const AN_FX_HTTP_LOCAL_QUERY : i64 = 24;
+; http://example.com/v1
+pub const AN_FX_HTTP_REMOTE : i64 = 25;
+; http://localhost@evil.example/v1
+pub const AN_FX_HTTP_USERINFO : i64 = 26;
+; http://localhost.evil.example/v1
+pub const AN_FX_HTTP_SUBDOMAIN : i64 = 27;
+; http://localhost:/v1
+pub const AN_FX_HTTP_EMPTY_PORT : i64 = 28;
+; http://127.0.0.1:80a/v1
+pub const AN_FX_HTTP_BAD_PORT : i64 = 29;
+; http:///localhost
+pub const AN_FX_HTTP_NO_AUTHORITY : i64 = 30;
+; http://
+pub const AN_FX_HTTP_ONLY : i64 = 31;
+; https://api.z.ai/api/coding/paas/v4
+pub const AN_FX_ZAI_CODING : i64 = 32;
+; stop
+pub const AN_FX_FINISH_STOP : i64 = 33;
+; length
+pub const AN_FX_FINISH_LENGTH : i64 = 34;
+; content_filter
+pub const AN_FX_FINISH_FILTER : i64 = 35;
+; tool_calls
+pub const AN_FX_FINISH_TOOLS : i64 = 36;
+; STOP
+pub const AN_FX_FINISH_UPPER : i64 = 37;
+; deepseek/deepseek-chat:free
+pub const AN_FX_MODEL_SLASH : i64 = 38;
+; glm 4.5
+pub const AN_FX_MODEL_SPACE : i64 = 39;
+pub const AN_FX_COUNT : i64 = 40;
+pub const AN_FX_TEXT : [864]u8 = [104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 72, 84, 84, 80, 83, 58, 47, 47, 65, 80, 73, 46, 68, 69, 69, 80, 83, 69, 69, 75, 46, 67, 79, 77, 102, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 32, 98, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 122, 97, 105, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 99, 117, 115, 116, 111, 109, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 49, 48, 45, 49, 51, 45, 49, 52, 48, 53, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 48, 49, 45, 48, 50, 45, 50, 51, 53, 57, 45, 50, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 55, 45, 49, 50, 45, 51, 49, 45, 48, 48, 48, 48, 45, 49, 50, 46, 116, 120, 116, 104, 116, 116, 112, 115, 58, 47, 47, 208, 191, 209, 128, 208, 184, 208, 188, 208, 181, 209, 128, 46, 209, 128, 209, 132, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58, 56, 48, 56, 48, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 91, 58, 58, 49, 93, 58, 49, 49, 52, 51, 52, 72, 84, 84, 80, 58, 47, 47, 76, 111, 99, 97, 108, 72, 111, 115, 116, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 63, 120, 61, 49, 104, 116, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 64, 101, 118, 105, 108, 46, 101, 120, 97, 109, 112, 108, 101, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 46, 101, 118, 105, 108, 46, 101, 120, 97, 109, 112, 108, 101, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58, 56, 48, 97, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 104, 116, 116, 112, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 99, 111, 100, 105, 110, 103, 47, 112, 97, 97, 115, 47, 118, 52, 115, 116, 111, 112, 108, 101, 110, 103, 116, 104, 99, 111, 110, 116, 101, 110, 116, 95, 102, 105, 108, 116, 101, 114, 116, 111, 111, 108, 95, 99, 97, 108, 108, 115, 83, 84, 79, 80, 100, 101, 101, 112, 115, 101, 101, 107, 47, 100, 101, 101, 112, 115, 101, 101, 107, 45, 99, 104, 97, 116, 58, 102, 114, 101, 101, 103, 108, 109, 32, 52, 46, 53];
+pub const AN_FX_OFFSETS : [40]u32 = [0, 28, 58, 103, 149, 190, 215, 257, 281, 298, 306, 315, 335, 355, 355, 356, 374, 395, 427, 461, 496, 524, 548, 566, 585, 605, 626, 658, 690, 710, 733, 750, 757, 792, 796, 802, 816, 826, 830, 857];
+pub const AN_FX_LENGTHS : [40]u32 = [28, 30, 45, 46, 41, 25, 42, 24, 17, 8, 9, 20, 20, 0, 1, 18, 21, 32, 34, 35, 28, 24, 18, 19, 20, 21, 32, 32, 20, 23, 17, 7, 35, 4, 6, 14, 10, 4, 27, 7];
 ; <<< generated
 
 ; --- Providers --------------------------------------------------------------------------------------------------------
@@ -346,8 +468,57 @@ pub fn an_scheme_length(text: [2048]u8, len: i64) -> i64 {
     return n;
 }
 
+; Is text[from, end) the host of table row `row` (ASCII case folded), alone or followed by ":" and at least one
+; digit (a port)? Anything else after the host (a dot, "@", a letter) is another host.
+pub fn an_authority_is(text: [2048]u8, from: i64, end: i64, row: i64) -> bool {
+    var off: i64 = AN_ROW_OFFSETS[row];
+    var n: i64 = AN_ROW_LENGTHS[row];
+    if (end - from < n) { return false; }
+    var i: i64 = 0;
+    while (i < n) {
+        if (an_lower(text[from + i]) != AN_ROW_TEXT[off + i]) { return false; }
+        i = i + 1;
+    }
+    var k: i64 = from + n;
+    if (k == end) { return true; }
+    if (text[k] != AN_COLON) { return false; }
+    k = k + 1;
+    if (k == end) { return false; }
+    while (k < end) {
+        if (text[k] < AN_DIGIT_0 or text[k] > AN_DIGIT_9) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+; Does the authority that starts at `from` (up to the first "/", "?" or "#", or the end) name this Mac: one of the
+; AN_ROW_LOCAL_* hosts (localhost, 127.0.0.1, [::1]), with or without a port?
+pub fn an_http_local(text: [2048]u8, len: i64, from: i64) -> bool {
+    var end: i64 = from;
+    var scanning: bool = true;
+    while (scanning) {
+        if (end < len) {
+            if (text[end] == AN_SLASH or text[end] == AN_QUESTION or text[end] == AN_HASH) {
+                scanning = false;
+            } else {
+                end = end + 1;
+            }
+        } else {
+            scanning = false;
+        }
+    }
+    var local: bool = false;
+    var r: i64 = 0;
+    while (r < AN_LOCAL_COUNT) {
+        if (an_authority_is(text, from, end, AN_ROW_FIRST_LOCAL + r)) { local = true; }
+        r = r + 1;
+    }
+    return local;
+}
+
 ; Whether a base URL (trimmed by Swift) can be used, in this order: empty; too long for the endpoint buffer;
-; a space, a control byte or DEL anywhere; no https:// or http:// scheme; nothing but slashes after the scheme.
+; a space, a control byte or DEL anywhere; no https:// or http:// scheme; nothing but slashes after the scheme;
+; http:// to anything but this Mac (an_http_local): the key and the transcript must not cross the network in clear.
 pub fn an_base_url_check(text: [2048]u8, len: i64) -> i64 {
     if (len <= 0) { return AN_URL_EMPTY; }
     var path: i64 = AN_ROW_LENGTHS[AN_ROW_PATH];
@@ -359,12 +530,17 @@ pub fn an_base_url_check(text: [2048]u8, len: i64) -> i64 {
     }
     var scheme: i64 = an_scheme_length(text, len);
     if (scheme == 0) { return AN_URL_NO_SCHEME; }
+    var has_host: bool = false;
     var k: i64 = scheme;
     while (k < len) {
-        if (text[k] != AN_SLASH) { return AN_URL_OK; }
+        if (text[k] != AN_SLASH) { has_host = true; }
         k = k + 1;
     }
-    return AN_URL_NO_HOST;
+    if (has_host == false) { return AN_URL_NO_HOST; }
+    if (an_starts_with_row(text, len, AN_ROW_HTTP)) {
+        if (an_http_local(text, len, scheme) == false) { return AN_URL_HTTP_REMOTE; }
+    }
+    return AN_URL_OK;
 }
 
 ; The chat-completions endpoint: the base without its trailing slashes, then "/chat/completions" unless the
@@ -410,13 +586,92 @@ pub fn an_endpoint(base: [2048]u8, len: i64, out: [2048]u8) -> i64 {
     return n + path_len;
 }
 
+; The part of a base URL an_endpoint builds on: its length without the trailing slashes and without a final
+; "/chat/completions" (the endpoint is always this part plus the path). Read up to AN_URL_MAX minus the path.
+pub fn an_endpoint_core(base: [2048]u8, len: i64) -> i64 {
+    var path_off: i64 = AN_ROW_OFFSETS[AN_ROW_PATH];
+    var path_len: i64 = AN_ROW_LENGTHS[AN_ROW_PATH];
+    var n: i64 = len;
+    if (n < 0) { n = 0; }
+    if (n > AN_URL_MAX - path_len) { n = AN_URL_MAX - path_len; }
+    var trimming: bool = true;
+    while (trimming) {
+        if (n > 0) {
+            if (base[n - 1] == AN_SLASH) {
+                n = n - 1;
+            } else {
+                trimming = false;
+            }
+        } else {
+            trimming = false;
+        }
+    }
+    if (n < path_len) { return n; }
+    var k: i64 = 0;
+    while (k < path_len) {
+        if (base[n - path_len + k] != AN_ROW_TEXT[path_off + k]) { return n; }
+        k = k + 1;
+    }
+    return n - path_len;
+}
+
+; Whether two base URLs send to the same endpoint: both usable (an_base_url_check) and their cores
+; (an_endpoint_core) the same bytes. A key goes only to the endpoint of the address it was saved for.
+pub fn an_same_endpoint(a: [2048]u8, a_len: i64, b: [2048]u8, b_len: i64) -> bool {
+    if (an_base_url_check(a, a_len) != AN_URL_OK) { return false; }
+    if (an_base_url_check(b, b_len) != AN_URL_OK) { return false; }
+    var n: i64 = an_endpoint_core(a, a_len);
+    if (an_endpoint_core(b, b_len) != n) { return false; }
+    var i: i64 = 0;
+    while (i < n) {
+        if (a[i] != b[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+; Whether the saved key may go to the configured base URL. A key saved with an address goes only to that address
+; (an_same_endpoint). A key saved before keys were bound to addresses counts as saved for the spec's default
+; base URL of a built-in provider (Z.ai, DeepSeek) and for no address of the custom one.
+pub fn an_bind_check(has_bound: bool, same_as_bound: bool, provider: i64, same_as_default: bool) -> i64 {
+    if (has_bound) {
+        if (same_as_bound) { return AN_BIND_OK; }
+        return AN_BIND_OTHER;
+    }
+    if (an_provider_code(provider) != AN_PROVIDER_CUSTOM and same_as_default) { return AN_BIND_OK; }
+    return AN_BIND_UNBOUND;
+}
+
 ; Whether the analysis can run with these settings, in this order: no key; a base URL that cannot be used
-; (an_base_url_check); no model.
-pub fn an_config_check(key_bytes: i64, url_check: i64, model_bytes: i64) -> i64 {
+; (an_base_url_check); no model; a key that may not go to this base URL (an_bind_check).
+pub fn an_config_check(key_bytes: i64, url_check: i64, model_bytes: i64, bind: i64) -> i64 {
     if (key_bytes <= 0) { return AN_CFG_NO_KEY; }
     if (url_check != AN_URL_OK) { return AN_CFG_BAD_URL; }
     if (model_bytes <= 0) { return AN_CFG_NO_MODEL; }
+    if (bind != AN_BIND_OK) { return AN_CFG_KEY_ELSEWHERE; }
     return AN_CFG_OK;
+}
+
+; A model name typed in the settings (trimmed by Swift), in this order: empty; longer than AN_MODEL_MAX; a space,
+; a control byte or DEL anywhere. Only a model that passes is applied.
+pub fn an_model_check(text: [2048]u8, len: i64) -> i64 {
+    if (len <= 0) { return AN_MODEL_EMPTY; }
+    if (len > AN_MODEL_MAX) { return AN_MODEL_TOO_LONG; }
+    var i: i64 = 0;
+    while (i < len) {
+        if (text[i] <= AN_SPACE or text[i] == AN_DEL) { return AN_MODEL_BAD_CHAR; }
+        i = i + 1;
+    }
+    return AN_MODEL_OK;
+}
+
+; What saving a key did, from what adding the new Keychain item returned (Ponte deletes its own item first, then
+; adds): added; a duplicate means an item of that name Ponte could not delete (another app's) is in the way, and
+; the key is not saved; anything else failed.
+pub fn an_key_write_outcome(added: i64) -> i64 {
+    if (added == AN_KC_OK) { return AN_SAVE_OK; }
+    if (added == AN_KC_DUPLICATE) { return AN_SAVE_FOREIGN; }
+    return AN_SAVE_FAILED;
 }
 
 ; A pasted key, in this order: empty; longer than AN_KEY_MAX; a byte that is not printable ASCII (a space, a
@@ -524,6 +779,8 @@ pub fn an_error_class(kind: i64, status: i64) -> i64 {
     if (kind == AN_KIND_BAD_REPLY) { return AN_ERR_BAD_REPLY; }
     if (kind == AN_KIND_NO_KEY) { return AN_ERR_NO_KEY; }
     if (kind == AN_KIND_BAD_URL) { return AN_ERR_BAD_URL; }
+    if (kind == AN_KIND_CUT) { return AN_ERR_CUT; }
+    if (kind == AN_KIND_KEY_ELSEWHERE) { return AN_ERR_KEY_ELSEWHERE; }
     return AN_ERR_OTHER;
 }
 
@@ -561,31 +818,88 @@ pub fn an_background_after_error(err: i64, failures: i64) -> i64 {
     return AN_BG_RETRY;
 }
 
-; The check button says OK when the service answered 2xx: the key and the URL work even if a tiny answer came back empty.
+; The check button says OK when the service answered 2xx: the key and the URL work even if a tiny answer came back
+; empty or cut.
 pub fn an_probe_ok(err: i64) -> bool {
-    return err == AN_ERR_NONE or err == AN_ERR_EMPTY;
+    return err == AN_ERR_NONE or err == AN_ERR_EMPTY or err == AN_ERR_CUT;
+}
+
+; --- Replies ------------------------------------------------------------------------------------------------------------
+; Is text (len bytes, a reply word) exactly table row `row`?
+pub fn an_text_is_row(text: [256]u8, len: i64, row: i64) -> bool {
+    var off: i64 = AN_ROW_OFFSETS[row];
+    var n: i64 = AN_ROW_LENGTHS[row];
+    if (len != n) { return false; }
+    var i: i64 = 0;
+    while (i < n) {
+        if (text[i] != AN_ROW_TEXT[off + i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+; The code of choices[0].finish_reason (exact, lowercase): none; "stop"; "length"; a cut by the service
+; (AN_ROW_FINISH_CUT_*); anything else. A word longer than the buffer is "other".
+pub fn an_finish_code(text: [256]u8, len: i64) -> i64 {
+    if (len <= 0) { return AN_FINISH_NONE; }
+    if (an_text_is_row(text, len, AN_ROW_FINISH_STOP)) { return AN_FINISH_STOP; }
+    if (an_text_is_row(text, len, AN_ROW_FINISH_LENGTH)) { return AN_FINISH_LENGTH; }
+    var r: i64 = 0;
+    while (r < AN_FINISH_CUT_COUNT) {
+        if (an_text_is_row(text, len, AN_ROW_FIRST_FINISH_CUT + r)) { return AN_FINISH_CUT; }
+        r = r + 1;
+    }
+    return AN_FINISH_OTHER;
+}
+
+; A reply is complete unless the service cut it: at max_tokens ("length") or by itself (a filter, no capacity).
+; A cut notes reply is never applied; a cut report is shown and saved marked incomplete.
+pub fn an_reply_complete(finish: i64) -> bool {
+    return finish != AN_FINISH_LENGTH and finish != AN_FINISH_CUT;
+}
+
+; After a cut notes reply (`cuts` in a row, this one included) of a request that took `taken` lines (0: a request
+; that only shortens the notes): fail after AN_MAX_CUTS cuts or when shortening was cut too; with long notes
+; (AN_COMPRESS_FROM_BYTES) ask for shorter notes first; with more than one line try again at once with fewer;
+; else fail. The lines stay uncovered until a complete reply covers them.
+pub fn an_after_cut(taken: i64, cuts: i64, notes_bytes: i64) -> i64 {
+    if (cuts >= AN_MAX_CUTS or taken <= 0) { return AN_CUT_FAIL; }
+    if (notes_bytes >= AN_COMPRESS_FROM_BYTES) { return AN_CUT_COMPRESS; }
+    if (taken > 1) { return AN_CUT_SMALLER; }
+    return AN_CUT_FAIL;
+}
+
+; The next notes request after a cut takes at most half the lines of the cut one, at least one.
+pub fn an_cut_line_cap(taken: i64) -> i64 {
+    var cap: i64 = taken / 2;
+    if (cap < 1) { return 1; }
+    return cap;
 }
 
 ; --- The report ---------------------------------------------------------------------------------------------------------
-; On Stop: the report is built when the analysis is on and set up and the call has a line.
-pub fn an_report_on_stop(enabled: bool, configured: bool, lines: i64) -> bool {
-    return enabled and configured and lines >= 1;
+; On Stop: the report is built when the analysis is on and set up and the call has a line, unless the app is
+; quitting (a report takes minutes; the quit waits only for one already being written, an_quit_wait_ms).
+pub fn an_report_on_stop(enabled: bool, configured: bool, lines: i64, quitting: bool) -> bool {
+    return enabled and configured and lines >= 1 and quitting == false;
 }
 
-; The report button: show the work in progress, or the report when it already covers every line; without lines
-; or settings show what there is, or explain why there is nothing; else build it.
-pub fn an_report_on_open(busy: bool, has_report: bool, report_lines: i64, lines: i64, configured: bool) -> i64 {
+; The report button: show the work in progress, or the report when it already covers every line; with the analysis
+; off, without lines or without settings show what there is, or explain why there is nothing; else build it.
+; `busy` is a report of the current call being written (one of an earlier call does not count).
+pub fn an_report_on_open(enabled: bool, busy: bool, has_report: bool, report_lines: i64, lines: i64, configured: bool) -> i64 {
     if (busy) { return AN_OPEN_SHOW; }
     if (has_report and report_lines == lines) { return AN_OPEN_SHOW; }
-    if (lines <= 0 or configured == false) {
+    if (enabled == false or lines <= 0 or configured == false) {
         if (has_report) { return AN_OPEN_SHOW; }
         return AN_OPEN_EXPLAIN;
     }
     return AN_OPEN_BUILD;
 }
 
-; The refresh button: whether the report can be built now, and why not.
-pub fn an_build_check(busy: bool, configured: bool, lines: i64) -> i64 {
+; The refresh button: whether the report can be built now, and why not, in this order: the analysis is off; a
+; report of the current call is being written; the settings cannot make a request; the call has no line.
+pub fn an_build_check(enabled: bool, busy: bool, configured: bool, lines: i64) -> i64 {
+    if (enabled == false) { return AN_CHECK_OFF; }
     if (busy) { return AN_CHECK_BUSY; }
     if (configured == false) { return AN_CHECK_NOT_SET; }
     if (lines <= 0) { return AN_CHECK_NO_LINES; }
@@ -597,10 +911,17 @@ pub fn an_report_button_enabled(lines: i64, has_report: bool, busy: bool) -> boo
     return lines > 0 or has_report or busy;
 }
 
-; A report the owner has not saved is written to a file before a new call replaces it (a report still being
-; written when the next call starts is written to a file when it is done).
+; A report the owner has not saved is written to a file before a new call replaces it and when the app quits (a
+; report still being written when the next call starts, or within the quit wait, is written to a file when done).
 pub fn an_save_before_reset(has_report: bool, saved: bool) -> bool {
     return has_report and saved == false;
+}
+
+; On quit: how long to wait for the reports still being written (of this call or an earlier one) before they are
+; abandoned; no wait without one.
+pub fn an_quit_wait_ms(builds: i64) -> i64 {
+    if (builds > 0) { return AN_QUIT_WAIT_MS; }
+    return 0;
 }
 
 ; The call's length in whole minutes, rounded half up; 0 for none.
@@ -831,11 +1152,15 @@ test an_url_rules {
     }
     assert bad == 0;
     // Configuration.
-    assert an_config_check(0, AN_URL_OK, 5) == AN_CFG_NO_KEY;
-    assert an_config_check(10, AN_URL_EMPTY, 5) == AN_CFG_BAD_URL;
-    assert an_config_check(10, AN_URL_OK, 0) == AN_CFG_NO_MODEL;
-    assert an_config_check(10, AN_URL_OK, 5) == AN_CFG_OK;
-    assert an_config_check(-1, AN_URL_NO_HOST, 0) == AN_CFG_NO_KEY;
+    assert an_config_check(0, AN_URL_OK, 5, AN_BIND_OK) == AN_CFG_NO_KEY;
+    assert an_config_check(10, AN_URL_EMPTY, 5, AN_BIND_OK) == AN_CFG_BAD_URL;
+    assert an_config_check(10, AN_URL_HTTP_REMOTE, 5, AN_BIND_OK) == AN_CFG_BAD_URL;
+    assert an_config_check(10, AN_URL_OK, 0, AN_BIND_OK) == AN_CFG_NO_MODEL;
+    assert an_config_check(10, AN_URL_OK, 5, AN_BIND_OK) == AN_CFG_OK;
+    assert an_config_check(10, AN_URL_OK, 5, AN_BIND_OTHER) == AN_CFG_KEY_ELSEWHERE;
+    assert an_config_check(10, AN_URL_OK, 5, AN_BIND_UNBOUND) == AN_CFG_KEY_ELSEWHERE;
+    assert an_config_check(10, AN_URL_OK, 0, AN_BIND_OTHER) == AN_CFG_NO_MODEL;
+    assert an_config_check(-1, AN_URL_NO_HOST, 0, AN_BIND_OTHER) == AN_CFG_NO_KEY;
     assert an_analysis_on(false, false, true, false) == true;
     assert an_analysis_on(true, false, true, false) == false;
     assert an_analysis_on(true, true, true, false) == true;
@@ -1036,25 +1361,63 @@ test an_error_rules {
     assert an_background_after_error(AN_ERR_PAYMENT, 1) == AN_BG_STOP;
     assert an_probe_ok(AN_ERR_NONE) == true;
     assert an_probe_ok(AN_ERR_EMPTY) == true;
+    assert an_probe_ok(AN_ERR_CUT) == true;
     assert an_probe_ok(AN_ERR_AUTH) == false;
+    assert an_probe_ok(AN_ERR_KEY_ELSEWHERE) == false;
+    // A cut reply and a key saved for another address are not transient: retrying the same request gives the same.
+    assert an_error_class(AN_KIND_CUT, 200) == AN_ERR_CUT;
+    assert an_error_class(AN_KIND_KEY_ELSEWHERE, 0) == AN_ERR_KEY_ELSEWHERE;
+    assert an_is_transient(AN_ERR_CUT) == false;
+    assert an_is_transient(AN_ERR_KEY_ELSEWHERE) == false;
+    assert an_background_after_error(AN_ERR_CUT, 1) == AN_BG_STOP;
 }
 
 test an_report_rules {
-    assert an_report_on_stop(true, true, 1) == true;
-    assert an_report_on_stop(true, true, 0) == false;
-    assert an_report_on_stop(false, true, 5) == false;
-    assert an_report_on_stop(true, false, 5) == false;
-    assert an_report_on_open(true, false, 0, 0, false) == AN_OPEN_SHOW;
-    assert an_report_on_open(false, true, 10, 10, true) == AN_OPEN_SHOW;
-    assert an_report_on_open(false, true, 10, 12, true) == AN_OPEN_BUILD;
-    assert an_report_on_open(false, false, 0, 12, true) == AN_OPEN_BUILD;
-    assert an_report_on_open(false, false, 0, 0, true) == AN_OPEN_EXPLAIN;
-    assert an_report_on_open(false, false, 0, 12, false) == AN_OPEN_EXPLAIN;
-    assert an_report_on_open(false, true, 10, 12, false) == AN_OPEN_SHOW;
-    assert an_build_check(true, false, 0) == AN_CHECK_BUSY;
-    assert an_build_check(false, false, 5) == AN_CHECK_NOT_SET;
-    assert an_build_check(false, true, 0) == AN_CHECK_NO_LINES;
-    assert an_build_check(false, true, 5) == AN_CHECK_OK;
+    assert an_report_on_stop(true, true, 1, false) == true;
+    assert an_report_on_stop(true, true, 0, false) == false;
+    assert an_report_on_stop(false, true, 5, false) == false;
+    assert an_report_on_stop(true, false, 5, false) == false;
+    // Quitting never starts a report.
+    assert an_report_on_stop(true, true, 5, true) == false;
+    assert an_report_on_open(true, true, false, 0, 0, false) == AN_OPEN_SHOW;
+    assert an_report_on_open(true, false, true, 10, 10, true) == AN_OPEN_SHOW;
+    assert an_report_on_open(true, false, true, 10, 12, true) == AN_OPEN_BUILD;
+    assert an_report_on_open(true, false, false, 0, 12, true) == AN_OPEN_BUILD;
+    assert an_report_on_open(true, false, false, 0, 0, true) == AN_OPEN_EXPLAIN;
+    assert an_report_on_open(true, false, false, 0, 12, false) == AN_OPEN_EXPLAIN;
+    assert an_report_on_open(true, false, true, 10, 12, false) == AN_OPEN_SHOW;
+    // The analysis off: never a build; what there is is shown, else the reason.
+    assert an_report_on_open(false, false, false, 0, 12, true) == AN_OPEN_EXPLAIN;
+    assert an_report_on_open(false, false, true, 10, 12, true) == AN_OPEN_SHOW;
+    assert an_build_check(true, true, false, 0) == AN_CHECK_BUSY;
+    assert an_build_check(true, false, false, 5) == AN_CHECK_NOT_SET;
+    assert an_build_check(true, false, true, 0) == AN_CHECK_NO_LINES;
+    assert an_build_check(true, false, true, 5) == AN_CHECK_OK;
+    assert an_build_check(false, false, true, 5) == AN_CHECK_OFF;
+    assert an_build_check(false, true, false, 0) == AN_CHECK_OFF;
+    // Every flag: an off analysis is always OFF; a build is possible only with every condition met.
+    var bad: u32 = 0;
+    var flags: i64 = 0;
+    while (flags < 8) {
+        var en: bool = (flags & 1) == 1;
+        var busy: bool = (flags & 2) == 2;
+        var conf: bool = (flags & 4) == 4;
+        var n: i64 = -1;
+        while (n < 3) {
+            var c: i64 = an_build_check(en, busy, conf, n);
+            if (en == false and c != AN_CHECK_OFF) { bad = bad + 1; }
+            if ((c == AN_CHECK_OK) != (en and busy == false and conf and n > 0)) { bad = bad + 1; }
+            var o: i64 = an_report_on_open(en, busy, false, 0, n, conf);
+            if ((o == AN_OPEN_BUILD) != (en and busy == false and conf and n > 0)) { bad = bad + 1; }
+            n = n + 1;
+        }
+        flags = flags + 1;
+    }
+    assert bad == 0;
+    assert an_quit_wait_ms(0) == 0;
+    assert an_quit_wait_ms(-1) == 0;
+    assert an_quit_wait_ms(1) == AN_QUIT_WAIT_MS;
+    assert an_quit_wait_ms(3) == 10000;
     assert an_report_button_enabled(0, false, false) == false;
     assert an_report_button_enabled(1, false, false) == true;
     assert an_report_button_enabled(0, true, false) == true;
@@ -1074,6 +1437,184 @@ test an_report_rules {
     assert AN_TEMPERATURE_MILLI == 200;
     assert AN_MAX_LINE_BYTES < AN_MAX_REQUEST_BYTES;
     assert AN_MAX_NOTES_BYTES < AN_MAX_REQUEST_BYTES;
+}
+
+test an_http_rules {
+    var url: [2048]u8 = [0; 2048];
+    var n: i64 = an_fixture(AN_FX_LOCAL, url);
+    assert an_base_url_check(url, n) == AN_URL_OK;
+    n = an_fixture(AN_FX_HTTP_LOCAL_IP, url);
+    assert an_base_url_check(url, n) == AN_URL_OK;
+    n = an_fixture(AN_FX_HTTP_LOCAL_V6, url);
+    assert an_base_url_check(url, n) == AN_URL_OK;
+    n = an_fixture(AN_FX_HTTP_LOCAL_UPPER, url);
+    assert an_base_url_check(url, n) == AN_URL_OK;
+    n = an_fixture(AN_FX_HTTP_LOCAL_QUERY, url);
+    assert an_base_url_check(url, n) == AN_URL_OK;
+    n = an_fixture(AN_FX_HTTP_REMOTE, url);
+    assert an_base_url_check(url, n) == AN_URL_HTTP_REMOTE;
+    n = an_fixture(AN_FX_HTTP_USERINFO, url);
+    assert an_base_url_check(url, n) == AN_URL_HTTP_REMOTE;
+    n = an_fixture(AN_FX_HTTP_SUBDOMAIN, url);
+    assert an_base_url_check(url, n) == AN_URL_HTTP_REMOTE;
+    n = an_fixture(AN_FX_HTTP_EMPTY_PORT, url);
+    assert an_base_url_check(url, n) == AN_URL_HTTP_REMOTE;
+    n = an_fixture(AN_FX_HTTP_BAD_PORT, url);
+    assert an_base_url_check(url, n) == AN_URL_HTTP_REMOTE;
+    n = an_fixture(AN_FX_HTTP_NO_AUTHORITY, url);
+    assert an_base_url_check(url, n) == AN_URL_HTTP_REMOTE;
+    n = an_fixture(AN_FX_HTTP_ONLY, url);
+    assert an_base_url_check(url, n) == AN_URL_NO_HOST;
+    // https:// may name any host, this Mac too.
+    n = an_fixture(AN_FX_ZAI_BASE, url);
+    assert an_base_url_check(url, n) == AN_URL_OK;
+    assert an_http_local(url, n, 8) == false;
+    // The authority rule alone: "localhost" with a port of digits only, nothing after it.
+    n = an_fixture(AN_FX_LOCAL, url);
+    assert an_http_local(url, n, 7) == true;
+    assert an_http_local(url, n, 8) == false;
+    assert an_authority_is(url, 7, 16, AN_ROW_FIRST_LOCAL) == true;
+    assert an_authority_is(url, 7, 22, AN_ROW_FIRST_LOCAL) == true;
+    assert an_authority_is(url, 7, 17, AN_ROW_FIRST_LOCAL) == false;
+    assert an_authority_is(url, 7, 15, AN_ROW_FIRST_LOCAL) == false;
+    assert an_authority_is(url, 7, 22, AN_ROW_FIRST_LOCAL + 1) == false;
+}
+
+test an_binding_rules {
+    var a: [2048]u8 = [0; 2048];
+    var b: [2048]u8 = [0; 2048];
+    var na: i64 = an_fixture(AN_FX_ZAI_BASE, a);
+    var nb: i64 = an_fixture(AN_FX_ZAI_SLASH, b);
+    assert an_same_endpoint(a, na, b, nb) == true;
+    nb = an_fixture(AN_FX_ZAI_ENDPOINT, b);
+    assert an_same_endpoint(a, na, b, nb) == true;
+    nb = an_fixture(AN_FX_ZAI_ENDPOINT_SLASH, b);
+    assert an_same_endpoint(a, na, b, nb) == true;
+    assert an_same_endpoint(b, nb, a, na) == true;
+    nb = an_fixture(AN_FX_ZAI_CODING, b);
+    assert an_same_endpoint(a, na, b, nb) == false;
+    nb = an_fixture(AN_FX_UPPER, b);
+    assert an_same_endpoint(a, na, b, nb) == false;
+    // Case counts: the key goes only to the bytes it was saved for.
+    na = an_fixture(AN_FX_UPPER, a);
+    assert an_same_endpoint(a, na, b, nb) == true;
+    // An unusable address is never the same as anything, itself included.
+    na = an_fixture(AN_FX_HTTP_REMOTE, a);
+    nb = an_fixture(AN_FX_HTTP_REMOTE, b);
+    assert an_same_endpoint(a, na, b, nb) == false;
+    na = an_fixture(AN_FX_EMPTY, a);
+    nb = an_fixture(AN_FX_EMPTY, b);
+    assert an_same_endpoint(a, na, b, nb) == false;
+    na = an_fixture(AN_FX_LOCAL, a);
+    nb = an_fixture(AN_FX_LOCAL_ENDPOINT, b);
+    assert an_same_endpoint(a, na, b, nb) == true;
+    assert an_endpoint_core(a, na) == 25;
+    assert an_endpoint_core(b, nb) == 25;
+    assert an_endpoint_core(b, 0) == 0;
+    assert an_endpoint_core(b, -4) == 0;
+    // Binding.
+    assert an_bind_check(true, true, AN_PROVIDER_CUSTOM, false) == AN_BIND_OK;
+    assert an_bind_check(true, false, AN_PROVIDER_ZAI, true) == AN_BIND_OTHER;
+    assert an_bind_check(false, false, AN_PROVIDER_ZAI, true) == AN_BIND_OK;
+    assert an_bind_check(false, false, AN_PROVIDER_DEEPSEEK, true) == AN_BIND_OK;
+    assert an_bind_check(false, false, AN_PROVIDER_ZAI, false) == AN_BIND_UNBOUND;
+    assert an_bind_check(false, true, AN_PROVIDER_CUSTOM, true) == AN_BIND_UNBOUND;
+    assert an_bind_check(false, false, 77, true) == AN_BIND_OK;
+    // Models.
+    var m: [2048]u8 = [0; 2048];
+    var nm: i64 = an_fixture(AN_FX_MODEL_SLASH, m);
+    assert an_model_check(m, nm) == AN_MODEL_OK;
+    nm = an_fixture(AN_FX_MODEL_SPACE, m);
+    assert an_model_check(m, nm) == AN_MODEL_BAD_CHAR;
+    assert an_model_check(m, 0) == AN_MODEL_EMPTY;
+    var i: i64 = 0;
+    while (i < 300) {
+        m[i] = 97;
+        i = i + 1;
+    }
+    assert an_model_check(m, 256) == AN_MODEL_OK;
+    assert an_model_check(m, 257) == AN_MODEL_TOO_LONG;
+    m[10] = 127;
+    assert an_model_check(m, 20) == AN_MODEL_BAD_CHAR;
+    m[10] = 200;
+    assert an_model_check(m, 20) == AN_MODEL_OK;
+    // Keychain writes.
+    assert an_key_write_outcome(AN_KC_OK) == AN_SAVE_OK;
+    assert an_key_write_outcome(AN_KC_DUPLICATE) == AN_SAVE_FOREIGN;
+    assert an_key_write_outcome(AN_KC_OTHER) == AN_SAVE_FAILED;
+    assert an_key_write_outcome(AN_KC_NOT_FOUND) == AN_SAVE_FAILED;
+}
+
+test an_reply_rules {
+    var wide: [2048]u8 = [0; 2048];
+    var word: [256]u8 = [0; 256];
+    var fx: i64 = AN_FX_FINISH_STOP;
+    var codes: i64 = 0;
+    while (fx <= AN_FX_FINISH_UPPER) {
+        var n: i64 = an_fixture(fx, wide);
+        var i: i64 = 0;
+        while (i < n) {
+            word[i] = wide[i];
+            i = i + 1;
+        }
+        var c: i64 = an_finish_code(word, n);
+        if (fx == AN_FX_FINISH_STOP and c == AN_FINISH_STOP) { codes = codes + 1; }
+        if (fx == AN_FX_FINISH_LENGTH and c == AN_FINISH_LENGTH) { codes = codes + 1; }
+        if (fx == AN_FX_FINISH_FILTER and c == AN_FINISH_CUT) { codes = codes + 1; }
+        if (fx == AN_FX_FINISH_TOOLS and c == AN_FINISH_OTHER) { codes = codes + 1; }
+        if (fx == AN_FX_FINISH_UPPER and c == AN_FINISH_OTHER) { codes = codes + 1; }
+        fx = fx + 1;
+    }
+    assert codes == 5;
+    assert an_finish_code(word, 0) == AN_FINISH_NONE;
+    assert an_finish_code(word, 300) == AN_FINISH_OTHER;
+    // "stop" with one byte more or less.
+    word[0] = 115;
+    word[1] = 116;
+    word[2] = 111;
+    word[3] = 112;
+    word[4] = 115;
+    assert an_finish_code(word, 4) == AN_FINISH_STOP;
+    assert an_finish_code(word, 5) == AN_FINISH_OTHER;
+    assert an_finish_code(word, 3) == AN_FINISH_OTHER;
+    assert an_reply_complete(AN_FINISH_NONE) == true;
+    assert an_reply_complete(AN_FINISH_STOP) == true;
+    assert an_reply_complete(AN_FINISH_OTHER) == true;
+    assert an_reply_complete(AN_FINISH_LENGTH) == false;
+    assert an_reply_complete(AN_FINISH_CUT) == false;
+    // After a cut.
+    assert an_after_cut(40, 1, 100) == AN_CUT_SMALLER;
+    assert an_after_cut(2, 1, 100) == AN_CUT_SMALLER;
+    assert an_after_cut(1, 1, 100) == AN_CUT_FAIL;
+    assert an_after_cut(40, 1, 6000) == AN_CUT_COMPRESS;
+    assert an_after_cut(1, 1, 5999) == AN_CUT_FAIL;
+    assert an_after_cut(1, 2, 9000) == AN_CUT_COMPRESS;
+    assert an_after_cut(0, 1, 9000) == AN_CUT_FAIL;
+    assert an_after_cut(40, 6, 100) == AN_CUT_FAIL;
+    assert an_after_cut(40, 5, 100) == AN_CUT_SMALLER;
+    assert an_cut_line_cap(40) == 20;
+    assert an_cut_line_cap(3) == 1;
+    assert an_cut_line_cap(1) == 1;
+    assert an_cut_line_cap(0) == 1;
+    assert an_cut_line_cap(-7) == 1;
+    // Halving always ends in a failure within AN_MAX_CUTS cuts, for every start up to AN_LIST_MAX lines.
+    var bad: u32 = 0;
+    var start: i64 = 1;
+    while (start <= 256) {
+        var taken: i64 = start;
+        var cuts: i64 = 1;
+        var action: i64 = an_after_cut(taken, cuts, 0);
+        while (action == AN_CUT_SMALLER) {
+            var next: i64 = an_cut_line_cap(taken);
+            if (next >= taken or next < 1) { bad = bad + 1; }
+            taken = next;
+            cuts = cuts + 1;
+            action = an_after_cut(taken, cuts, 0);
+        }
+        if (action != AN_CUT_FAIL or cuts > AN_MAX_CUTS) { bad = bad + 1; }
+        start = start + 1;
+    }
+    assert bad == 0;
 }
 
 test an_file_names {

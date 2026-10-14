@@ -4,8 +4,8 @@ import PonteSpeech
 
 /// Writes the call report as UTF-8 plain text next to the transcripts: ~/Documents/Ponte/Ponte-report-YYYY-MM-DD-HHmm.txt.
 /// The file name comes from AnalysisRules (Specs/analysis_rules.t27) and is never reused ("-2", "-3"…); the Russian
-/// layout is here: a header (date, time and length, source app, line counts, service), the report, then the whole
-/// transcript (time, who, original, translation).
+/// layout is here: a header (date, time and length, source app, line counts, service, and a warning when the service
+/// cut the report), the report, then the whole transcript (time, who, original, translation).
 enum CallReportExporter {
     static func fileName(for date: Date, attempt: Int32 = AnalysisRules.firstAttempt, timeZone: TimeZone = .current) -> String {
         var calendar = Calendar(identifier: .gregorian)
@@ -17,10 +17,14 @@ enum CallReportExporter {
     }
 
     static let rule = String(repeating: "=", count: 72)
+    /// The warning of a report the service cut before its end (AnalysisRules.replyComplete).
+    static let incompleteNote = "ВНИМАНИЕ: отчёт неполный — сервис оборвал ответ, не дописав его (предел длины ответа или фильтр сервиса)."
+    /// The mark at the cut.
+    static let cutMark = "[…ответ сервиса оборван здесь]"
 
     /// The whole text of the file.
     static func text(report: String, lines: [ConversationLine], facts: CallFacts, service: String?, madeAt: Date,
-                     timeZone: TimeZone = .current) -> String {
+                     complete: Bool = true, timeZone: TimeZone = .current) -> String {
         let day = formatter("dd.MM.yyyy", timeZone)
         let minute = formatter("HH:mm", timeZone)
         let second = formatter("HH:mm:ss", timeZone)
@@ -35,8 +39,10 @@ enum CallReportExporter {
         out += "Реплик: \(facts.lines) (собеседник: \(facts.theirs), я: \(facts.mine))\n"
         if let service, !service.isEmpty { out += "Анализ: \(service)\n" }
         out += "Отчёт составлен: \(day.string(from: madeAt)) \(minute.string(from: madeAt))\n"
+        if !complete { out += incompleteNote + "\n" }
         out += "\n\(rule)\nОТЧЁТ\n\(rule)\n\n"
         out += report.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+        if !complete { out += "\n\(cutMark)\n" }
         out += "\n\(rule)\nСТЕНОГРАММА\n\(rule)\n"
         let ordered = lines.enumerated().sorted {
             AppRules.lineBefore(atA: $0.element.at.timeIntervalSinceReferenceDate, indexA: $0.offset,

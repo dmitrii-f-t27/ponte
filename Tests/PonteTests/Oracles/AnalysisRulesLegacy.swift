@@ -49,8 +49,10 @@ enum AnalysisRulesLegacy {
     // MARK: Errors
 
     static let kindHTTP = 0, kindTimeout = 1, kindNetwork = 2, kindEmpty = 3, kindBadReply = 4, kindNoKey = 5, kindBadURL = 6
+    static let kindCut = 7, kindKeyElsewhere = 8
     static let errNone = 0, errNetwork = 1, errTimeout = 2, errAuth = 3, errPayment = 4, errRateLimit = 5, errServer = 6
     static let errNotFound = 7, errRejected = 8, errEmpty = 9, errBadReply = 10, errNoKey = 11, errBadURL = 12, errOther = 13
+    static let errCut = 14, errKeyElsewhere = 15
 
     static func httpClass(status: Int) -> Int {
         switch status {
@@ -76,6 +78,8 @@ enum AnalysisRulesLegacy {
         case kindBadReply: return errBadReply
         case kindNoKey: return errNoKey
         case kindBadURL: return errBadURL
+        case kindCut: return errCut
+        case kindKeyElsewhere: return errKeyElsewhere
         default: return errOther
         }
     }
@@ -105,11 +109,43 @@ enum AnalysisRulesLegacy {
         !isTransient(error) || failures >= maxBackgroundFailures ? backgroundStop : backgroundRetry
     }
 
-    static func probeOK(error: Int) -> Bool { error == errNone || error == errEmpty }
+    static func probeOK(error: Int) -> Bool { [errNone, errEmpty, errCut].contains(error) }
+
+    // MARK: Replies
+
+    static let finishNone = 0, finishStop = 1, finishLength = 2, finishCut = 3, finishOther = 4
+    static let finishCutWords: Set<String> = ["content_filter", "sensitive", "insufficient_system_resource", "network_error"]
+    static let cutSmaller = 0, cutCompress = 1, cutFail = 2
+    static let maxCuts = 6
+    static let compressFromBytes = 6_000
+    static let compressChars = 3_000
+
+    /// A word longer than the C buffer (256 bytes) is never one of the words.
+    static func finishCode(utf8: [UInt8]) -> Int {
+        if utf8.isEmpty { return finishNone }
+        guard utf8.count <= textOutMax, let word = String(validating: utf8, as: UTF8.self) else { return finishOther }
+        if word == "stop" { return finishStop }
+        if word == "length" { return finishLength }
+        return finishCutWords.contains(word) ? finishCut : finishOther
+    }
+
+    static func replyComplete(finish: Int) -> Bool { ![finishLength, finishCut].contains(finish) }
+
+    static func afterCut(taken: Int, cuts: Int, notesBytes: Int) -> Int {
+        switch true {
+        case cuts >= maxCuts, taken < 1: return cutFail
+        case notesBytes >= compressFromBytes: return cutCompress
+        case taken >= 2: return cutSmaller
+        default: return cutFail
+        }
+    }
+
+    static func cutLineCap(taken: Int) -> Int { Swift.max(taken / 2, 1) }
 
     // MARK: Base URL, key, configuration
 
-    static let urlOK = 0, urlEmpty = 1, urlNoScheme = 2, urlNoHost = 3, urlSpace = 4, urlTooLong = 5
+    static let urlOK = 0, urlEmpty = 1, urlNoScheme = 2, urlNoHost = 3, urlSpace = 4, urlTooLong = 5, urlHTTPRemote = 6
+    static let localHosts = ["localhost", "127.0.0.1", "[::1]"]
 
     static func baseURLCheck(utf8: [UInt8]) -> Int {
         if utf8.isEmpty { return urlEmpty }
@@ -117,14 +153,64 @@ enum AnalysisRulesLegacy {
         if utf8.contains(where: { $0 <= 0x20 || $0 == 0x7F }) { return urlSpace }
         let folded = utf8.map { (0x41...0x5A).contains($0) ? $0 + 0x20 : $0 }
         let scheme: Int
+        let plain: Bool
         if folded.starts(with: Array("https://".utf8)) {
-            scheme = 8
+            (scheme, plain) = (8, false)
         } else if folded.starts(with: Array("http://".utf8)) {
-            scheme = 7
+            (scheme, plain) = (7, true)
         } else {
             return urlNoScheme
         }
-        return utf8.dropFirst(scheme).allSatisfy({ $0 == 0x2F }) ? urlNoHost : urlOK
+        if utf8.dropFirst(scheme).allSatisfy({ $0 == 0x2F }) { return urlNoHost }
+        return plain && !isThisMac(authority: Array(folded.dropFirst(scheme).prefix { !"/?#".utf8.contains($0) }))
+            ? urlHTTPRemote : urlOK
+    }
+
+    /// "localhost", "127.0.0.1" or "[::1]" (already case folded), with an optional ":<digits>" port.
+    static func isThisMac(authority: [UInt8]) -> Bool {
+        localHosts.map { Array($0.utf8) }.contains { host in
+            guard authority.starts(with: host) else { return false }
+            let rest = authority.dropFirst(host.count)
+            guard let colon = rest.first else { return true }
+            let port = rest.dropFirst()
+            return colon == UInt8(ascii: ":") && !port.isEmpty && port.allSatisfy { (0x30...0x39).contains($0) }
+        }
+    }
+
+    /// The bytes before "/chat/completions" in the endpoint (the endpoint always ends with the path).
+    static func endpointCore(utf8: [UInt8]) -> Int { endpoint(utf8: utf8).count - path.utf8.count }
+
+    /// Both usable and the same endpoint.
+    static func sameEndpoint(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+        baseURLCheck(utf8: a) == urlOK && baseURLCheck(utf8: b) == urlOK && endpoint(utf8: a) == endpoint(utf8: b)
+    }
+
+    static let bindOK = 0, bindOther = 1, bindUnbound = 2
+
+    static func bindCheck(hasBound: Bool, sameAsBound: Bool, provider: Int, sameAsDefault: Bool) -> Int {
+        switch (hasBound, sameAsBound) {
+        case (true, true): return bindOK
+        case (true, false): return bindOther
+        default:
+            let builtIn = providerCode(stored: provider) == providerZai || providerCode(stored: provider) == providerDeepSeek
+            return builtIn && sameAsDefault ? bindOK : bindUnbound
+        }
+    }
+
+    static let modelMax = 256
+    static let modelOK = 0, modelEmpty = 1, modelTooLong = 2, modelBadChar = 3
+
+    static func modelCheck(utf8: [UInt8]) -> Int {
+        guard !utf8.isEmpty else { return modelEmpty }
+        guard utf8.count <= modelMax else { return modelTooLong }
+        return utf8.allSatisfy { $0 > 0x20 && $0 != 0x7F } ? modelOK : modelBadChar
+    }
+
+    static let kcOK = 0, kcNotFound = 1, kcDuplicate = 2, kcOther = 3
+    static let saveOK = 0, saveForeign = 1, saveFailed = 2
+
+    static func keyWriteOutcome(added: Int) -> Int {
+        [kcOK: saveOK, kcDuplicate: saveForeign][added] ?? saveFailed
     }
 
     static func endpoint(utf8: [UInt8]) -> [UInt8] {
@@ -143,12 +229,13 @@ enum AnalysisRulesLegacy {
         return utf8.allSatisfy { (0x21...0x7E).contains($0) } ? keyOK : keyBadChar
     }
 
-    static let configOK = 0, configNoKey = 1, configBadURL = 2, configNoModel = 3
+    static let configOK = 0, configNoKey = 1, configBadURL = 2, configNoModel = 3, configKeyElsewhere = 4
 
-    static func configCheck(keyBytes: Int, urlCheck: Int, modelBytes: Int) -> Int {
+    static func configCheck(keyBytes: Int, urlCheck: Int, modelBytes: Int, bind: Int) -> Int {
         if keyBytes < 1 { return configNoKey }
         if urlCheck != urlOK { return configBadURL }
-        return modelBytes < 1 ? configNoModel : configOK
+        if modelBytes < 1 { return configNoModel }
+        return bind == bindOK ? configOK : configKeyElsewhere
     }
 
     static func analysisOn(hasStored: Bool, stored: Bool, hasKey: Bool, testMode: Bool) -> Bool {
@@ -194,19 +281,24 @@ enum AnalysisRulesLegacy {
     // MARK: The report
 
     static let openShow = 0, openBuild = 1, openExplain = 2
-    static let checkOK = 0, checkBusy = 1, checkNotSet = 2, checkNoLines = 3
+    static let checkOK = 0, checkBusy = 1, checkNotSet = 2, checkNoLines = 3, checkOff = 4
+    static let quitWaitLimitMs = 10_000
 
-    static func reportOnStop(enabled: Bool, configured: Bool, lines: Int) -> Bool { enabled && configured && lines > 0 }
+    static func reportOnStop(enabled: Bool, configured: Bool, lines: Int, quitting: Bool) -> Bool {
+        !quitting && enabled && configured && lines > 0
+    }
 
-    static func reportOnOpen(busy: Bool, hasReport: Bool, reportLines: Int, lines: Int, configured: Bool) -> Int {
+    static func reportOnOpen(enabled: Bool, busy: Bool, hasReport: Bool, reportLines: Int, lines: Int, configured: Bool) -> Int {
         if busy || (hasReport && reportLines == lines) { return openShow }
-        if lines > 0 && configured { return openBuild }
+        if enabled && lines > 0 && configured { return openBuild }
         return hasReport ? openShow : openExplain
     }
 
-    static func buildCheck(busy: Bool, configured: Bool, lines: Int) -> Int {
-        busy ? checkBusy : !configured ? checkNotSet : lines < 1 ? checkNoLines : checkOK
+    static func buildCheck(enabled: Bool, busy: Bool, configured: Bool, lines: Int) -> Int {
+        !enabled ? checkOff : busy ? checkBusy : !configured ? checkNotSet : lines < 1 ? checkNoLines : checkOK
     }
+
+    static func quitWaitMs(builds: Int) -> Int { builds >= 1 ? quitWaitLimitMs : 0 }
 
     static func reportButtonEnabled(lines: Int, hasReport: Bool, busy: Bool) -> Bool { lines >= 1 || hasReport || busy }
 
