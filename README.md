@@ -3,9 +3,23 @@
 A live speech translator between Brazilian Portuguese and Russian for calls in any app: Zoom, Google Meet or Teams in a browser, Telegram, WhatsApp, FaceTime. It runs on the Mac and needs no account or cloud service.
 
 - **They speak.** Ponte captures the call app's audio, or all Mac audio, without a driver. It shows the Russian translation as live subtitles, in the main window and in a floating panel above the call. A Russian voice-over in your headphones is optional.
-- **You speak.** Ponte hears your Russian, translates it, and speaks Portuguese into the call through a virtual microphone (BlackHole 2ch).
+- **You speak.** Hold the talk key (right ⌥) and speak Russian. Ponte translates it and speaks Portuguese into the call through a virtual microphone (BlackHole 2ch). You can also type a text and press «Сказать».
+
+Where the sound goes is fixed:
+- The Portuguese voice goes only into the call. You do not hear it.
+- You hear only the Russian translation. While Ponte listens to the call app, that app is muted on your Mac. «Слышать их» turns the other side's own voices back on.
+- The «Звук ▾» menu in the top row picks where you hear everything: headphones, the Mac speakers or another output.
+- The Russian voice never plays into the call. If macOS ever makes BlackHole the system output, for example when AirPods drop, Ponte moves the output back to your ears at once.
+- Your own voice, if it comes back from the call (say, the other laptop sits next to you), is not translated back to you.
+- «Ж | М» picks the female or male voice, separately for Portuguese (for example Felipe) and for Russian (Milena or Yuri).
 
 Recognition, translation and speech run on the device: SpeechAnalyzer, the Translation framework and AVSpeechSynthesizer. Claude (`claude-haiku-5-5`) is an optional translator. It is used only when its key is in the macOS Keychain under the item `ponte-anthropic-key`.
+
+**Russians in the call.** When several Russians each run Ponte in one call, they hear each other's own voices without translation, and the Portuguese side does not hear them. One of them presses «Русские в звонке» → «Создать код» and sends the code to the other Russians, not to the Portuguese side. Everyone enters it and presses «Подключиться». Up to six people fit in one room.
+
+Ponte apps meet through a small relay, `relay/`, which runs on Railway. The code is the only secret; the Meet code is never used, because every participant has it. PBKDF2 derives the room and the AES-GCM key from the code, so the relay forwards only encrypted frames.
+
+Each Ponte also announces when it speaks into the call, so no Ponte translates another Ponte's Portuguese voice back into Russian. With headphones your voice goes to the other Russians all the time; without them, only while you hold the talk key, so they do not hear themselves as an echo.
 
 The call analysis is optional too. In Settings → «Анализ звонка» you pick a chat service (Z.ai GLM, DeepSeek, or any OpenAI-compatible one), paste its API key (kept only in the Keychain as `ponte-analysis-<id>`) and check it. During a call an agent sends the new lines (who spoke, original and translation) to that service about every two minutes and keeps notes. After «Стоп», or from the toolbar button «Отчёт по звонку», it writes a report: summary, participants, important data, agreements, tasks, open questions, risks and next steps. «Сохранить в TXT» writes the report and the whole transcript to `~/Documents/Ponte/Ponte-report-YYYY-MM-DD-HHmm.txt`. Nothing is sent until a key is saved.
 
@@ -23,6 +37,7 @@ Every decision Ponte makes is written in [t27](https://github.com/gHashTag/t27),
 | `lane_rules.t27` | the mic gate and phrase pipeline state machines, push-to-talk, echo guard, speaking rate, replay |
 | `ui_rules.t27` | buttons, status lights, latency colours, setup wizard, overlay |
 | `transcript_rules.t27` | transcript file names, Markdown escaping |
+| `peer_rules.t27` | «Русские в звонке»: the secret code, frames and their freshness, link status and reconnects, presence, when your microphone goes to the other Russians, the jitter buffer, and which incoming phrase is another Ponte's voice |
 | `analysis_rules.t27` | the call analysis agent: providers and defaults, endpoint, when notes update, request chunks, error classes, retries and backoff, the report and its TXT file name |
 
 The generated C is committed in `Sources/PonteSpecs`, so building the app does not need `t27c`. To regenerate the C and run every spec's own tests:
@@ -39,7 +54,7 @@ The Swift facades `AudioRules`, `SpeechRules` and `AppRules` only pass values to
 
 - An Apple Silicon Mac with macOS 26 or later, and Xcode 26 or later to build.
 - [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole). Install it with `brew install --cask blackhole-2ch`. In the call app, choose **BlackHole 2ch** as the microphone and your headphones as the speaker.
-- Headphones. With speakers, the microphone hears the other side.
+- Headphones are recommended. With speakers, the microphone also hears the other side, so the voice to the other Russians goes out only while you hold the talk key.
 
 ## Build and run
 
@@ -58,7 +73,7 @@ open dist/Ponte.app
 4. Check BlackHole.
 5. Play a test phrase into the call.
 
-The command-line probes help with diagnosis: `swift run AudioProbe devices|apps|inputs|tap|mic|play` and `swift run SpeechProbe transcribe|translate|synth|pipeline`. `scripts/make-fixtures.sh` creates test phrases with the system voices.
+The command-line probes help with diagnosis: `swift run AudioProbe devices|apps|inputs|tap|mic|play`, `swift run SpeechProbe transcribe|translate|synth|pipeline`, and `swift run PeerProbe --relay wss://…/r/ --secret abcd-efgh-jkmn` (a test "second Russian" for the peer link). `scripts/make-fixtures.sh` creates test phrases with the system voices.
 
 ## Status
 

@@ -8,7 +8,7 @@ import PonteSpeech
 /// The call analysis in the app: its settings (service, base URL, model, the key in the Keychain, on/off), the
 /// background notes while a call runs, and the report after it. Every decision comes from AnalysisRules
 /// (Specs/analysis_rules.t27); the requests are CallAnalyst's. Failures never interrupt the call: they show as a
-/// quiet status line in the report window and in the settings, never as an alert.
+/// quiet status line in the report window and as a warning icon on «Отчёт по звонку», never as an alert.
 /// AppModel owns one (`analysis`) and calls `callStarted` and `callStopped`.
 @MainActor @Observable
 final class CallAnalysisModel {
@@ -244,11 +244,16 @@ final class CallAnalysisModel {
     /// The quiet status of the background notes («Заметки обновлены…», a failure); nil when there is nothing to say.
     private(set) var notesStatus: String?
     private(set) var notesUpdating = false
+    /// The last background notes update failed (the toolbar button shows a warning icon).
+    private(set) var notesFailing = false
+    /// The app is quitting (AppModel.prepareToQuit): Stop builds no report.
+    @ObservationIgnored var quitting = false
 
     /// A call starts (AppModel.start): a report the owner did not save goes to a file first, then everything resets.
     func callStarted(_ app: AppModel) {
         self.app = app
         loadKeyIfNeeded()
+        autosavedURL = nil
         if AnalysisRules.saveBeforeReset(hasReport: report != nil, saved: report?.savedURL != nil), let report {
             autosave(report)
         }
@@ -259,7 +264,7 @@ final class CallAnalysisModel {
         notesUpdating = false
         report = nil
         reportError = nil
-        autosavedURL = nil
+        notesFailing = false
         callStartedAt = app.callStartedAt ?? Date()
         callEndedAt = nil
         sourceName = app.activeSourceName
@@ -285,7 +290,7 @@ final class CallAnalysisModel {
         updateTask = nil
         notesUpdating = false
         callEndedAt = Date()
-        if AnalysisRules.reportOnStop(enabled: enabled, configured: configured, lines: app.lines.count) {
+        if !quitting, AnalysisRules.reportOnStop(enabled: enabled, configured: configured, lines: app.lines.count) {
             // A report asked for during the call covers only part of it: the final one replaces it.
             buildReport(replacingRunning: true)
             showReport = true
@@ -322,6 +327,7 @@ final class CallAnalysisModel {
         updateTask = nil
         notesUpdating = false
         notebook.applied(notes: notes, covering: lines, at: Date())
+        notesFailing = false
         notesStatus = "Заметки обновлены в \(Self.clock(Date())): в них \(notebook.covered.count) реплик."
         log.info("analysis notes updated: \(lines.count, privacy: .public) lines")
     }
@@ -331,6 +337,7 @@ final class CallAnalysisModel {
         updateTask = nil
         notesUpdating = false
         notebook.failed(error, at: Date())
+        notesFailing = true
         let text = error.localizedDescription
         if notebook.stopped {
             notesStatus = "Заметки во время звонка остановлены: \(text) Отчёт после звонка всё равно попробует."
@@ -382,8 +389,8 @@ final class CallAnalysisModel {
     func openReport(_ app: AppModel) {
         self.app = app
         loadKeyIfNeeded()
-        if AnalysisRules.reportOnOpen(busy: building, hasReport: report != nil, reportLines: report?.lines.count ?? 0,
-                                      lines: app.lines.count, configured: configured) == AnalysisRules.openBuild {
+        if enabled, AnalysisRules.reportOnOpen(busy: building, hasReport: report != nil, reportLines: report?.lines.count ?? 0,
+                                               lines: app.lines.count, configured: configured) == AnalysisRules.openBuild {
             buildReport()
         }
         showReport = true
@@ -396,7 +403,15 @@ final class CallAnalysisModel {
     /// (a report asked for during the call) and starts over with every line.
     func buildReport(replacingRunning: Bool = false) {
         guard let app else { return }
-        if replacingRunning, building {
+        guard enabled else {
+            reportError = "Анализ звонка выключен в настройках: стенограмма никуда не отправляется."
+            return
+        }
+        if building, buildGeneration != generation {
+            // A report of an earlier call is still being written: it finishes on its own and goes to a file.
+            reportTask = nil
+            building = false
+        } else if replacingRunning, building {
             reportTask?.cancel()
             reportTask = nil
             building = false
@@ -447,7 +462,11 @@ final class CallAnalysisModel {
     }
 
     private func reportBuilt(_ built: Report, generation gen: Int, build id: Int) {
-        guard id == buildID else { return }
+        guard id == buildID else {
+            // Replaced by a build of a newer call: an earlier call's report is kept as a file.
+            if gen != generation, AnalysisRules.saveBeforeReset(hasReport: true, saved: built.savedURL != nil) { autosave(built) }
+            return
+        }
         building = false
         progressText = nil
         reportTask = nil

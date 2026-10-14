@@ -1027,7 +1027,7 @@ final class AppModel {
         }
 
         runState = RunState(code: AppRules.runStateAfterStart(lanesStarted: lanesStarted))
-        analysis.callStarted(self)
+        if isRunning { analysis.callStarted(self) }
         if !isRunning {
             callStartedAt = nil
             incomingTap = nil
@@ -1099,6 +1099,7 @@ final class AppModel {
 
     /// Stops cleanly before the app quits (and saves the transcript).
     func prepareToQuit() async {
+        analysis.quitting = true   // no report request: the app is about to exit
         await stop()
     }
 

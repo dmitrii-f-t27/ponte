@@ -51,7 +51,7 @@ pub const AN_REQUEST_TIMEOUT_MS : i64 = 90000;
 ; The check button of the settings sends a tiny request with a shorter timeout.
 pub const AN_PROBE_TIMEOUT_MS : i64 = 30000;
 pub const AN_MAX_TOKENS : i64 = 4096;
-; deepseek-chat answers at most 8192 tokens.
+; deepseek-flash (DeepSeek-V4.1-Flash; deepseek-chat is gone from the docs, 2026-10-14) answers at most 8192 tokens.
 pub const AN_REPORT_MAX_TOKENS : i64 = 8000;
 pub const AN_PROBE_MAX_TOKENS : i64 = 16;
 ; Temperature x 1000: low, the task is extraction.
@@ -719,7 +719,7 @@ test an_provider_tables {
     assert out[0] == 100;
     assert an_provider_id(AN_PROVIDER_CUSTOM, out) == 6;
     assert out[0] == 99;
-    // Defaults: https://api.z.ai/api/paas/v4 + glm-4.5-flash; https://api.deepseek.com + deepseek-chat; custom empty.
+    // Defaults: https://api.z.ai/api/paas/v4 + glm-4.5-flash; https://api.deepseek.com + deepseek-flash; custom empty.
     assert an_default_base_url(AN_PROVIDER_ZAI, out) == 28;
     assert out[8] == 97;
     assert out[27] == 52;

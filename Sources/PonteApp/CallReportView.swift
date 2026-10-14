@@ -37,10 +37,13 @@ private struct CallReportToolbar: ToolbarContent {
             Button {
                 model.analysis.openReport(model)
             } label: {
-                Label("Отчёт по звонку", systemImage: "doc.text.magnifyingglass")
+                Label("Отчёт по звонку",
+                      systemImage: model.analysis.notesFailing ? "exclamationmark.triangle" : "doc.text.magnifyingglass")
             }
             .disabled(!model.analysis.reportButtonEnabled(lines: model.lines.count))
-            .accessibilityHint("Отчёт ИИ по звонку: важные данные, договорённости и задачи, с выгрузкой в TXT")
+            .accessibilityHint(model.analysis.notesFailing
+                ? "Заметки ИИ во время звонка не обновляются: откройте, чтобы увидеть причину"
+                : "Отчёт ИИ по звонку: важные данные, договорённости и задачи, с выгрузкой в TXT")
         }
     }
 }

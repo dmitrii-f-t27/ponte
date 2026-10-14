@@ -177,14 +177,14 @@ private let shortCall = [
         #expect(AnalysisRules.defaultBaseURL(AnalysisRules.providerZai) == "https://api.z.ai/api/paas/v4")
         #expect(AnalysisRules.defaultModel(AnalysisRules.providerZai) == "glm-4.5-flash")
         #expect(AnalysisRules.defaultBaseURL(AnalysisRules.providerDeepSeek) == "https://api.deepseek.com")
-        #expect(AnalysisRules.defaultModel(AnalysisRules.providerDeepSeek) == "deepseek-chat")
+        #expect(AnalysisRules.defaultModel(AnalysisRules.providerDeepSeek) == "deepseek-flash")
         #expect(AnalysisRules.defaultBaseURL(AnalysisRules.providerCustom).isEmpty)
         #expect(AnalysisRules.defaultModel(AnalysisRules.providerCustom).isEmpty)
         #expect(AnalysisRules.keychainService(AnalysisRules.providerZai) == "ponte-analysis-zai")
         #expect(AnalysisRules.keychainService(AnalysisRules.providerDeepSeek) == "ponte-analysis-deepseek")
         #expect(AnalysisRules.keychainService(AnalysisRules.providerCustom) == "ponte-analysis-custom")
         let deepseek = AnalysisConfig(provider: AnalysisRules.providerDeepSeek, baseURL: "https://api.deepseek.com/",
-                                      model: "deepseek-chat", apiKey: "k-1")
+                                      model: "deepseek-flash", apiKey: "k-1")
         #expect(deepseek.endpoint?.absoluteString == "https://api.deepseek.com/chat/completions")
         #expect(!deepseek.description.contains("k-1"))
         #expect(AnalysisRules.requestTimeoutMs == 90_000)
@@ -222,7 +222,7 @@ private let shortCall = [
 
     @Test func onlyZaiGetsTheThinkingSwitch() throws {
         for provider in [AnalysisRules.providerDeepSeek, AnalysisRules.providerCustom] {
-            let config = AnalysisConfig(provider: provider, baseURL: "https://api.deepseek.com", model: "deepseek-chat", apiKey: "k-1")
+            let config = AnalysisConfig(provider: provider, baseURL: "https://api.deepseek.com", model: "deepseek-flash", apiKey: "k-1")
             let request = try ChatCompletionsClient(config: config).urlRequest(messages: [.user("x")], maxTokens: 10, timeoutMs: 1000)
             let json = try #require((try JSONSerialization.jsonObject(with: request.httpBody ?? Data())) as? [String: Any])
             #expect(json["thinking"] == nil)
@@ -534,7 +534,7 @@ private let shortCall = [
     model.provider = AnalysisRules.providerDeepSeek
     #expect(defaults.integer(forKey: "analysis.provider") == AnalysisRules.providerDeepSeek)
     #expect(!model.hasKey && !model.configured)
-    #expect(model.baseURL == "https://api.deepseek.com" && model.model == "deepseek-chat")
+    #expect(model.baseURL == "https://api.deepseek.com" && model.model == "deepseek-flash")
     model.baseURL = "https://example.test/v1"
     #expect(defaults.string(forKey: "analysis.baseURL.deepseek") == "https://example.test/v1")
     #expect(!model.isDefault)

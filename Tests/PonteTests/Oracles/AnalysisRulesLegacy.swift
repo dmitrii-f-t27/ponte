@@ -12,7 +12,7 @@ enum AnalysisRulesLegacy {
     static let defaultProvider = 0
     static let ids = ["zai", "deepseek", "custom"]
     static let baseURLs = ["https://api.z.ai/api/paas/v4", "https://api.deepseek.com", ""]
-    static let models = ["glm-4.5-flash", "deepseek-chat", ""]
+    static let models = ["glm-4.5-flash", "deepseek-flash", ""]
     static let path = "/chat/completions"
     static let keychainPrefix = "ponte-analysis-"
     static let bearerPrefix = "Bearer "

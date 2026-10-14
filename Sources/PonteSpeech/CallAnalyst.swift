@@ -136,7 +136,7 @@ public struct AnalysisError: Error, Equatable, Sendable, LocalizedError {
         switch errorClass {
         case AnalysisRules.errNetwork: return "Нет связи с сервисом\(detail)"
         case AnalysisRules.errTimeout:
-            return "Сервис не ответил за \(AnalysisRules.requestTimeoutMs / 1000) с."
+            return "Сервис не ответил вовремя."
         case AnalysisRules.errAuth: return "Сервис не принял ключ (HTTP \(status)). Проверьте API-ключ в настройках."
         case AnalysisRules.errPayment: return "На счёте сервиса не хватает средств (HTTP \(status))\(detail)"
         case AnalysisRules.errRateLimit: return "Сервис просит подождать: слишком много запросов или исчерпан лимит (HTTP \(status))."

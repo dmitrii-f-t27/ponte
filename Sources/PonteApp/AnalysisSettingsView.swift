@@ -115,7 +115,7 @@ struct AnalysisSettingsView: View {
         switch analysis.urlCheck {
         case AnalysisRules.urlOK: nil
         case AnalysisRules.urlEmpty: "Укажите базовый URL сервиса."
-        case AnalysisRules.urlNoScheme: "Адрес должен начинаться с https:// (или http:// для своего сервера)."
+        case AnalysisRules.urlNoScheme: "Адрес должен начинаться с https:// (http:// работает только для сервера на этом Маке: localhost)."
         case AnalysisRules.urlNoHost: "После https:// нужен адрес сервера."
         case AnalysisRules.urlSpace: "В адресе есть пробел или служебный символ."
         default: "Слишком длинный адрес."
