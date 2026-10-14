@@ -1,0 +1,17 @@
+{
+  "name": "ponte-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Blind WebSocket relay for Ponte: forwards end-to-end encrypted binary frames between members of a room.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  }
+}

@@ -5,6 +5,7 @@ import Observation
 import os
 import PonteAudio
 import PonteCore
+import PontePeer
 import PonteSpeech
 
 /// A status light (AppRules.LIGHT_*), as the views draw it.
@@ -408,6 +409,7 @@ final class AppModel {
         callOutputUID = d.string(forKey: PrefKey.callOutputUID) ?? ""
         voicePT = d.string(forKey: PrefKey.voicePT) ?? ""
         voiceRU = d.string(forKey: PrefKey.voiceRU) ?? ""
+        peerCode = d.string(forKey: PrefKey.peerCode) ?? ""
         speakRussian = d.object(forKey: PrefKey.speakRussian) == nil ? AppRules.DEFAULT_SPEAK_RUSSIAN
             : d.bool(forKey: PrefKey.speakRussian)
         hearOriginal = d.object(forKey: PrefKey.hearOriginal) == nil ? AppRules.DEFAULT_HEAR_ORIGINAL
@@ -564,7 +566,10 @@ final class AppModel {
         let warning = kind.map { AudioRules.needsHeadphones(kind: $0) } ?? false
         if warning != speakerWarning { speakerWarning = warning }
         let like = kind.map { AudioRules.isHeadphonesLike(kind: $0) } ?? false
-        if like != headphonesLike { headphonesLike = like }
+        if like != headphonesLike {
+            headphonesLike = like
+            updatePeerMic()
+        }
         let auto = deviceCatalog.autoMic(in: devices, listening: listeningDevice)
         if auto != autoMicDevice { autoMicDevice = auto }
     }
@@ -773,6 +778,8 @@ final class AppModel {
     }
 
     private func pollAudioStats() {
+        let speaking = peerOn && peerVoices.speaking
+        if speaking != peerSpeaking { peerSpeaking = speaking }
         let now = Date()
         let sinceStart = callStartedAt.map { millis(now.timeIntervalSince($0)) } ?? 0
         func since(_ date: Date?) -> Int64 { date.map { millis(now.timeIntervalSince($0)) } ?? -1 }
@@ -999,6 +1006,7 @@ final class AppModel {
             do {
                 try await lane.start()
                 if lane.direction == .incoming { incomingLane = lane } else { outgoingLane = lane }
+                attachPeer()
                 lanesStarted += 1
                 if let error = lane.translatorError {
                     translatorsFailed += 1
@@ -1165,7 +1173,118 @@ final class AppModel {
             if AppRules.laneEchoSource(direction: AppRules.directionCode(direction)) { echoGuard.setSpeaking(on, at: Date()) }
         case .problem(let text):
             banner = Banner(kind: .warning, text: text)
+        case .voiceOut(let text, let playing):
+            // Only the outgoing lane speaks into the call: the other Russians' Ponte apps must not translate it.
+            guard direction == .outgoing, let link = peerLink else { return }
+            link.sendVoice(kind: text == nil ? PeerRules.voiceOwn : PeerRules.voiceTTS,
+                           state: playing ? PeerRules.voiceStart : PeerRules.voiceEnd, text: text ?? "")
         }
+    }
+
+    // MARK: «Русские в звонке»
+
+    /// The Meet code both Russians enter (abc-defg-hij); the room and the key of the link come from it.
+    var peerCode: String { didSet { defaults.set(peerCode, forKey: PrefKey.peerCode) } }
+    /// The link is on (the owner pressed «Подключиться»).
+    private(set) var peerOn = false
+    /// «Мой голос русским» off: the other Russians do not hear the owner.
+    var peerMuted = false { didSet { updatePeerMic() } }
+    private(set) var peerStatus = PeerRules.statusOff
+    private(set) var peerCount = 0
+    /// Another Russian's voice is playing in the owner's ears now.
+    private(set) var peerSpeaking = false
+    /// Why the link could not start (shown in the panel); nil when nothing to say.
+    var peerNotice: String?
+
+    @ObservationIgnored private var peerLink: PeerLink?
+    @ObservationIgnored private let peerVoices = PeerVoices()
+    @ObservationIgnored private let peerWindows = PeerWindows()
+    @ObservationIgnored private let peerMic = PeerMicGate()
+
+    /// The relay (Info.plist PonteRelayURL; the defaults key peerRelayURL overrides it for tests).
+    private var peerRelayURL: URL? {
+        let text = defaults.string(forKey: PrefKey.peerRelayURL)
+            ?? Bundle.main.object(forInfoDictionaryKey: "PonteRelayURL") as? String ?? ""
+        return URL(string: text)
+    }
+
+    /// The Meet code in the call app's window titles (needs the Accessibility permission Ponte asks for the
+    /// push-to-talk key); nil when none is found.
+    func detectMeetCode() -> String? {
+        guard case .app(let bundleID) = source else { return nil }
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID) {
+            let element = AXUIElementCreateApplication(app.processIdentifier)
+            var windows: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &windows) == .success,
+                  let list = windows as? [AXUIElement] else { continue }
+            for window in list {
+                var title: CFTypeRef?
+                if AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title) == .success,
+                   let text = title as? String, let code = PeerRules.meetCode(in: text) {
+                    return code
+                }
+            }
+        }
+        return nil
+    }
+
+    /// «Подключиться» / «Отключиться».
+    func setPeer(on: Bool) {
+        peerNotice = nil
+        if on {
+            guard let code = PeerRules.meetCode(in: peerCode) else {
+                peerNotice = "Введите код встречи Meet, например abc-defg-hij."
+                return
+            }
+            guard let relay = peerRelayURL else {
+                peerNotice = "Не задан адрес сервера связи."
+                return
+            }
+            peerCode = code
+            peerLink?.stop()
+            let link = PeerLink(relay: relay, meetCode: code)
+            let windows = peerWindows, voices = peerVoices
+            link.onStatus = { [weak self] status, count in
+                MainActor.assumeIsolated {
+                    guard let self, self.peerLink === link else { return }
+                    self.peerStatus = status
+                    self.peerCount = count
+                    self.updatePeerMic()
+                }
+            }
+            link.onVoice = { windows.record($0) }
+            link.onAudio = { sender, buffer in voices.play(buffer, from: sender) }
+            peerLink = link
+            peerOn = true
+            link.start()
+            PonteDiagnostics.log("peer link on, room \(link.roomID.prefix(8))")
+        } else {
+            peerLink?.stop()
+            peerLink = nil
+            peerVoices.stopAll()
+            peerWindows.removeAll()
+            peerOn = false
+            peerStatus = PeerRules.statusOff
+            peerCount = 0
+            PonteDiagnostics.log("peer link off")
+        }
+        attachPeer()
+    }
+
+    /// The running lanes follow the link: the incoming lane drops another Ponte's Portuguese voice, the outgoing
+    /// lane's microphone also goes to the other Russians.
+    private func attachPeer() {
+        let windows = peerWindows, mic = peerMic
+        incomingLane?.peerVoiceFilter = peerLink == nil ? nil : { text, start, end in
+            windows.isPeerVoice(text, start: start, end: end)
+        }
+        outgoingLane?.setPeerSink(peerLink == nil ? nil : { buffer, signal in mic.push(buffer, hasSignal: signal) })
+        updatePeerMic()
+    }
+
+    private func updatePeerMic() {
+        peerMic.update(link: peerLink, linkUp: peerStatus == PeerRules.statusLinked, muted: peerMuted,
+                       headphonesLike: headphonesLike, keyHeld: talkKeyHeld)
     }
 
     // MARK: Controls
@@ -1198,6 +1317,7 @@ final class AppModel {
         guard talkKeyHeld != held else { return }
         talkKeyHeld = held
         outgoingLane?.setKeyHeld(held)
+        updatePeerMic()
     }
 
     private func updatePushToTalk() {

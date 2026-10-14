@@ -1,0 +1,734 @@
+// SPDX-License-Identifier: MIT
+; Specs/peer_rules.t27 -- Ponte: two Russians in one call hear each other without translation
+; Owner's request 2026-10-13: two Russians and a Portuguese speaker are in one Google Meet call, and each
+; Russian runs Ponte. The two Pontes connect through an end-to-end encrypted WebSocket relay and send each
+; other the owner's live Russian voice (16 kHz mono Int16 frames of PE_FRAME_MS), so the Russians hear each
+; other directly. Each Ponte announces when its Portuguese speech (the TTS of a translated phrase, or the
+; owner's own voice "Svoi golos") plays into the call, so the OTHER Ponte does not translate that Portuguese
+; voice back into Russian.
+; This spec decides: the link status and the reconnect delays; when a peer is alive; when the microphone
+; goes to the peers (open with headphones, else only while the push-to-talk key is held, so the speakers
+; never echo back) and the voice gate with its hangover; the jitter buffer of a peer's voice (the same
+; algorithm and codes as the own-voice relay au_relay_action in audio_rules.t27, with deeper constants for
+; the network); how alike two texts are (word Dice coefficient); whether a recognized Portuguese phrase is
+; a peer's voice; and the Google Meet code in a window title (both Pontes join the same room by it).
+; Text is UTF-8 bytes in a buffer of PE_TEXT_MAX bytes with its length (a longer length is read as
+; PE_TEXT_MAX). Times are milliseconds on one clock, within +-2^62 (no overflow). ASCII only.
+; Facade: PontePeer/PeerRules.swift. Oracle: Tests/PonteTests/Oracles/PeerRulesLegacy.swift.
+; Generated C: Sources/PonteSpecs/peer_rules.h (Specs/generate.sh).
+
+module PontePeerRules;
+
+; --- Audio between Pontes -----------------------------------------------------------------------------------------
+; 16 kHz mono Int16: enough for speech, about 256 kbit/s per peer before compression.
+pub const PE_SAMPLE_RATE : f64 = 16000.0;
+; One frame on the wire: 40 ms (640 samples).
+pub const PE_FRAME_MS : i64 = 40;
+; The most Pontes in one room besides this one.
+pub const PE_MAX_PEERS : i64 = 6;
+
+; --- Messages (MSG_*, the first byte of a relay message) ----------------------------------------------------------
+; I am here (sent every PE_HELLO_EVERY_MS); a voice frame; a voice window starts or ends; I am leaving.
+pub const PE_MSG_HELLO : u8 = 1;
+pub const PE_MSG_AUDIO : u8 = 2;
+pub const PE_MSG_VOICE : u8 = 3;
+pub const PE_MSG_BYE : u8 = 4;
+; A voice window is the Portuguese TTS of a translated phrase or the owner's own voice; it starts or ends.
+pub const PE_VOICE_TTS : i64 = 1;
+pub const PE_VOICE_OWN : i64 = 2;
+pub const PE_VOICE_START : i64 = 1;
+pub const PE_VOICE_END : i64 = 2;
+
+; --- Link status (STATUS_*) ---------------------------------------------------------------------------------------
+pub const PE_STATUS_OFF : i64 = 0;
+pub const PE_STATUS_CONNECTING : i64 = 1;
+; Connected to the relay, nobody else in the room yet.
+pub const PE_STATUS_WAITING : i64 = 2;
+pub const PE_STATUS_LINKED : i64 = 3;
+; Not connected after this many failed attempts in a row.
+pub const PE_STATUS_FAILED : i64 = 4;
+pub const PE_FAILED_AFTER : i64 = 3;
+; Reconnect delays: 500, 1000, 2000, 4000 ms, then 8000 ms.
+pub const PE_RECONNECT_FIRST_MS : i64 = 500;
+pub const PE_RECONNECT_MAX_MS : i64 = 8000;
+; A HELLO every 5 s; a peer silent for 15 s (three HELLOs missed) is gone.
+pub const PE_HELLO_EVERY_MS : i64 = 5000;
+pub const PE_PEER_TIMEOUT_MS : i64 = 15000;
+
+; --- The microphone to the peers ----------------------------------------------------------------------------------
+; Frames keep going this long after the last frame with signal (word ends and short pauses are not cut).
+pub const PE_VAD_HANGOVER_MS : i64 = 600;
+
+; --- Jitter buffer of a peer's voice (as au_relay_action, deeper for the network) ----------------------------------
+pub const PE_JITTER_TARGET_MS : f64 = 120.0;
+pub const PE_JITTER_MAX_MS : f64 = 400.0;
+pub const PE_JITTER_SLACK_MS : f64 = 40.0;
+pub const PE_JITTER_WINDOW : i64 = 50;
+; Jitter actions (JIT_*), equal to AU_RLA_* (audio_rules.t27): keep the frame; schedule everything kept; drop
+; this frame; keep only the newest PE_JITTER_TARGET_MS; fill the jitter buffer again (the output ran dry).
+pub const PE_JIT_KEEP : i64 = 0;
+pub const PE_JIT_SEND : i64 = 1;
+pub const PE_JIT_DROP : i64 = 2;
+pub const PE_JIT_TRIM : i64 = 3;
+pub const PE_JIT_REFILL : i64 = 4;
+
+; --- A peer's voice in the call -------------------------------------------------------------------------------------
+pub const PE_TEXT_MAX : i64 = 4096;
+; At most this many words of a text are counted.
+pub const PE_WORDS_MAX : i64 = 512;
+; Similarity is in thousandths: 0 (no word in common) to 1000 (the same words).
+pub const PE_SIMILARITY_SCALE : i64 = 1000;
+; A recognized phrase is matched against a voice window widened by 300 ms before (the recognizer's phrase
+; start is early) and 1500 ms after (its phrase end is late).
+pub const PE_WINDOW_BEFORE_MS : i64 = 300;
+pub const PE_WINDOW_AFTER_MS : i64 = 1500;
+; With texts this alike, a TTS window up to 15 s back still counts (the recognizer can lag).
+pub const PE_TEXT_WINDOW_MS : i64 = 15000;
+; A phrase inside a TTS window counts with at least this similarity; anywhere in the text window, with the sure one.
+pub const PE_SIMILARITY_MIN_MILLI : i64 = 350;
+pub const PE_SIMILARITY_SURE_MILLI : i64 = 700;
+; Ended windows are kept this long, then forgotten.
+pub const PE_WINDOW_KEEP_MS : i64 = 20000;
+
+; --- Google Meet code -----------------------------------------------------------------------------------------------
+; xxx-xxxx-xxx: 12 bytes, hyphens at 3 and 8.
+pub const PE_MEET_CODE_LEN : i64 = 12;
+
+; --- Bytes ----------------------------------------------------------------------------------------------------------
+pub const PE_HYPHEN : u8 = 45;
+pub const PE_DIGIT_0 : u8 = 48;
+pub const PE_DIGIT_9 : u8 = 57;
+pub const PE_UPPER_A : u8 = 65;
+pub const PE_UPPER_Z : u8 = 90;
+pub const PE_LOWER_A : u8 = 97;
+pub const PE_LOWER_Z : u8 = 122;
+pub const PE_CASE_STEP : u8 = 32;
+pub const PE_FIRST_NON_ASCII : u8 = 128;
+
+; >>> generated by Specs/tables/peer_tables.py -- edit the list there, not here
+; Texts for the tests
+; Oi, como voce esta?
+pub const PE_FX_TTS_OI : i64 = 0;
+; Oi como voce esta
+pub const PE_FX_HEARD_OI : i64 = 1;
+; Oi, como voc\u00ea est\u00e1?
+pub const PE_FX_TTS_OI_PT : i64 = 2;
+; oi como voc\u00ea est\u00e1
+pub const PE_FX_HEARD_OI_PT : i64 = 3;
+; Bom dia, tudo bem com voc\u00ea?
+pub const PE_FX_TTS_BOM_DIA : i64 = 4;
+; bom dia tudo bem
+pub const PE_FX_HEARD_BOM_DIA : i64 = 5;
+; Obrigado pela reuni\u00e3o de hoje.
+pub const PE_FX_TTS_THANKS : i64 = 6;
+; Qual \u00e9 o pre\u00e7o?
+pub const PE_FX_HEARD_PRICE : i64 = 7;
+; \u041f\u0440\u0438\u0432\u0435\u0442, \u043a\u0430\u043a \u0434\u0435\u043b\u0430?
+pub const PE_FX_RU_PRIVET : i64 = 8;
+; \u043f\u0440\u0438\u0432\u0435\u0442 \u043a\u0430\u043a \u0434\u0435\u043b\u0430
+pub const PE_FX_RU_PRIVET_LOWER : i64 = 9;
+; sim sim sim nao
+pub const PE_FX_SIM_THREE : i64 = 10;
+; sim nao nao
+pub const PE_FX_NAO_TWO : i64 = 11;
+; Sala 2026, andar 10
+pub const PE_FX_DIGITS : i64 = 12;
+; sala 2026 andar dez
+pub const PE_FX_DIGITS_HEARD : i64 = 13;
+; ... !? -- ()
+pub const PE_FX_PUNCTUATION : i64 = 14;
+; (empty)
+pub const PE_FX_EMPTY : i64 = 15;
+; Meet - kfs-cgvc-qrk
+pub const PE_FX_MEET_TITLE : i64 = 16;
+; Meet \u2013 KFS-CGVC-QRK - BrowserOS
+pub const PE_FX_MEET_TITLE_BROWSEROS : i64 = 17;
+; kfs-cgvc-qrk
+pub const PE_FX_MEET_CODE : i64 = 18;
+; https://meet.google.com/abc-defg-hij?authuser=0
+pub const PE_FX_MEET_URL : i64 = 19;
+; abc-defg-hij
+pub const PE_FX_MEET_URL_CODE : i64 = 20;
+; xabc-defg-hij
+pub const PE_FX_MEET_LETTER_BEFORE : i64 = 21;
+; abc-defg-hijk
+pub const PE_FX_MEET_LETTER_AFTER : i64 = 22;
+; abc-defg-hij1
+pub const PE_FX_MEET_DIGIT_AFTER : i64 = 23;
+; ab-cdef-ghi abc-defg-hi abcd-efgh-ijk
+pub const PE_FX_MEET_SHORT : i64 = 24;
+; Meet: xyz-ABCD-efg and abc-defg-hij
+pub const PE_FX_MEET_TWO : i64 = 25;
+; xyz-abcd-efg
+pub const PE_FX_MEET_TWO_CODE : i64 = 26;
+; \u0436abc-defg-hij\u0436
+pub const PE_FX_MEET_CYRILLIC : i64 = 27;
+; abc-d\u00e9fg-hij
+pub const PE_FX_MEET_ACCENT : i64 = 28;
+pub const PE_FX_COUNT : i64 = 29;
+pub const PE_FX_TEXT : [577]u8 = [79, 105, 44, 32, 99, 111, 109, 111, 32, 118, 111, 99, 101, 32, 101, 115, 116, 97, 63, 79, 105, 32, 99, 111, 109, 111, 32, 118, 111, 99, 101, 32, 101, 115, 116, 97, 79, 105, 44, 32, 99, 111, 109, 111, 32, 118, 111, 99, 195, 170, 32, 101, 115, 116, 195, 161, 63, 111, 105, 32, 99, 111, 109, 111, 32, 118, 111, 99, 195, 170, 32, 101, 115, 116, 195, 161, 66, 111, 109, 32, 100, 105, 97, 44, 32, 116, 117, 100, 111, 32, 98, 101, 109, 32, 99, 111, 109, 32, 118, 111, 99, 195, 170, 63, 98, 111, 109, 32, 100, 105, 97, 32, 116, 117, 100, 111, 32, 98, 101, 109, 79, 98, 114, 105, 103, 97, 100, 111, 32, 112, 101, 108, 97, 32, 114, 101, 117, 110, 105, 195, 163, 111, 32, 100, 101, 32, 104, 111, 106, 101, 46, 81, 117, 97, 108, 32, 195, 169, 32, 111, 32, 112, 114, 101, 195, 167, 111, 63, 208, 159, 209, 128, 208, 184, 208, 178, 208, 181, 209, 130, 44, 32, 208, 186, 208, 176, 208, 186, 32, 208, 180, 208, 181, 208, 187, 208, 176, 63, 208, 191, 209, 128, 208, 184, 208, 178, 208, 181, 209, 130, 32, 208, 186, 208, 176, 208, 186, 32, 208, 180, 208, 181, 208, 187, 208, 176, 115, 105, 109, 32, 115, 105, 109, 32, 115, 105, 109, 32, 110, 97, 111, 115, 105, 109, 32, 110, 97, 111, 32, 110, 97, 111, 83, 97, 108, 97, 32, 50, 48, 50, 54, 44, 32, 97, 110, 100, 97, 114, 32, 49, 48, 115, 97, 108, 97, 32, 50, 48, 50, 54, 32, 97, 110, 100, 97, 114, 32, 100, 101, 122, 46, 46, 46, 32, 33, 63, 32, 45, 45, 32, 40, 41, 77, 101, 101, 116, 32, 45, 32, 107, 102, 115, 45, 99, 103, 118, 99, 45, 113, 114, 107, 77, 101, 101, 116, 32, 226, 128, 147, 32, 75, 70, 83, 45, 67, 71, 86, 67, 45, 81, 82, 75, 32, 45, 32, 66, 114, 111, 119, 115, 101, 114, 79, 83, 107, 102, 115, 45, 99, 103, 118, 99, 45, 113, 114, 107, 104, 116, 116, 112, 115, 58, 47, 47, 109, 101, 101, 116, 46, 103, 111, 111, 103, 108, 101, 46, 99, 111, 109, 47, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 63, 97, 117, 116, 104, 117, 115, 101, 114, 61, 48, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 120, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 107, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 49, 97, 98, 45, 99, 100, 101, 102, 45, 103, 104, 105, 32, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 32, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 105, 106, 107, 77, 101, 101, 116, 58, 32, 120, 121, 122, 45, 65, 66, 67, 68, 45, 101, 102, 103, 32, 97, 110, 100, 32, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 120, 121, 122, 45, 97, 98, 99, 100, 45, 101, 102, 103, 208, 182, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 208, 182, 97, 98, 99, 45, 100, 195, 169, 102, 103, 45, 104, 105, 106];
+pub const PE_FX_OFFSETS : [29]u32 = [0, 19, 36, 57, 76, 104, 120, 151, 168, 198, 226, 241, 252, 271, 290, 302, 302, 321, 354, 366, 413, 425, 438, 451, 464, 501, 536, 548, 564];
+pub const PE_FX_LENGTHS : [29]u32 = [19, 17, 21, 19, 28, 16, 31, 17, 30, 28, 15, 11, 19, 19, 12, 0, 19, 33, 12, 47, 12, 13, 13, 13, 37, 35, 12, 16, 13];
+; <<< generated
+
+; --- Link -----------------------------------------------------------------------------------------------------------
+; Off when the link is off; linked when connected with peers; waiting when connected and alone; failed when
+; not connected after PE_FAILED_AFTER failures in a row; else connecting.
+pub fn pe_status(link_on: bool, connected: bool, peers: i64, failures: i64) -> i64 {
+    if (link_on == false) { return PE_STATUS_OFF; }
+    if (connected and peers > 0) { return PE_STATUS_LINKED; }
+    if (connected and peers == 0) { return PE_STATUS_WAITING; }
+    if (connected == false and failures >= PE_FAILED_AFTER) { return PE_STATUS_FAILED; }
+    return PE_STATUS_CONNECTING;
+}
+
+; The wait before reconnect attempt `attempt` (0 is the first): doubles from PE_RECONNECT_FIRST_MS up to
+; PE_RECONNECT_MAX_MS. A negative attempt waits PE_RECONNECT_FIRST_MS.
+pub fn pe_reconnect_delay_ms(attempt: i64) -> i64 {
+    var delay: i64 = PE_RECONNECT_FIRST_MS;
+    var k: i64 = 0;
+    while (k < attempt and delay < PE_RECONNECT_MAX_MS) {
+        delay = delay * 2;
+        k = k + 1;
+    }
+    if (delay > PE_RECONNECT_MAX_MS) { return PE_RECONNECT_MAX_MS; }
+    return delay;
+}
+
+; A peer is alive when its last HELLO came less than PE_PEER_TIMEOUT_MS ago (a time in the future is not alive).
+pub fn pe_peer_alive(ms_since_hello: i64) -> bool {
+    return ms_since_hello >= 0 and ms_since_hello < PE_PEER_TIMEOUT_MS;
+}
+
+; --- The microphone to the peers ----------------------------------------------------------------------------------
+; The microphone goes to the peers while the link is up and the owner did not mute it: always with headphones
+; (nothing from the speakers reaches it), else only while the push-to-talk key is held.
+pub fn pe_sends_mic(link_up: bool, muted: bool, headphones_like: bool, key_held: bool) -> bool {
+    return link_up and muted == false and (headphones_like or key_held);
+}
+
+; A frame goes out when it has signal, or within PE_VAD_HANGOVER_MS after the last frame that had.
+pub fn pe_vad_sends(has_signal: bool, ms_since_signal: i64) -> bool {
+    return has_signal or (ms_since_signal >= 0 and ms_since_signal < PE_VAD_HANGOVER_MS);
+}
+
+; --- Jitter buffer --------------------------------------------------------------------------------------------------
+; au_relay_action with the PE_JITTER_* constants. `filling` until the jitter buffer was first sent (and again
+; after TRIM or REFILL); `pending_ms` is what the jitter buffer holds with the new frame; `queued_ms` is what
+; the output still has to play (read only when `output_running`); `low_ms` is the lowest queued_ms of the
+; current window (this one included) and `low_count` how many frames it has seen.
+pub fn pe_jitter_action(filling: bool, pending_ms: f64, queued_ms: f64, output_running: bool, low_ms: f64, low_count: i64) -> i64 {
+    if (output_running == false) {
+        if (pending_ms > PE_JITTER_TARGET_MS) { return PE_JIT_TRIM; }
+        return PE_JIT_KEEP;
+    }
+    if (filling) {
+        if (pending_ms >= PE_JITTER_TARGET_MS) { return PE_JIT_SEND; }
+        return PE_JIT_KEEP;
+    }
+    if (queued_ms <= 0.0) { return PE_JIT_REFILL; }
+    if (queued_ms + pending_ms > PE_JITTER_MAX_MS) { return PE_JIT_DROP; }
+    if (pe_jitter_window_ends(low_count) and low_ms > PE_JITTER_TARGET_MS + PE_JITTER_SLACK_MS) { return PE_JIT_DROP; }
+    return PE_JIT_SEND;
+}
+
+; A window of PE_JITTER_WINDOW frames is complete (the buffer then starts a new one).
+pub fn pe_jitter_window_ends(low_count: i64) -> bool {
+    return low_count >= PE_JITTER_WINDOW;
+}
+
+; While trimming, the oldest frame goes as long as PE_JITTER_TARGET_MS stay without it.
+pub fn pe_jitter_trims(pending_ms: f64, oldest_ms: f64) -> bool {
+    return pending_ms - oldest_ms >= PE_JITTER_TARGET_MS;
+}
+
+; --- Words ------------------------------------------------------------------------------------------------------------
+; A text length as read here: below 0 is 0, above PE_TEXT_MAX is PE_TEXT_MAX.
+pub fn pe_text_len(len: i64) -> i64 {
+    if (len < 0) { return 0; }
+    if (len > PE_TEXT_MAX) { return PE_TEXT_MAX; }
+    return len;
+}
+
+; ASCII A-Z to a-z; every other byte unchanged.
+pub fn pe_fold(c: u8) -> u8 {
+    if (c >= PE_UPPER_A and c <= PE_UPPER_Z) { return c + PE_CASE_STEP; }
+    return c;
+}
+
+; A word byte: ASCII a-z or 0-9 after folding, or any byte from 0x80 (UTF-8 letters of every script).
+pub fn pe_is_word_byte(c: u8) -> bool {
+    var f: u8 = pe_fold(c);
+    return (f >= PE_LOWER_A and f <= PE_LOWER_Z) or (f >= PE_DIGIT_0 and f <= PE_DIGIT_9) or c >= PE_FIRST_NON_ASCII;
+}
+
+; The words of a text (maximal runs of word bytes), the first PE_WORDS_MAX of them: their starts and lengths
+; are written to starts and lens; returns how many.
+pub fn pe_words(text: [4096]u8, len: i64, starts: [512]i64, lens: [512]i64) -> i64 {
+    var n: i64 = pe_text_len(len);
+    var count: i64 = 0;
+    var i: i64 = 0;
+    while (i < n and count < PE_WORDS_MAX) {
+        if (pe_is_word_byte(text[i])) {
+            var s: i64 = i;
+            while (i < n and pe_is_word_byte(text[i])) { i = i + 1; }
+            starts[count] = s;
+            lens[count] = i - s;
+            count = count + 1;
+        } else {
+            i = i + 1;
+        }
+    }
+    return count;
+}
+
+; Two words are the same when their folded bytes are.
+pub fn pe_same_word(a: [4096]u8, a_start: i64, a_len: i64, b: [4096]u8, b_start: i64, b_len: i64) -> bool {
+    if (a_len != b_len) { return false; }
+    var k: i64 = 0;
+    while (k < a_len) {
+        if (pe_fold(a[a_start + k]) != pe_fold(b[b_start + k])) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+; How alike two texts are: the Dice coefficient of their word multisets in thousandths,
+; 2 * PE_SIMILARITY_SCALE * common / (words of a + words of b), rounded down. `common` counts each word as
+; often as both texts have it (every word of a takes the first unused equal word of b). 0 when neither text
+; has a word.
+pub fn pe_word_similarity_milli(a: [4096]u8, a_len: i64, b: [4096]u8, b_len: i64) -> i64 {
+    var a_starts: [512]i64 = [0; 512];
+    var a_lens: [512]i64 = [0; 512];
+    var b_starts: [512]i64 = [0; 512];
+    var b_lens: [512]i64 = [0; 512];
+    var used: [512]u8 = [0; 512];
+    var na: i64 = pe_words(a, a_len, a_starts, a_lens);
+    var nb: i64 = pe_words(b, b_len, b_starts, b_lens);
+    if (na + nb == 0) { return 0; }
+    var common: i64 = 0;
+    var i: i64 = 0;
+    while (i < na) {
+        var j: i64 = 0;
+        var found: bool = false;
+        while (j < nb and found == false) {
+            if (used[j] == 0 and pe_same_word(a, a_starts[i], a_lens[i], b, b_starts[j], b_lens[j])) {
+                used[j] = 1;
+                found = true;
+                common = common + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return (2 * PE_SIMILARITY_SCALE * common) / (na + nb);
+}
+
+; --- Is a recognized phrase a peer's voice? ---------------------------------------------------------------------------
+; A peer announced a voice window [window_start_ms, window_end_ms] (window_end_ms < 0: still playing, the end is
+; open). The window widened by PE_WINDOW_BEFORE_MS before and PE_WINDOW_AFTER_MS after (open: no end) overlaps
+; the phrase [phrase_start_ms, phrase_end_ms] when the phrase ends at or after its start and starts at or before
+; its end.
+; - The owner's own voice (PE_VOICE_OWN): a phrase that overlaps is the peer's.
+; - TTS (PE_VOICE_TTS): a phrase that overlaps and is at least PE_SIMILARITY_MIN_MILLI alike to the TTS text;
+;   or, at least PE_SIMILARITY_SURE_MILLI alike, a phrase that ends at or after the widened start and starts at
+;   most PE_TEXT_WINDOW_MS after the window end (open: no end).
+; - Any other kind: never.
+pub fn pe_is_peer_voice(kind: i64, similarity_milli: i64, phrase_start_ms: i64, phrase_end_ms: i64, window_start_ms: i64, window_end_ms: i64) -> bool {
+    var open: bool = window_end_ms < 0;
+    var after_start: bool = phrase_end_ms >= window_start_ms - PE_WINDOW_BEFORE_MS;
+    var overlap: bool = after_start and (open or phrase_start_ms <= window_end_ms + PE_WINDOW_AFTER_MS);
+    if (kind == PE_VOICE_OWN) { return overlap; }
+    if (kind == PE_VOICE_TTS) {
+        if (overlap and similarity_milli >= PE_SIMILARITY_MIN_MILLI) { return true; }
+        var in_text_window: bool = after_start and (open or phrase_start_ms <= window_end_ms + PE_TEXT_WINDOW_MS);
+        return similarity_milli >= PE_SIMILARITY_SURE_MILLI and in_text_window;
+    }
+    return false;
+}
+
+; --- Google Meet code -------------------------------------------------------------------------------------------------
+pub fn pe_is_letter(c: u8) -> bool {
+    return (c >= PE_UPPER_A and c <= PE_UPPER_Z) or (c >= PE_LOWER_A and c <= PE_LOWER_Z);
+}
+
+; A Meet code starts at `at` of the first n bytes: three ASCII letters, a hyphen, four letters, a hyphen, three
+; letters (either case), with no ASCII letter right before or right after.
+pub fn pe_meet_code_matches(text: [4096]u8, n: i64, at: i64) -> bool {
+    if (at < 0 or at + PE_MEET_CODE_LEN > n) { return false; }
+    if (at > 0 and pe_is_letter(text[at - 1])) { return false; }
+    if (at + PE_MEET_CODE_LEN < n and pe_is_letter(text[at + PE_MEET_CODE_LEN])) { return false; }
+    var k: i64 = 0;
+    while (k < PE_MEET_CODE_LEN) {
+        var c: u8 = text[at + k];
+        if (k == 3 or k == 8) {
+            if (c != PE_HYPHEN) { return false; }
+        } else {
+            if (pe_is_letter(c) == false) { return false; }
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+; Where the first Meet code of a text starts; -1 when there is none.
+pub fn pe_meet_code_at(text: [4096]u8, len: i64) -> i64 {
+    var n: i64 = pe_text_len(len);
+    var at: i64 = 0;
+    while (at + PE_MEET_CODE_LEN <= n) {
+        if (pe_meet_code_matches(text, n, at)) { return at; }
+        at = at + 1;
+    }
+    return -1;
+}
+
+; The first Meet code of a text, lowercase, written to out: returns PE_MEET_CODE_LEN, or 0 when there is none.
+pub fn pe_meet_code(text: [4096]u8, len: i64, out: [12]u8) -> i64 {
+    var at: i64 = pe_meet_code_at(text, len);
+    if (at < 0) { return 0; }
+    var k: i64 = 0;
+    while (k < PE_MEET_CODE_LEN) {
+        out[k] = pe_fold(text[at + k]);
+        k = k + 1;
+    }
+    return PE_MEET_CODE_LEN;
+}
+
+; --- Texts for the tests ------------------------------------------------------------------------------------------
+; Copies text fixture `index` to out and returns its length (0 for an unknown index).
+pub fn pe_fixture(index: i64, out: [4096]u8) -> i64 {
+    if (index < 0 or index >= PE_FX_COUNT) { return 0; }
+    var off: i64 = PE_FX_OFFSETS[index];
+    var len: i64 = PE_FX_LENGTHS[index];
+    var k: i64 = 0;
+    while (k < len and k < PE_TEXT_MAX) {
+        out[k] = PE_FX_TEXT[off + k];
+        k = k + 1;
+    }
+    return k;
+}
+
+; The similarity of fixtures `a` and `b`.
+pub fn pe_fixture_similarity(a: i64, b: i64) -> i64 {
+    var ta: [4096]u8 = [0; 4096];
+    var tb: [4096]u8 = [0; 4096];
+    var na: i64 = pe_fixture(a, ta);
+    var nb: i64 = pe_fixture(b, tb);
+    return pe_word_similarity_milli(ta, na, tb, nb);
+}
+
+; The Meet code of fixture `text` equals fixture `code`.
+pub fn pe_fixture_meet_code_is(text: i64, code: i64) -> bool {
+    var t: [4096]u8 = [0; 4096];
+    var c: [4096]u8 = [0; 4096];
+    var out: [12]u8 = [0; 12];
+    var n: i64 = pe_fixture(text, t);
+    var m: i64 = pe_fixture(code, c);
+    if (pe_meet_code(t, n, out) != PE_MEET_CODE_LEN or m != PE_MEET_CODE_LEN) { return false; }
+    var k: i64 = 0;
+    while (k < PE_MEET_CODE_LEN) {
+        if (out[k] != c[k]) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+test pe_link_rules {
+    // Status: off, linked, waiting, failed, connecting.
+    assert pe_status(false, true, 2, 0) == PE_STATUS_OFF;
+    assert pe_status(false, false, 0, 9) == PE_STATUS_OFF;
+    assert pe_status(true, true, 1, 0) == PE_STATUS_LINKED;
+    assert pe_status(true, true, 6, 5) == PE_STATUS_LINKED;
+    assert pe_status(true, true, 0, 0) == PE_STATUS_WAITING;
+    assert pe_status(true, true, 0, 7) == PE_STATUS_WAITING;
+    assert pe_status(true, false, 0, 0) == PE_STATUS_CONNECTING;
+    assert pe_status(true, false, 3, 2) == PE_STATUS_CONNECTING;
+    assert pe_status(true, false, 0, 3) == PE_STATUS_FAILED;
+    assert pe_status(true, false, 2, 10) == PE_STATUS_FAILED;
+    // Reconnect delays.
+    assert pe_reconnect_delay_ms(-7) == 500;
+    assert pe_reconnect_delay_ms(-1) == 500;
+    assert pe_reconnect_delay_ms(0) == 500;
+    assert pe_reconnect_delay_ms(1) == 1000;
+    assert pe_reconnect_delay_ms(2) == 2000;
+    assert pe_reconnect_delay_ms(3) == 4000;
+    assert pe_reconnect_delay_ms(4) == 8000;
+    assert pe_reconnect_delay_ms(5) == 8000;
+    assert pe_reconnect_delay_ms(1000000) == 8000;
+    // Peers time out after three missed HELLOs.
+    assert PE_PEER_TIMEOUT_MS == 3 * PE_HELLO_EVERY_MS;
+    assert pe_peer_alive(0) == true;
+    assert pe_peer_alive(14999) == true;
+    assert pe_peer_alive(15000) == false;
+    assert pe_peer_alive(-1) == false;
+    // The microphone: headphones open it, the speakers only with the key held; muted or no link never.
+    var bad: u32 = 0;
+    var bits: i32 = 0;
+    while (bits < 16) {
+        var up: bool = (bits & 1) != 0;
+        var muted: bool = (bits & 2) != 0;
+        var phones: bool = (bits & 4) != 0;
+        var key: bool = (bits & 8) != 0;
+        var expected: bool = false;
+        if (up and muted == false) {
+            if (phones) { expected = true; }
+            if (key) { expected = true; }
+        }
+        if (pe_sends_mic(up, muted, phones, key) != expected) { bad = bad + 1; }
+        bits = bits + 1;
+    }
+    assert bad == 0;
+    assert pe_sends_mic(true, false, false, true) == true;
+    assert pe_sends_mic(true, false, false, false) == false;
+    // The voice gate and its hangover.
+    assert pe_vad_sends(true, -5) == true;
+    assert pe_vad_sends(false, 0) == true;
+    assert pe_vad_sends(false, 599) == true;
+    assert pe_vad_sends(false, 600) == false;
+    assert pe_vad_sends(false, -1) == false;
+    // Frames: 40 ms of 16 kHz are 640 samples.
+    assert PE_SAMPLE_RATE * 40.0 / 1000.0 == 640.0;
+}
+
+test pe_jitter_rules {
+    // The codes are the own-voice relay's (AU_RLA_KEEP..AU_RLA_REFILL are 0..4).
+    assert PE_JIT_KEEP == 0;
+    assert PE_JIT_SEND == 1;
+    assert PE_JIT_DROP == 2;
+    assert PE_JIT_TRIM == 3;
+    assert PE_JIT_REFILL == 4;
+    assert pe_jitter_action(true, 80.0, 0.0, true, 0.0, 0) == PE_JIT_KEEP;
+    assert pe_jitter_action(true, 120.0, 0.0, true, 0.0, 0) == PE_JIT_SEND;
+    assert pe_jitter_action(false, 40.0, 120.0, true, 120.0, 1) == PE_JIT_SEND;
+    assert pe_jitter_action(false, 40.0, 360.0, true, 100.0, 10) == PE_JIT_SEND;
+    assert pe_jitter_action(false, 40.0, 361.0, true, 100.0, 10) == PE_JIT_DROP;
+    assert pe_jitter_action(false, 40.0, 0.0, true, 0.0, 3) == PE_JIT_REFILL;
+    assert pe_jitter_action(false, 40.0, -5.0, true, -5.0, 3) == PE_JIT_REFILL;
+    assert pe_jitter_action(false, 120.0, 0.0, false, 0.0, 0) == PE_JIT_KEEP;
+    assert pe_jitter_action(true, 160.0, 0.0, false, 0.0, 0) == PE_JIT_TRIM;
+    assert pe_jitter_action(false, 40.0, 200.0, true, 160.1, 50) == PE_JIT_DROP;
+    assert pe_jitter_action(false, 40.0, 200.0, true, 160.0, 50) == PE_JIT_SEND;
+    assert pe_jitter_action(false, 40.0, 200.0, true, 170.0, 49) == PE_JIT_SEND;
+    assert pe_jitter_window_ends(49) == false;
+    assert pe_jitter_window_ends(50) == true;
+    assert pe_jitter_trims(160.0, 40.0) == true;
+    assert pe_jitter_trims(159.0, 40.0) == false;
+    // A steady 40 ms stream into an output that plays 40 ms per frame: one fill, then only sends, and the
+    // output never holds more than the maximum.
+    var filling: bool = true;
+    var pending: f64 = 0.0;
+    var queued: f64 = 0.0;
+    var sends: i64 = 0;
+    var other: i64 = 0;
+    var low: f64 = 1000000.0;
+    var count: i64 = 0;
+    var i: i64 = 0;
+    while (i < 1000) {
+        pending = pending + 40.0;
+        if (filling == false) {
+            if (queued < low) { low = queued; }
+            count = count + 1;
+        }
+        var a: i64 = pe_jitter_action(filling, pending, queued, true, low, count);
+        if (pe_jitter_window_ends(count)) {
+            low = 1000000.0;
+            count = 0;
+        }
+        if (a == PE_JIT_SEND) {
+            queued = queued + pending;
+            pending = 0.0;
+            filling = false;
+            sends = sends + 1;
+        } else {
+            if (a != PE_JIT_KEEP) { other = other + 1; }
+        }
+        if (queued > PE_JITTER_MAX_MS) { other = other + 1; }
+        if (filling == false) { queued = queued - 40.0; }
+        i = i + 1;
+    }
+    assert other == 0;
+    assert sends == 998;
+    // After a burst left 300 ms in the output: one frame per window goes until the queue is near the target.
+    queued = 300.0;
+    low = 1000000.0;
+    count = 0;
+    var drops: i64 = 0;
+    i = 0;
+    while (i < 1000) {
+        pending = 40.0;
+        if (queued < low) { low = queued; }
+        count = count + 1;
+        var b: i64 = pe_jitter_action(false, pending, queued, true, low, count);
+        if (pe_jitter_window_ends(count)) {
+            low = 1000000.0;
+            count = 0;
+        }
+        if (b == PE_JIT_SEND) { queued = queued + pending; }
+        if (b == PE_JIT_DROP) { drops = drops + 1; }
+        queued = queued - 40.0;
+        i = i + 1;
+    }
+    assert drops == 4;
+    assert queued == 140.0;
+}
+
+test pe_similarity_rules {
+    // The TTS text against what the recognizer heard: punctuation and case do not matter.
+    assert pe_fixture_similarity(PE_FX_TTS_OI, PE_FX_HEARD_OI) == 1000;
+    assert pe_fixture_similarity(PE_FX_TTS_OI_PT, PE_FX_HEARD_OI_PT) == 1000;
+    // Accents do: "voce" is not "voce" with a circumflex (2 common of 4 + 4 words).
+    assert pe_fixture_similarity(PE_FX_TTS_OI, PE_FX_HEARD_OI_PT) == 500;
+    // 4 common of 6 + 4 words.
+    assert pe_fixture_similarity(PE_FX_TTS_BOM_DIA, PE_FX_HEARD_BOM_DIA) == 800;
+    assert pe_fixture_similarity(PE_FX_HEARD_BOM_DIA, PE_FX_TTS_BOM_DIA) == 800;
+    assert pe_fixture_similarity(PE_FX_TTS_THANKS, PE_FX_HEARD_PRICE) == 0;
+    // Cyrillic capitals are not folded: 2 of 3 + 3 words.
+    assert pe_fixture_similarity(PE_FX_RU_PRIVET, PE_FX_RU_PRIVET_LOWER) == 666;
+    // Multisets: sim x3, nao and sim, nao x2 share sim once and nao once.
+    assert pe_fixture_similarity(PE_FX_SIM_THREE, PE_FX_NAO_TWO) == 571;
+    assert pe_fixture_similarity(PE_FX_DIGITS, PE_FX_DIGITS_HEARD) == 750;
+    // No words.
+    assert pe_fixture_similarity(PE_FX_PUNCTUATION, PE_FX_EMPTY) == 0;
+    assert pe_fixture_similarity(PE_FX_EMPTY, PE_FX_EMPTY) == 0;
+    assert pe_fixture_similarity(PE_FX_PUNCTUATION, PE_FX_TTS_OI) == 0;
+    // Every pair of fixtures: symmetric, within 0..1000, 1000 against itself when it has words.
+    var bad: u32 = 0;
+    var x: i64 = 0;
+    while (x < PE_FX_COUNT) {
+        var y: i64 = 0;
+        while (y < PE_FX_COUNT) {
+            var s: i64 = pe_fixture_similarity(x, y);
+            if (s != pe_fixture_similarity(y, x)) { bad = bad + 1; }
+            if (s < 0 or s > PE_SIMILARITY_SCALE) { bad = bad + 1; }
+            y = y + 1;
+        }
+        var self_s: i64 = pe_fixture_similarity(x, x);
+        if (self_s != 0 and self_s != PE_SIMILARITY_SCALE) { bad = bad + 1; }
+        x = x + 1;
+    }
+    assert bad == 0;
+    // Words: case folded, every byte from 0x80 is a word byte, the first 512 words count, 4096 bytes are read.
+    var t: [4096]u8 = [0; 4096];
+    var u: [4096]u8 = [0; 4096];
+    var starts: [512]i64 = [0; 512];
+    var lens: [512]i64 = [0; 512];
+    var k: i64 = 0;
+    while (k < 4096) {
+        if (k % 2 == 0) { t[k] = 65; } else { t[k] = 32; }
+        if (k % 2 == 0) { u[k] = 97; } else { u[k] = 44; }
+        k = k + 1;
+    }
+    assert pe_words(t, 4096, starts, lens) == 512;
+    assert starts[511] == 1022;
+    assert lens[511] == 1;
+    assert pe_words(t, 9999, starts, lens) == 512;
+    assert pe_words(t, -3, starts, lens) == 0;
+    assert pe_words(t, 5, starts, lens) == 3;
+    assert pe_word_similarity_milli(t, 4096, u, 4096) == 1000;
+    // 512 words of "a" against 100: 100 common of 612.
+    assert pe_word_similarity_milli(t, 4096, u, 200) == 326;
+    t[0] = 195;
+    t[1] = 169;
+    t[2] = 32;
+    assert pe_words(t, 3, starts, lens) == 1;
+    assert lens[0] == 2;
+    assert pe_is_word_byte(128) == true;
+    assert pe_is_word_byte(255) == true;
+    assert pe_is_word_byte(45) == false;
+    assert pe_is_word_byte(95) == false;
+    var b: u32 = 0;
+    var word_bytes: u32 = 0;
+    while (b < 256) {
+        if (pe_is_word_byte(cast_u8(b))) { word_bytes = word_bytes + 1; }
+        b = b + 1;
+    }
+    assert word_bytes == 128 + 26 + 26 + 10;
+}
+
+test pe_peer_voice_rules {
+    // Own voice: the window widened by 300 ms before and 1500 ms after.
+    assert pe_is_peer_voice(PE_VOICE_OWN, 0, 11000, 11500, 10000, 12000) == true;
+    assert pe_is_peer_voice(PE_VOICE_OWN, 0, 9500, 9700, 10000, 12000) == true;
+    assert pe_is_peer_voice(PE_VOICE_OWN, 0, 9000, 9699, 10000, 12000) == false;
+    assert pe_is_peer_voice(PE_VOICE_OWN, 0, 13500, 14000, 10000, 12000) == true;
+    assert pe_is_peer_voice(PE_VOICE_OWN, 0, 13501, 14000, 10000, 12000) == false;
+    // Still playing: no end.
+    assert pe_is_peer_voice(PE_VOICE_OWN, 0, 50000, 51000, 10000, -1) == true;
+    assert pe_is_peer_voice(PE_VOICE_TTS, 400, 50000, 51000, 10000, -1) == true;
+    assert pe_is_peer_voice(PE_VOICE_TTS, 349, 50000, 51000, 10000, -1) == false;
+    // TTS inside the window needs some likeness; a sure match counts up to 15 s after the window.
+    assert pe_is_peer_voice(PE_VOICE_TTS, 350, 11000, 11500, 10000, 12000) == true;
+    assert pe_is_peer_voice(PE_VOICE_TTS, 349, 11000, 11500, 10000, 12000) == false;
+    assert pe_is_peer_voice(PE_VOICE_TTS, 1000, 20000, 21000, 10000, 12000) == true;
+    assert pe_is_peer_voice(PE_VOICE_TTS, 700, 27000, 28000, 10000, 12000) == true;
+    assert pe_is_peer_voice(PE_VOICE_TTS, 699, 20000, 21000, 10000, 12000) == false;
+    assert pe_is_peer_voice(PE_VOICE_TTS, 1000, 27001, 28000, 10000, 12000) == false;
+    assert pe_is_peer_voice(PE_VOICE_TTS, 1000, 5000, 9699, 10000, 12000) == false;
+    // The TTS sentence and what the recognizer heard, inside the window.
+    var s: i64 = pe_fixture_similarity(PE_FX_TTS_OI, PE_FX_HEARD_OI);
+    assert pe_is_peer_voice(PE_VOICE_TTS, s, 10200, 11800, 10000, 11500) == true;
+    // Unknown kinds never.
+    assert pe_is_peer_voice(0, 1000, 11000, 11500, 10000, 12000) == false;
+    assert pe_is_peer_voice(3, 1000, 11000, 11500, 10000, 12000) == false;
+    // Window end 0 is a closed window that ended at 0.
+    assert pe_is_peer_voice(PE_VOICE_OWN, 0, 1500, 1600, 0, 0) == true;
+    assert pe_is_peer_voice(PE_VOICE_OWN, 0, 1501, 1600, 0, 0) == false;
+}
+
+test pe_meet_code_rules {
+    var t: [4096]u8 = [0; 4096];
+    var out: [12]u8 = [0; 12];
+    var n: i64 = pe_fixture(PE_FX_MEET_TITLE, t);
+    assert pe_meet_code_at(t, n) == 7;
+    assert pe_fixture_meet_code_is(PE_FX_MEET_TITLE, PE_FX_MEET_CODE) == true;
+    n = pe_fixture(PE_FX_MEET_TITLE_BROWSEROS, t);
+    assert pe_meet_code_at(t, n) == 9;
+    assert pe_fixture_meet_code_is(PE_FX_MEET_TITLE_BROWSEROS, PE_FX_MEET_CODE) == true;
+    n = pe_fixture(PE_FX_MEET_URL, t);
+    assert pe_meet_code_at(t, n) == 24;
+    assert pe_fixture_meet_code_is(PE_FX_MEET_URL, PE_FX_MEET_URL_CODE) == true;
+    // A letter right before or after is not a code; a digit is fine.
+    n = pe_fixture(PE_FX_MEET_LETTER_BEFORE, t);
+    assert pe_meet_code_at(t, n) == -1;
+    assert pe_meet_code(t, n, out) == 0;
+    n = pe_fixture(PE_FX_MEET_LETTER_AFTER, t);
+    assert pe_meet_code_at(t, n) == -1;
+    n = pe_fixture(PE_FX_MEET_DIGIT_AFTER, t);
+    assert pe_meet_code_at(t, n) == 0;
+    assert pe_fixture_meet_code_is(PE_FX_MEET_DIGIT_AFTER, PE_FX_MEET_URL_CODE) == true;
+    n = pe_fixture(PE_FX_MEET_SHORT, t);
+    assert pe_meet_code_at(t, n) == -1;
+    // The first of two, lowercased.
+    assert pe_fixture_meet_code_is(PE_FX_MEET_TWO, PE_FX_MEET_TWO_CODE) == true;
+    // Cyrillic neighbours are not ASCII letters; an accented letter inside is not a code letter.
+    n = pe_fixture(PE_FX_MEET_CYRILLIC, t);
+    assert pe_meet_code_at(t, n) == 2;
+    assert pe_fixture_meet_code_is(PE_FX_MEET_CYRILLIC, PE_FX_MEET_URL_CODE) == true;
+    n = pe_fixture(PE_FX_MEET_ACCENT, t);
+    assert pe_meet_code_at(t, n) == -1;
+    // Only the first 4096 bytes are read; the end of the read text is no neighbour.
+    var k: i64 = 0;
+    while (k < 4096) {
+        t[k] = 32;
+        k = k + 1;
+    }
+    k = 0;
+    while (k < 12) {
+        t[4084 + k] = 97;
+        k = k + 1;
+    }
+    t[4087] = PE_HYPHEN;
+    t[4092] = PE_HYPHEN;
+    assert pe_meet_code_at(t, 4096) == 4084;
+    assert pe_meet_code_at(t, 9000) == 4084;
+    assert pe_meet_code_at(t, 4095) == -1;
+    assert pe_meet_code_at(t, 0) == -1;
+    assert pe_meet_code_at(t, -1) == -1;
+    assert pe_meet_code_matches(t, 4096, -1) == false;
+    assert pe_is_letter(64) == false;
+    assert pe_is_letter(91) == false;
+    assert pe_is_letter(96) == false;
+    assert pe_is_letter(123) == false;
+    assert pe_is_letter(65) == true;
+    assert pe_is_letter(122) == true;
+}

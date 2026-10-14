@@ -38,6 +38,9 @@ enum LaneEvent {
     case speaking(Bool)
     /// A non-fatal problem worth showing to the user.
     case problem(String)
+    /// This lane's voice starts or stops playing: `text` is what it says (the translation), nil for «Свой голос».
+    /// The outgoing lane plays into the call, so the other Russians' Ponte apps are told (PeerLink.sendVoice).
+    case voiceOut(text: String?, playing: Bool)
 }
 
 /// The last phrases of the whole conversation (both lanes), oldest first.
@@ -278,9 +281,13 @@ final class TranslationLane {
     /// «Свой голос» on or off. On: the speech queued or playing is cancelled, the gate closes (the key does
     /// nothing) and the microphone is relayed to the player. Off: the relay stops at once, its jitter buffer
     /// and what the player still holds are dropped, and the lane listens again.
+    /// «Русские в звонке» (outgoing lane): the microphone also goes to PeerMicGate.
+    func setPeerSink(_ sink: ((AVAudioPCMBuffer, Bool) -> Void)?) { intake.setPeerSink(sink) }
+
     func setOwnVoice(_ on: Bool) {
         guard on != ownVoice else { return }
         ownVoice = on
+        onEvent(.voiceOut(text: nil, playing: on))
         if !on { intake.setRelay(nil) }
         if AppRules.cancelsSpeech(event: AppRules.SCE_OWN_VOICE, value: on) { cancelSpeech() }
         if on, let player { intake.setRelay(LiveRelay(player: player)) }
@@ -320,7 +327,7 @@ final class TranslationLane {
         guard action != AppRules.RPL_NONE else { return }
         ensureSpeechWorkers()
         if action == AppRules.RPL_AUDIO, let lastSpoken {
-            playInput?.yield(PlayRequest(buffers: lastSpoken.buffers, generation: speechGeneration, counted: false))
+            playInput?.yield(PlayRequest(text: lastSpoken.text, buffers: lastSpoken.buffers, generation: speechGeneration, counted: false))
         } else if action == AppRules.RPL_SYNTH {
             synthInput?.yield(SpeakRequest(text: translation, generation: speechGeneration, counted: false))
         }
@@ -465,6 +472,7 @@ final class TranslationLane {
     }
 
     private struct PlayRequest {
+        let text: String
         let buffers: [AVAudioPCMBuffer]
         let generation: Int
         let counted: Bool
@@ -585,7 +593,7 @@ final class TranslationLane {
             let done = AppRules.phraseStep(stage: AppRules.PH_SYNTH_QUEUED, event: AppRules.PEV_SYNTHESIZED,
                                            flags: flags(generation: request.generation, hasAudio: !buffers.isEmpty))
             if AppRules.stepAction(done) == AppRules.PACT_ENQUEUE_PLAY {
-                playInput?.yield(PlayRequest(buffers: buffers, generation: request.generation, counted: request.counted))
+                playInput?.yield(PlayRequest(text: request.text, buffers: buffers, generation: request.generation, counted: request.counted))
             } else {
                 endOfSpeech(request.counted)
             }
@@ -604,8 +612,10 @@ final class TranslationLane {
             return
         }
         onEvent(.speaking(true))
+        onEvent(.voiceOut(text: request.text, playing: true))
         // One gapless call per phrase; cancelSpeech() → player.stopAll() ends it early.
         await player.play(request.buffers)
+        onEvent(.voiceOut(text: request.text, playing: false))
         let finish = AppRules.phraseStep(stage: AppRules.PH_PLAYING, event: AppRules.PEV_PLAYED, flags: 0)
         endOfSpeech(request.counted)
         if AppRules.playEndReports(action: AppRules.stepAction(finish), generationCurrent: request.generation == speechGeneration) {
@@ -622,6 +632,7 @@ final class AudioIntake: @unchecked Sendable {
     private var segment: Segment?
     private var echoGuard: EchoGuard?
     private var relay: LiveRelay?
+    private var peerSink: ((AVAudioPCMBuffer, Bool) -> Void)?
     private var current = LaneAudioStats()
     private let clock: @Sendable () -> Date
 
@@ -651,18 +662,22 @@ final class AudioIntake: @unchecked Sendable {
 
     func stats() -> LaneAudioStats { lock.withLock { current } }
 
+    /// «Русские в звонке»: every microphone buffer also goes here with whether it has signal (PeerMicGate decides).
+    func setPeerSink(_ sink: ((AVAudioPCMBuffer, Bool) -> Void)?) { lock.withLock { peerSink = sink } }
+
     func handle(_ buffer: AVAudioPCMBuffer) {
         let (rms, peak) = buffer.laneLevels
         let signal = AudioRules.hasSignal(peak: peak, rms: rms)
         let now = clock()
-        let (segment, echo, relay): (Segment?, EchoGuard?, LiveRelay?) = lock.withLock {
+        let (segment, echo, relay, peer): (Segment?, EchoGuard?, LiveRelay?, ((AVAudioPCMBuffer, Bool) -> Void)?) = lock.withLock {
             current.buffers += 1
             current.lastBufferAt = now
             current.level = rms
             if signal { current.lastSignalAt = now }
-            return (self.segment, self.echoGuard, self.relay)
+            return (self.segment, self.echoGuard, self.relay, self.peerSink)
         }
         relay?.push(buffer)
+        peer?(buffer, signal)
         let blocks = echo?.blocksMic(at: now) ?? false
         guard AppRules.intakeForwards(hasSegment: segment != nil, echoBlocks: blocks), let segment else { return }
         segment.append(buffer)

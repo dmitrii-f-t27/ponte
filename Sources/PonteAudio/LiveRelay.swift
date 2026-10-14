@@ -22,8 +22,30 @@ public final class LiveRelay: @unchecked Sendable {
         public var maxQueuedMs: Double = 0
     }
 
+    /// The jitter-buffer decisions: «Свой голос» uses audio_rules.t27 (40-80 ms on this Mac); the link between the
+    /// Russians uses peer_rules.t27 (a larger buffer for the internet). Same codes as AudioRules.relay*.
+    public struct Rules: Sendable {
+        public var action: @Sendable (_ filling: Bool, _ pendingMs: Double, _ queuedMs: Double?, _ lowMs: Double, _ lowCount: Int) -> Int
+        public var windowEnds: @Sendable (_ lowCount: Int) -> Bool
+        public var trims: @Sendable (_ pendingMs: Double, _ oldestMs: Double) -> Bool
+
+        public init(action: @escaping @Sendable (Bool, Double, Double?, Double, Int) -> Int,
+                    windowEnds: @escaping @Sendable (Int) -> Bool,
+                    trims: @escaping @Sendable (Double, Double) -> Bool) {
+            self.action = action
+            self.windowEnds = windowEnds
+            self.trims = trims
+        }
+
+        public static let ownVoice = Rules(
+            action: { AudioRules.relayAction(filling: $0, pendingMs: $1, queuedMs: $2, lowMs: $3, lowCount: $4) },
+            windowEnds: { AudioRules.relayWindowEnds(lowCount: $0) },
+            trims: { AudioRules.relayTrims(pendingMs: $0, oldestMs: $1) })
+    }
+
     private let lock = NSLock()
     private let player: AudioPlayer
+    private let rules: Rules
     private var pending: [(buffer: AVAudioPCMBuffer, ms: Double)] = []
     private var pendingMs: Double = 0
     private var filling = true
@@ -33,8 +55,9 @@ public final class LiveRelay: @unchecked Sendable {
     private var lowCount = 0
     private var _stats = Stats()
 
-    public init(player: AudioPlayer) {
+    public init(player: AudioPlayer, rules: Rules = .ownVoice) {
         self.player = player
+        self.rules = rules
     }
 
     public var stats: Stats { lock.withLock { _stats } }
@@ -56,8 +79,8 @@ public final class LiveRelay: @unchecked Sendable {
             lowMs = .infinity
             lowCount = 0
         }
-        let action = AudioRules.relayAction(filling: filling, pendingMs: pendingMs, queuedMs: queued, lowMs: lowMs, lowCount: lowCount)
-        if AudioRules.relayWindowEnds(lowCount: lowCount) {
+        let action = rules.action(filling, pendingMs, queued, lowMs, lowCount)
+        if rules.windowEnds(lowCount) {
             lowMs = .infinity
             lowCount = 0
         }
@@ -77,7 +100,7 @@ public final class LiveRelay: @unchecked Sendable {
             pendingMs -= ms
             _stats.dropped += 1
         case AudioRules.relayTrim:
-            while pending.count > 1, AudioRules.relayTrims(pendingMs: pendingMs, oldestMs: pending[0].ms) {
+            while pending.count > 1, rules.trims(pendingMs, pending[0].ms) {
                 pendingMs -= pending.removeFirst().ms
                 _stats.trimmed += 1
             }

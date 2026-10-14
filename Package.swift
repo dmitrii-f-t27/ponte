@@ -18,10 +18,13 @@ let package = Package(
         .target(name: "PonteObjC"),
         .target(name: "PonteAudio", dependencies: ["PonteCore", "PonteSpecs", "PonteObjC"]),
         .target(name: "PonteSpeech", dependencies: ["PonteCore", "PonteSpecs"]),
-        .executableTarget(name: "PonteApp", dependencies: ["PonteCore", "PonteAudio", "PonteSpeech", "PonteSpecs"]),
+        // Two Russians in one call hear each other through an encrypted relay between their Pontes (peer_rules.t27).
+        .target(name: "PontePeer", dependencies: ["PonteCore", "PonteSpecs", "PonteAudio"]),
+        .executableTarget(name: "PonteApp", dependencies: ["PonteCore", "PonteAudio", "PonteSpeech", "PonteSpecs", "PontePeer"]),
         .executableTarget(name: "AudioProbe", dependencies: ["PonteCore", "PonteAudio"]),
         .executableTarget(name: "SpeechProbe", dependencies: ["PonteCore", "PonteSpeech"]),
-        .testTarget(name: "PonteTests", dependencies: ["PonteCore", "PonteAudio", "PonteSpeech", "PonteSpecs", "PonteApp"]),
+        .executableTarget(name: "PeerProbe", dependencies: ["PonteAudio", "PontePeer"]),
+        .testTarget(name: "PonteTests", dependencies: ["PonteCore", "PonteAudio", "PonteSpeech", "PonteSpecs", "PonteApp", "PontePeer"]),
     ],
     swiftLanguageModes: [.v5]
 )

@@ -42,5 +42,7 @@
 	<string>Ponte превращает речь в текст на этом Маке, чтобы перевести разговор.</string>
 	<key>NSSupportsAutomaticTermination</key>
 	<false/>
+	<key>PonteRelayURL</key>
+	<string>wss://ponte-relay-production.up.railway.app/r/</string>
 </dict>
 </plist>

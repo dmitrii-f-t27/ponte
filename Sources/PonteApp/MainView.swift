@@ -50,6 +50,8 @@ private struct MainToolbar: ToolbarContent {
 
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
+            PeerToolbarButton()
+
             Button {
                 model.overlayVisible.toggle()
             } label: {

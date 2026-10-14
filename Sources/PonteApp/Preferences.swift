@@ -12,6 +12,8 @@ enum PrefKey {
     static let voicePT = "voicePT"                  // "" = best available
     static let voiceRU = "voiceRU"
     static let speakRussian = "speakRussian"
+    static let peerCode = "peerCode"                // «Русские в звонке»: the Meet code of the link
+    static let peerRelayURL = "peerRelayURL"        // overrides Info.plist PonteRelayURL (tests)
     static let hearOriginal = "hearOriginal"        // the other side's own voices on the Mac («Слышать их»)
     static let translator = "translator"            // TranslatorKind
     static let glossary = "glossary"                // JSON [GlossaryTerm]
