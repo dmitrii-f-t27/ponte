@@ -902,4 +902,91 @@ extension AppRulesLegacy {
     static let SOURCE_APP_PREFIX = "app:"
     /// PonteAppDelegate.applicationShouldTerminate: `model.isRunning`.
     static func quitWaits(runState: Int32) -> Bool { runState == RUN_RUNNING }
+
+    // MARK: - The checklist «Перед звонком» (2026-10-13; written for ui_rules.t27, mirrored here)
+
+    static let CKI_LISTENER: Int32 = 0
+    static let CKI_CALL_MIC: Int32 = 1
+    static let CKI_HEADPHONES: Int32 = 2
+    static let CKI_MY_MIC: Int32 = 3
+    static let CKI_EXTENSIONS: Int32 = 4
+    static let CKI_HOW_TO_TALK: Int32 = 5
+    static let CKI_COUNT: Int32 = 6
+    static let CK_UNKNOWN: Int32 = 0
+    static let CK_OK: Int32 = 1
+    static let CK_WARN: Int32 = 2
+    static let CK_BAD: Int32 = 3
+    static let CK_INFO: Int32 = 4
+    static let LISTEN_UNKNOWN: Int32 = 0
+    static let LISTEN_OK: Int32 = 1
+    static let LISTEN_NOBODY: Int32 = 2
+    static let LISTEN_REAL_MIC: Int32 = 3
+    static let LISTEN_BOTH: Int32 = 4
+    static let LISTEN_NO_BLACKHOLE: Int32 = 5
+    static let MICSRC_SAVED: Int32 = 0
+    static let MICSRC_AUTO: Int32 = 1
+    static let MICSRC_SYSTEM: Int32 = 2
+    static let CKO_LAUNCH: Int32 = 0
+    static let CKO_ASKED: Int32 = 1
+    static let DEFAULT_CHECKLIST_ON_LAUNCH = true
+    static let LISTENER_EVERY_TICKS: Int64 = 2
+    static let LISTENER_GRACE_MS: Int64 = 3000
+    static let LB_NONE: Int32 = 0
+    static let LB_SHOW: Int32 = 1
+    static let LB_CLEAR: Int32 = 2
+    static let MIGRATE_NONE: Int32 = 0
+    static let MIGRATE_CLEAR: Int32 = 1
+    static let MIGRATE_MARK: Int32 = 2
+
+    static func listenerMark(listenStatus: Int32) -> Int32 {
+        switch listenStatus {
+        case LISTEN_OK: return CK_OK
+        case LISTEN_BOTH: return CK_WARN
+        case LISTEN_NOBODY, LISTEN_REAL_MIC, LISTEN_NO_BLACKHOLE: return CK_BAD
+        default: return CK_UNKNOWN
+        }
+    }
+
+    static func checklistMark(item: Int32, listenStatus: Int32, headphonesLike: Bool, micSource: Int32) -> Int32 {
+        switch item {
+        case CKI_LISTENER: return listenerMark(listenStatus: listenStatus)
+        case CKI_CALL_MIC, CKI_EXTENSIONS, CKI_HOW_TO_TALK: return CK_INFO
+        case CKI_HEADPHONES: return headphonesLike ? CK_OK : CK_WARN
+        case CKI_MY_MIC: return micSource == MICSRC_SAVED || micSource == MICSRC_AUTO ? CK_OK : CK_WARN
+        default: return CK_UNKNOWN
+        }
+    }
+
+    static func micSource(hasSetting: Bool, found: Bool, hasAuto: Bool) -> Int32 {
+        if deviceChoice(hasSetting: hasSetting, found: found) == 0 { return MICSRC_SAVED }
+        return hasAuto ? MICSRC_AUTO : MICSRC_SYSTEM
+    }
+
+    static func checklistOpens(reason: Int32, showOnLaunch: Bool, wizardShown: Bool, testMode: Bool, autostart: Bool) -> Bool {
+        guard !wizardShown else { return false }
+        switch reason {
+        case CKO_ASKED: return true
+        case CKO_LAUNCH: return showOnLaunch && !testMode && !autostart
+        default: return false
+        }
+    }
+
+    static func checklistCanStart(runState: Int32) -> Bool { runState == RUN_IDLE }
+
+    static func pollReadsListeners(tick: Int64, sheetOpen: Bool, runState: Int32) -> Bool {
+        (sheetOpen || runState == RUN_RUNNING) && tick % LISTENER_EVERY_TICKS == 0
+    }
+
+    static func listenerStreak(mark: Int32) -> Bool { mark == CK_BAD }
+
+    static func listenerBanner(runState: Int32, mark: Int32, msBad: Int64, shown: Bool, dismissed: Bool) -> Int32 {
+        guard runState == RUN_RUNNING, listenerStreak(mark: mark) else { return shown ? LB_CLEAR : LB_NONE }
+        if dismissed || msBad < LISTENER_GRACE_MS { return LB_NONE }
+        return LB_SHOW
+    }
+
+    static func micMigration(migrated: Bool, hasSetting: Bool) -> Int32 {
+        if migrated { return MIGRATE_NONE }
+        return hasSetting ? MIGRATE_CLEAR : MIGRATE_MARK
+    }
 }

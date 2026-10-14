@@ -162,6 +162,38 @@ static const uint32_t UI_ROW_LENGTHS[5] = { 6, 4, 3, 4, 1 };
 #define UI_LINE_PENDING 2
 #define UI_WORD_MAX 64
 #define UI_KEY_MAX 4096
+#define UI_CKI_LISTENER 0
+#define UI_CKI_CALL_MIC 1
+#define UI_CKI_HEADPHONES 2
+#define UI_CKI_MY_MIC 3
+#define UI_CKI_EXTENSIONS 4
+#define UI_CKI_HOW_TO_TALK 5
+#define UI_CKI_COUNT 6
+#define UI_CK_UNKNOWN 0
+#define UI_CK_OK 1
+#define UI_CK_WARN 2
+#define UI_CK_BAD 3
+#define UI_CK_INFO 4
+#define UI_LISTEN_UNKNOWN 0
+#define UI_LISTEN_OK 1
+#define UI_LISTEN_NOBODY 2
+#define UI_LISTEN_REAL_MIC 3
+#define UI_LISTEN_BOTH 4
+#define UI_LISTEN_NO_BLACKHOLE 5
+#define UI_MICSRC_SAVED 0
+#define UI_MICSRC_AUTO 1
+#define UI_MICSRC_SYSTEM 2
+#define UI_CKO_LAUNCH 0
+#define UI_CKO_ASKED 1
+#define UI_DEFAULT_CHECKLIST_ON_LAUNCH 1
+#define UI_LISTENER_EVERY_TICKS 2
+#define UI_LISTENER_GRACE_MS 3000
+#define UI_LB_NONE 0
+#define UI_LB_SHOW 1
+#define UI_LB_CLEAR 2
+#define UI_MIGRATE_NONE 0
+#define UI_MIGRATE_CLEAR 1
+#define UI_MIGRATE_MARK 2
 
 /* -------------------------------------------------------
    Function prototypes
@@ -223,6 +255,15 @@ bool ui_is_yes(uint8_t text[static 64], int64_t len);
 int64_t ui_source_key_app_prefix(uint8_t text[static 4096], int64_t len);
 int64_t ui_row_bytes(int64_t row, uint8_t out[static 64]);
 bool ui_quit_waits(int32_t run_state);
+int32_t ui_listener_mark(int32_t listen_status);
+int32_t ui_checklist_mark(int32_t item, int32_t listen_status, bool headphones_like, int32_t mic_source);
+int32_t ui_mic_source(bool has_setting, bool found, bool has_auto);
+bool ui_checklist_opens(int32_t reason, bool show_on_launch, bool wizard_shown, bool test_mode, bool autostart);
+bool ui_checklist_can_start(int32_t run_state);
+bool ui_poll_reads_listeners(int64_t tick, bool sheet_open, int32_t run_state);
+bool ui_listener_streak(int32_t mark);
+int32_t ui_listener_banner(int32_t run_state, int32_t mark, int64_t ms_bad, bool shown, bool dismissed);
+int32_t ui_mic_migration(bool migrated, bool has_setting);
 
 /* -------------------------------------------------------
    Function implementations
@@ -798,6 +839,102 @@ bool ui_quit_waits(int32_t run_state) {
     return (run_state == UI_RUN_RUNNING);
 }
 
+int32_t ui_listener_mark(int32_t listen_status) {
+    if ((listen_status == UI_LISTEN_OK)) {
+        return UI_CK_OK;
+    }
+    if ((listen_status == UI_LISTEN_BOTH)) {
+        return UI_CK_WARN;
+    }
+    if ((((listen_status == UI_LISTEN_NOBODY) || (listen_status == UI_LISTEN_REAL_MIC)) || (listen_status == UI_LISTEN_NO_BLACKHOLE))) {
+        return UI_CK_BAD;
+    }
+    return UI_CK_UNKNOWN;
+}
+
+int32_t ui_checklist_mark(int32_t item, int32_t listen_status, bool headphones_like, int32_t mic_source) {
+    if ((item == UI_CKI_LISTENER)) {
+        return ui_listener_mark(listen_status);
+    }
+    if ((((item == UI_CKI_CALL_MIC) || (item == UI_CKI_EXTENSIONS)) || (item == UI_CKI_HOW_TO_TALK))) {
+        return UI_CK_INFO;
+    }
+    if ((item == UI_CKI_HEADPHONES)) {
+        if (headphones_like) {
+            return UI_CK_OK;
+        }
+        return UI_CK_WARN;
+    }
+    if ((item == UI_CKI_MY_MIC)) {
+        if (((mic_source == UI_MICSRC_SAVED) || (mic_source == UI_MICSRC_AUTO))) {
+            return UI_CK_OK;
+        }
+        return UI_CK_WARN;
+    }
+    return UI_CK_UNKNOWN;
+}
+
+int32_t ui_mic_source(bool has_setting, bool found, bool has_auto) {
+    if ((ui_device_choice(has_setting, found) == UI_DEV_SAVED)) {
+        return UI_MICSRC_SAVED;
+    }
+    if (has_auto) {
+        return UI_MICSRC_AUTO;
+    }
+    return UI_MICSRC_SYSTEM;
+}
+
+bool ui_checklist_opens(int32_t reason, bool show_on_launch, bool wizard_shown, bool test_mode, bool autostart) {
+    if (wizard_shown) {
+        return false;
+    }
+    if ((reason == UI_CKO_ASKED)) {
+        return true;
+    }
+    if ((reason == UI_CKO_LAUNCH)) {
+        return ((show_on_launch && (test_mode == false)) && (autostart == false));
+    }
+    return false;
+}
+
+bool ui_checklist_can_start(int32_t run_state) {
+    return (run_state == UI_RUN_IDLE);
+}
+
+bool ui_poll_reads_listeners(int64_t tick, bool sheet_open, int32_t run_state) {
+    return ((sheet_open || (run_state == UI_RUN_RUNNING)) && ((tick % UI_LISTENER_EVERY_TICKS) == 0));
+}
+
+bool ui_listener_streak(int32_t mark) {
+    return (mark == UI_CK_BAD);
+}
+
+int32_t ui_listener_banner(int32_t run_state, int32_t mark, int64_t ms_bad, bool shown, bool dismissed) {
+    if (((run_state != UI_RUN_RUNNING) || (ui_listener_streak(mark) == false))) {
+        if (shown) {
+            return UI_LB_CLEAR;
+        }
+        return UI_LB_NONE;
+    }
+    if (dismissed) {
+        return UI_LB_NONE;
+    }
+    if ((ms_bad < UI_LISTENER_GRACE_MS)) {
+        return UI_LB_NONE;
+    }
+    return UI_LB_SHOW;
+}
+
+int32_t ui_mic_migration(bool migrated, bool has_setting) {
+    if (migrated) {
+        return UI_MIGRATE_NONE;
+    }
+    if (has_setting) {
+        return UI_MIGRATE_CLEAR;
+    }
+    return UI_MIGRATE_MARK;
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
@@ -1183,6 +1320,119 @@ void test_ui_mic_light_gate(void) {
     assert((bad == 0));
 }
 
+void test_ui_checklist(void) {
+    assert((ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_OK, false, UI_MICSRC_SYSTEM) == UI_CK_OK));
+    assert((ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_NOBODY, true, UI_MICSRC_AUTO) == UI_CK_BAD));
+    assert((ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_REAL_MIC, true, UI_MICSRC_AUTO) == UI_CK_BAD));
+    assert((ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_NO_BLACKHOLE, true, UI_MICSRC_AUTO) == UI_CK_BAD));
+    assert((ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_BOTH, true, UI_MICSRC_AUTO) == UI_CK_WARN));
+    assert((ui_checklist_mark(UI_CKI_LISTENER, UI_LISTEN_UNKNOWN, true, UI_MICSRC_AUTO) == UI_CK_UNKNOWN));
+    assert((ui_checklist_mark(UI_CKI_CALL_MIC, UI_LISTEN_NOBODY, false, UI_MICSRC_SYSTEM) == UI_CK_INFO));
+    assert((ui_checklist_mark(UI_CKI_EXTENSIONS, UI_LISTEN_OK, true, UI_MICSRC_AUTO) == UI_CK_INFO));
+    assert((ui_checklist_mark(UI_CKI_HOW_TO_TALK, UI_LISTEN_OK, true, UI_MICSRC_AUTO) == UI_CK_INFO));
+    assert((ui_checklist_mark(UI_CKI_HEADPHONES, UI_LISTEN_OK, true, UI_MICSRC_AUTO) == UI_CK_OK));
+    assert((ui_checklist_mark(UI_CKI_HEADPHONES, UI_LISTEN_OK, false, UI_MICSRC_AUTO) == UI_CK_WARN));
+    assert((ui_checklist_mark(UI_CKI_MY_MIC, UI_LISTEN_OK, false, UI_MICSRC_SAVED) == UI_CK_OK));
+    assert((ui_checklist_mark(UI_CKI_MY_MIC, UI_LISTEN_OK, false, UI_MICSRC_AUTO) == UI_CK_OK));
+    assert((ui_checklist_mark(UI_CKI_MY_MIC, UI_LISTEN_OK, false, UI_MICSRC_SYSTEM) == UI_CK_WARN));
+    assert((ui_checklist_mark(UI_CKI_COUNT, UI_LISTEN_OK, true, UI_MICSRC_AUTO) == UI_CK_UNKNOWN));
+    int32_t item = -1;
+    uint32_t bad = 0;
+    while ((item <= UI_CKI_COUNT)) {
+        int32_t st = -1;
+        while ((st <= 6)) {
+            int32_t h = 0;
+            while ((h < 2)) {
+                int32_t src = -1;
+                while ((src <= 3)) {
+                    int32_t m = ui_checklist_mark(item, st, (h == 1), src);
+                    if (((m < UI_CK_UNKNOWN) || (m > UI_CK_INFO))) {
+                        bad = (bad + 1);
+                    }
+                    if (((m == UI_CK_BAD) && (item != UI_CKI_LISTENER))) {
+                        bad = (bad + 1);
+                    }
+                    if (((m == UI_CK_INFO) && (((item == UI_CKI_LISTENER) || (item == UI_CKI_HEADPHONES)) || (item == UI_CKI_MY_MIC)))) {
+                        bad = (bad + 1);
+                    }
+                    src = (src + 1);
+                }
+                h = (h + 1);
+            }
+            st = (st + 1);
+        }
+        item = (item + 1);
+    }
+    assert((bad == 0));
+    assert((ui_mic_source(true, true, true) == UI_MICSRC_SAVED));
+    assert((ui_mic_source(true, false, true) == UI_MICSRC_AUTO));
+    assert((ui_mic_source(false, true, true) == UI_MICSRC_AUTO));
+    assert((ui_mic_source(true, false, false) == UI_MICSRC_SYSTEM));
+    assert((ui_mic_source(false, false, false) == UI_MICSRC_SYSTEM));
+    assert((ui_checklist_opens(UI_CKO_LAUNCH, true, false, false, false) == true));
+    assert((ui_checklist_opens(UI_CKO_LAUNCH, false, false, false, false) == false));
+    assert((ui_checklist_opens(UI_CKO_LAUNCH, true, true, false, false) == false));
+    assert((ui_checklist_opens(UI_CKO_LAUNCH, true, false, true, false) == false));
+    assert((ui_checklist_opens(UI_CKO_LAUNCH, true, false, false, true) == false));
+    assert((ui_checklist_opens(UI_CKO_ASKED, false, false, true, true) == true));
+    assert((ui_checklist_opens(UI_CKO_ASKED, true, true, false, false) == false));
+    assert((ui_checklist_opens(7, true, false, false, false) == false));
+    assert((UI_DEFAULT_CHECKLIST_ON_LAUNCH == 1));
+    assert((ui_checklist_can_start(UI_RUN_IDLE) == true));
+    assert((ui_checklist_can_start(UI_RUN_RUNNING) == false));
+    assert((ui_checklist_can_start(UI_RUN_STARTING) == false));
+    assert((ui_poll_reads_listeners(0, true, UI_RUN_IDLE) == true));
+    assert((ui_poll_reads_listeners(1, true, UI_RUN_IDLE) == false));
+    assert((ui_poll_reads_listeners(2, false, UI_RUN_RUNNING) == true));
+    assert((ui_poll_reads_listeners(4, false, UI_RUN_IDLE) == false));
+    assert((ui_poll_reads_listeners(4, false, UI_RUN_STARTING) == false));
+    assert((ui_listener_banner(UI_RUN_RUNNING, UI_CK_BAD, 3000, false, false) == UI_LB_SHOW));
+    assert((ui_listener_banner(UI_RUN_RUNNING, UI_CK_BAD, 2999, false, false) == UI_LB_NONE));
+    assert((ui_listener_banner(UI_RUN_RUNNING, UI_CK_BAD, -1, false, false) == UI_LB_NONE));
+    assert((ui_listener_banner(UI_RUN_RUNNING, UI_CK_BAD, 9000, true, false) == UI_LB_SHOW));
+    assert((ui_listener_banner(UI_RUN_RUNNING, UI_CK_BAD, 9000, false, true) == UI_LB_NONE));
+    assert((ui_listener_banner(UI_RUN_RUNNING, UI_CK_OK, 9000, true, false) == UI_LB_CLEAR));
+    assert((ui_listener_banner(UI_RUN_RUNNING, UI_CK_WARN, 9000, false, false) == UI_LB_NONE));
+    assert((ui_listener_banner(UI_RUN_IDLE, UI_CK_BAD, 9000, true, false) == UI_LB_CLEAR));
+    assert((ui_listener_banner(UI_RUN_STOPPING, UI_CK_BAD, 9000, false, false) == UI_LB_NONE));
+    assert((ui_listener_streak(UI_CK_BAD) == true));
+    assert((ui_listener_streak(UI_CK_WARN) == false));
+    int32_t run = -1;
+    while ((run <= 4)) {
+        int32_t mark = -1;
+        while ((mark <= 5)) {
+            int32_t f = 0;
+            while ((f < 4)) {
+                int64_t ms = -1;
+                while ((ms <= 4000)) {
+                    bool shown = ((f % 2) == 1);
+                    bool dismissed = (f >= 2);
+                    int32_t lb = ui_listener_banner(run, mark, ms, shown, dismissed);
+                    bool red = ((run == UI_RUN_RUNNING) && (mark == UI_CK_BAD));
+                    if (((lb == UI_LB_SHOW) && (((red == false) || dismissed) || (ms < UI_LISTENER_GRACE_MS)))) {
+                        bad = (bad + 1);
+                    }
+                    if (((lb == UI_LB_CLEAR) && (red || (shown == false)))) {
+                        bad = (bad + 1);
+                    }
+                    if ((((red == false) && shown) && (lb != UI_LB_CLEAR))) {
+                        bad = (bad + 1);
+                    }
+                    ms = (ms + 1000);
+                }
+                f = (f + 1);
+            }
+            mark = (mark + 1);
+        }
+        run = (run + 1);
+    }
+    assert((bad == 0));
+    assert((ui_mic_migration(false, true) == UI_MIGRATE_CLEAR));
+    assert((ui_mic_migration(false, false) == UI_MIGRATE_MARK));
+    assert((ui_mic_migration(true, true) == UI_MIGRATE_NONE));
+    assert((ui_mic_migration(true, false) == UI_MIGRATE_NONE));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1196,7 +1446,8 @@ int main(void) {
     test_ui_wizard_and_overlay();
     test_ui_moved_rules();
     test_ui_mic_light_gate();
-    printf("All %d tests passed.\n", 5);
+    test_ui_checklist();
+    printf("All %d tests passed.\n", 6);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

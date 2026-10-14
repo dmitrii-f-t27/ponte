@@ -56,6 +56,15 @@ public final class CoreAudioDeviceCatalog: AudioDeviceCatalog {
         return i >= 0 ? all[i] : nil
     }
 
+    /// Ponte's microphone for «Автоматически» (AudioRules.pickAutoMicIndex): the headset's microphone when
+    /// `listening` (the output the owner hears) is a headset, else the built-in microphone.
+    public func autoMic(in all: [AudioDevice], listening: AudioDevice?) -> AudioDevice? {
+        let output = listening.flatMap { l in all.firstIndex { $0.id == l.id } } ?? -1
+        let i = AudioRules.pickAutoMicIndex(names: all.map(\.name), kinds: all.map(kind(of:)),
+                                            inputChannels: all.map(\.inputChannels), outputIndex: output)
+        return i >= 0 ? all[i] : nil
+    }
+
     /// Suggested output for the Russian voice in the owner's ears (never BlackHole).
     public func suggestedListenOutput() -> AudioDevice? {
         let all = devices()

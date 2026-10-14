@@ -81,6 +81,8 @@ struct Banner: Identifiable, Equatable {
         case accessibility
         /// System Settings → Privacy & Security pane (anchor such as "Privacy_ScreenCapture").
         case privacySettings(String)
+        /// The checklist «Перед звонком».
+        case openChecklist
     }
 
     let id = UUID()
@@ -126,6 +128,57 @@ struct SilenceWarning {
     }
 }
 
+/// The call's red banner when the call app does not listen to BlackHole, or listens to a real microphone
+/// (AppRules.listenerBanner: the checklist's listener row is red during a call). This keeps only what the rule
+/// needs: since when the row is red, which banner on screen is this one, and whether the owner closed it.
+struct ListenerWarning {
+    private var bannerID: UUID?
+    private var dismissed = false
+    private var badSince: Date?
+
+    /// A new call.
+    mutating func reset() {
+        bannerID = nil
+        dismissed = false
+        badSince = nil
+    }
+
+    /// The banner to show after a poll; `mark` is the listener row's AppRules.CK_*, `text` its red text.
+    mutating func banner(after current: Banner?, runState: Int32, mark: Int32, now: Date, text: () -> String) -> Banner? {
+        if let id = bannerID, current?.id != id {
+            // Gone from the screen: closed by the owner, or replaced by another banner (which it takes over again).
+            if current == nil { dismissed = true }
+            bannerID = nil
+        }
+        if AppRules.listenerStreak(mark: mark) {
+            if badSince == nil { badSince = now }
+        } else {
+            badSince = nil
+            dismissed = false
+        }
+        let msBad = badSince.map { millis(now.timeIntervalSince($0)) } ?? -1
+        switch AppRules.listenerBanner(runState: runState, mark: mark, msBad: msBad, shown: bannerID != nil, dismissed: dismissed) {
+        case AppRules.LB_SHOW:
+            let wanted = text()
+            if bannerID != nil, current?.text == wanted { return current }
+            let warning = Banner(kind: .error, text: wanted, action: .openChecklist, actionTitle: "Перед звонком")
+            bannerID = warning.id
+            return warning
+        case AppRules.LB_CLEAR:
+            bannerID = nil
+            return nil
+        default:
+            return current
+        }
+    }
+}
+
+/// Which sheet the main window shows (one at a time).
+enum MainSheet: Identifiable {
+    case wizard, checklist
+    var id: Self { self }
+}
+
 /// The app state: settings, both lanes, status row, transcript. Decisions come from AppRules.
 @MainActor @Observable
 final class AppModel {
@@ -149,6 +202,7 @@ final class AppModel {
     @ObservationIgnored private var outgoingMic: MicSource?
     @ObservationIgnored private var terminationSignal: DispatchSourceSignal?
     @ObservationIgnored private var silenceWarning = SilenceWarning()
+    @ObservationIgnored private var listenerWarning = ListenerWarning()
 
     // MARK: Catalog snapshots
 
@@ -160,6 +214,12 @@ final class AppModel {
     /// The owner listens on a loudspeaker (built-in or display speakers, AirPlay):
     /// AudioRules.echoRisk of the listening device is echoSpeaker. Shows «наденьте наушники».
     var speakerWarning = false
+    /// The listening output is headphones or a headset (AudioRules.isHeadphonesLike).
+    var headphonesLike = false
+    /// Ponte's microphone when the settings say «Автоматически» (AudioRules.pickAutoMicIndex).
+    var autoMicDevice: AudioDevice?
+    /// Who listens to BlackHole (AudioInputReaders.check), re-read while the checklist is open or a call runs.
+    var listener = ListenerCheck.unknown
 
     // MARK: Settings (persisted)
 
@@ -215,6 +275,8 @@ final class AppModel {
         }
     }
     var setupCompleted: Bool { didSet { defaults.set(setupCompleted, forKey: PrefKey.setupCompleted) } }
+    /// «Показывать при запуске» of the checklist «Перед звонком».
+    var checklistOnLaunch: Bool { didSet { defaults.set(checklistOnLaunch, forKey: PrefKey.checklistOnLaunch) } }
 
     // MARK: Session
 
@@ -264,12 +326,36 @@ final class AppModel {
 
     var showWizard = false
     var wizardStep: WizardStep = .permissions
+    /// The checklist «Перед звонком».
+    var showChecklist = false
+
+    /// The one sheet on screen: the wizard wins (AppRules.checklistOpens never opens the checklist over it).
+    var sheet: MainSheet? {
+        get { showWizard ? .wizard : showChecklist ? .checklist : nil }
+        set {
+            showWizard = newValue == .wizard
+            showChecklist = newValue == .checklist
+        }
+    }
 
     init(launch: LaunchOptions = .current) {
         self.launch = launch
         let d = UserDefaults.standard
         sourceKey = d.string(forKey: PrefKey.source) ?? AppRules.SOURCE_SYSTEM_KEY
-        micUID = d.string(forKey: PrefKey.micUID) ?? ""
+        var storedMic = d.string(forKey: PrefKey.micUID) ?? ""
+        // Before «Автоматически» existed the stored microphone was set by the lead, not the owner: once, it
+        // becomes automatic (ui_mic_migration).
+        switch AppRules.micMigration(migrated: d.bool(forKey: PrefKey.micAutoMigrated), hasSetting: !storedMic.isEmpty) {
+        case AppRules.MIGRATE_CLEAR:
+            storedMic = ""
+            d.removeObject(forKey: PrefKey.micUID)
+            d.set(true, forKey: PrefKey.micAutoMigrated)
+        case AppRules.MIGRATE_MARK:
+            d.set(true, forKey: PrefKey.micAutoMigrated)
+        default:
+            break
+        }
+        micUID = storedMic
         headphonesUID = d.string(forKey: PrefKey.headphonesUID) ?? ""
         callOutputUID = d.string(forKey: PrefKey.callOutputUID) ?? ""
         voicePT = d.string(forKey: PrefKey.voicePT) ?? ""
@@ -289,13 +375,19 @@ final class AppModel {
         overlayVisible = d.object(forKey: PrefKey.overlayVisible) == nil ? AppRules.DEFAULT_OVERLAY_VISIBLE
             : d.bool(forKey: PrefKey.overlayVisible)
         setupCompleted = d.bool(forKey: PrefKey.setupCompleted)
+        checklistOnLaunch = d.object(forKey: PrefKey.checklistOnLaunch) == nil ? AppRules.DEFAULT_CHECKLIST_ON_LAUNCH
+            : d.bool(forKey: PrefKey.checklistOnLaunch)
         // Launch arguments for demos, screenshots and end-to-end checks (LaunchOptions):
         //   open dist/Ponte.app --args -PonteWizardStep 3 -PonteAutostart YES
         showWizard = AppRules.wizardShowOnLaunchInMode(setupCompleted: setupCompleted, forcedStep: launch.wizardStep,
                                                        testMode: launch.isTestMode)
         if let step = WizardStep(code: launch.wizardStep) { wizardStep = step }
+        showChecklist = AppRules.checklistOpens(reason: AppRules.CKO_LAUNCH, showOnLaunch: checklistOnLaunch,
+                                                wizardShown: showWizard, testMode: launch.isTestMode,
+                                                autostart: launch.autostart)
         ptt.key = pttKey
         refreshCatalogs()
+        if showChecklist { refreshListener() }
     }
 
     /// Called when the main window appears (windows can be created). Runs once.
@@ -351,7 +443,20 @@ final class AppModel {
     var isRunning: Bool { runState == .running }
     var incomingLines: [ConversationLine] { lines.filter { $0.direction == .incoming } }
     var outgoingLines: [ConversationLine] { lines.filter { $0.direction == .outgoing } }
-    var micDevice: AudioDevice? { devices.first { $0.uid == micUID && $0.inputChannels > 0 } }
+    /// The microphone chosen in the settings, if it is connected.
+    var savedMicDevice: AudioDevice? { devices.first { $0.uid == micUID && $0.inputChannels > 0 } }
+    /// AppRules.MICSRC_*: the setting, the automatic pick, or the system default (no microphone found).
+    var micSource: Int32 {
+        AppRules.micSource(hasSetting: !micUID.isEmpty, found: savedMicDevice != nil, hasAuto: autoMicDevice != nil)
+    }
+    /// Ponte's microphone (nil: the system default input).
+    var micDevice: AudioDevice? {
+        switch micSource {
+        case AppRules.MICSRC_SAVED: savedMicDevice
+        case AppRules.MICSRC_AUTO: autoMicDevice
+        default: nil
+        }
+    }
     var headphonesDevice: AudioDevice? { devices.first { $0.uid == headphonesUID && $0.outputChannels > 0 } }
     var inputDevices: [AudioDevice] { devices.filter { $0.inputChannels > 0 && !AudioRules.isBlackHole(name: $0.name) } }
     var outputDevices: [AudioDevice] { devices.filter { $0.outputChannels > 0 } }
@@ -359,8 +464,15 @@ final class AppModel {
     /// Where the user hears things: chosen headphones or the system output.
     var listeningDevice: AudioDevice? { headphonesDevice ?? defaultOutput }
 
+    /// The listening output decides the headphone warning, the checklist's headphones row and the automatic microphone.
     private func refreshSpeakerWarning() {
-        speakerWarning = listeningDevice.map { AudioRules.needsHeadphones(kind: deviceCatalog.kind(of: $0)) } ?? false
+        let kind = listeningDevice.map { deviceCatalog.kind(of: $0) }
+        let warning = kind.map { AudioRules.needsHeadphones(kind: $0) } ?? false
+        if warning != speakerWarning { speakerWarning = warning }
+        let like = kind.map { AudioRules.isHeadphonesLike(kind: $0) } ?? false
+        if like != headphonesLike { headphonesLike = like }
+        let auto = deviceCatalog.autoMic(in: devices, listening: listeningDevice)
+        if auto != autoMicDevice { autoMicDevice = auto }
     }
 
     var source: SourceChoice { SourceChoice(key: sourceKey) }
@@ -465,15 +577,67 @@ final class AppModel {
     // MARK: Catalogs
 
     func refreshCatalogs() {
-        devices = deviceCatalog.devices()
-        defaultOutput = deviceCatalog.defaultOutput()
+        refreshDevices()
         audioApps = appCatalog.apps()
+    }
+
+    /// Devices, the default output, the call output, the headphone warning and the automatic microphone.
+    private func refreshDevices() {
+        let listed = deviceCatalog.devices()
+        if listed != devices { devices = listed }
+        let output = deviceCatalog.defaultOutput()
+        if output != defaultOutput { defaultOutput = output }
         let chosen = devices.first { $0.uid == callOutputUID }
+        let callOutput: AudioDevice?
         switch AppRules.deviceChoice(hasSetting: !callOutputUID.isEmpty, found: chosen != nil) {
-        case AppRules.DEV_SAVED: blackHoleDevice = chosen
-        default: blackHoleDevice = BlackHoleCheck.find(in: deviceCatalog)
+        case AppRules.DEV_SAVED: callOutput = chosen
+        default: callOutput = BlackHoleCheck.find(in: deviceCatalog)
         }
+        if callOutput != blackHoleDevice { blackHoleDevice = callOutput }
         refreshSpeakerWarning()
+    }
+
+    // MARK: Checklist «Перед звонком»
+
+    /// Who listens to BlackHole now, for the chosen source (AudioInputReaders.check).
+    func refreshListener() {
+        var target: String?
+        if case .app(let bundleID) = source { target = bundleID }
+        let present = AudioRules.pickBlackHoleIndex(names: devices.map(\.name), outputChannels: devices.map(\.outputChannels)) >= 0
+        let check = AudioInputReaders.check(AudioInputReaders.snapshot(), targetBundleID: target, blackHolePresent: present)
+        if check != listener { listener = check }
+    }
+
+    /// What the checklist shows.
+    var checklistFacts: ChecklistFacts {
+        ChecklistFacts(listenStatus: Int32(listener.status), listenAppName: listener.reader?.appName,
+                       listenDeviceName: listener.reader?.device.name,
+                       listenDeviceKind: listener.reader?.deviceKind ?? AudioRules.kindUnknown,
+                       listeningName: listeningDevice?.name, headphonesLike: headphonesLike,
+                       micName: micDevice?.name, micSource: micSource, pttKeyShort: pttKey.short)
+    }
+
+    var checklistItems: [ChecklistItem] { Checklist.items(checklistFacts) }
+
+    /// Opens the checklist (toolbar, menu, banner); never over the wizard.
+    func openChecklist() {
+        guard AppRules.checklistOpens(reason: AppRules.CKO_ASKED, showOnLaunch: checklistOnLaunch, wizardShown: showWizard,
+                                      testMode: launch.isTestMode, autostart: launch.autostart) else { return }
+        refreshCatalogs()
+        refreshListener()
+        showChecklist = true
+    }
+
+    /// «Начать»: closes the checklist and starts translation (only from idle).
+    func startFromChecklist() {
+        showChecklist = false
+        if AppRules.checklistCanStart(runState: runState.code) { toggleRun() }
+    }
+
+    /// Opens the setup wizard on a step, in place of the checklist if it is open.
+    func openWizard(_ step: WizardStep) {
+        wizardStep = step
+        sheet = .wizard
     }
 
     private func startPolling() {
@@ -484,6 +648,12 @@ final class AppModel {
                 guard let self else { return }
                 self.pollAudioStats()
                 if AppRules.pollRefreshesCatalogs(tick: tick) { self.refreshCatalogs() }
+                if AppRules.pollReadsListeners(tick: tick, sheetOpen: self.showChecklist, runState: self.runState.code) {
+                    // The open checklist follows plugged headphones within a second, too.
+                    if self.showChecklist { self.refreshDevices() }
+                    self.refreshListener()
+                }
+                self.pollListenerBanner()
                 tick += 1
                 try? await Task.sleep(for: .milliseconds(AppRules.POLL_INTERVAL_MS))
             }
@@ -513,6 +683,16 @@ final class AppModel {
         }
         // The silence banner follows the source light: it goes as soon as a non-zero sample turns the light OK.
         let next = silenceWarning.banner(after: banner, sourceLight: sourceCode, sourceName: activeSourceName)
+        if next != banner { banner = next }
+    }
+
+    /// The red banner of the listener row during a call (ListenerWarning).
+    private func pollListenerBanner() {
+        let mark = AppRules.listenerMark(listenStatus: Int32(listener.status))
+        let facts = checklistFacts
+        let next = listenerWarning.banner(after: banner, runState: runState.code, mark: mark, now: Date()) {
+            Checklist.listenerText(facts)
+        }
         if next != banner { banner = next }
     }
 
@@ -619,7 +799,9 @@ final class AppModel {
         lanesFailed = 0
         translatorsFailed = 0
         silenceWarning.reset()
+        listenerWarning.reset()
         sourceTapDetail = nil
+        refreshListener()
         pollAudioStats()
 
         // The microphone prompt comes before the engine starts: MicSource refuses an undecided permission.
@@ -924,14 +1106,15 @@ final class AppModel {
     func perform(_ action: Banner.Action) {
         switch action {
         case .openWizard(let step):
-            wizardStep = step
-            showWizard = true
+            openWizard(step)
         case .reveal(let url):
             NSWorkspace.shared.activateFileViewerSelecting([url])
         case .accessibility:
             requestAccessibility()
         case .privacySettings(let anchor):
             Permissions.openPrivacySettings(anchor)
+        case .openChecklist:
+            openChecklist()
         }
     }
 

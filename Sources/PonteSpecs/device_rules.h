@@ -70,43 +70,44 @@
 #define DV_CASE_STEP 32
 static const int64_t DV_LISTEN_PRIORITY[4] = { 2, 5, 6, 1 };
 #define DV_CALL_APPS 9
-#define DV_ROW_FIRST_APP 6
-#define DV_ROW_FIRST_LABEL 15
+#define DV_ROW_FIRST_APP 7
+#define DV_ROW_FIRST_LABEL 16
 #define DV_COMPANIONS 2
-#define DV_ROW_FIRST_COMPANION_TARGET 24
-#define DV_ROW_FIRST_COMPANION_PROCESS 26
+#define DV_ROW_FIRST_COMPANION_TARGET 25
+#define DV_ROW_FIRST_COMPANION_PROCESS 27
 #define DV_ROW_PONTE_PREFIX 0
 #define DV_ROW_BLACKHOLE 1
 #define DV_ROW_HEADPHONE 2
 #define DV_ROW_TWO_CH 3
 #define DV_ROW_APP_SUFFIX 4
 #define DV_ROW_PID_PREFIX 5
-#define DV_ROW_APP_0 6
-#define DV_ROW_APP_1 7
-#define DV_ROW_APP_2 8
-#define DV_ROW_APP_3 9
-#define DV_ROW_APP_4 10
-#define DV_ROW_APP_5 11
-#define DV_ROW_APP_6 12
-#define DV_ROW_APP_7 13
-#define DV_ROW_APP_8 14
-#define DV_ROW_LABEL_0 15
-#define DV_ROW_LABEL_1 16
-#define DV_ROW_LABEL_2 17
-#define DV_ROW_LABEL_3 18
-#define DV_ROW_LABEL_4 19
-#define DV_ROW_LABEL_5 20
-#define DV_ROW_LABEL_6 21
-#define DV_ROW_LABEL_7 22
-#define DV_ROW_LABEL_8 23
-#define DV_ROW_COMPANION_TARGET_0 24
-#define DV_ROW_COMPANION_TARGET_1 25
-#define DV_ROW_COMPANION_PROCESS_0 26
-#define DV_ROW_COMPANION_PROCESS_1 27
-#define DV_ROW_COUNT 28
-static const uint8_t DV_ROW_TEXT[389] = { 97, 105, 46, 112, 111, 110, 116, 101, 46, 116, 97, 112, 46, 98, 108, 97, 99, 107, 104, 111, 108, 101, 104, 101, 97, 100, 112, 104, 111, 110, 101, 50, 99, 104, 46, 97, 112, 112, 112, 105, 100, 46, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 70, 97, 99, 101, 84, 105, 109, 101, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 83, 97, 102, 97, 114, 105, 99, 111, 109, 46, 98, 114, 111, 119, 115, 101, 114, 111, 115, 46, 66, 114, 111, 119, 115, 101, 114, 67, 108, 97, 119, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 46, 67, 104, 114, 111, 109, 101, 99, 111, 109, 46, 109, 105, 99, 114, 111, 115, 111, 102, 116, 46, 116, 101, 97, 109, 115, 50, 110, 101, 116, 46, 119, 104, 97, 116, 115, 97, 112, 112, 46, 87, 104, 97, 116, 115, 65, 112, 112, 111, 114, 103, 46, 116, 101, 108, 101, 103, 114, 97, 109, 46, 100, 101, 115, 107, 116, 111, 112, 114, 117, 46, 107, 101, 101, 112, 99, 111, 100, 101, 114, 46, 84, 101, 108, 101, 103, 114, 97, 109, 117, 115, 46, 122, 111, 111, 109, 46, 120, 111, 115, 70, 97, 99, 101, 84, 105, 109, 101, 83, 97, 102, 97, 114, 105, 32, 40, 77, 101, 101, 116, 41, 66, 114, 111, 119, 115, 101, 114, 79, 83, 32, 40, 77, 101, 101, 116, 41, 67, 104, 114, 111, 109, 101, 32, 40, 77, 101, 101, 116, 41, 84, 101, 97, 109, 115, 87, 104, 97, 116, 115, 65, 112, 112, 84, 101, 108, 101, 103, 114, 97, 109, 32, 68, 101, 115, 107, 116, 111, 112, 84, 101, 108, 101, 103, 114, 97, 109, 90, 111, 111, 109, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 70, 97, 99, 101, 84, 105, 109, 101, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 70, 97, 99, 101, 84, 105, 109, 101, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 97, 118, 99, 111, 110, 102, 101, 114, 101, 110, 99, 101, 100, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 84, 101, 108, 101, 112, 104, 111, 110, 121, 85, 116, 105, 108, 105, 116, 105, 101, 115 };
-static const uint32_t DV_ROW_OFFSETS[28] = { 0, 13, 22, 31, 34, 38, 42, 60, 76, 101, 118, 138, 159, 179, 200, 211, 219, 232, 248, 261, 266, 274, 290, 298, 302, 320, 338, 361 };
-static const uint32_t DV_ROW_LENGTHS[28] = { 13, 9, 9, 3, 4, 4, 18, 16, 25, 17, 20, 21, 20, 21, 11, 8, 13, 16, 13, 5, 8, 16, 8, 4, 18, 18, 23, 28 };
+#define DV_ROW_PONTE_ID 6
+#define DV_ROW_APP_0 7
+#define DV_ROW_APP_1 8
+#define DV_ROW_APP_2 9
+#define DV_ROW_APP_3 10
+#define DV_ROW_APP_4 11
+#define DV_ROW_APP_5 12
+#define DV_ROW_APP_6 13
+#define DV_ROW_APP_7 14
+#define DV_ROW_APP_8 15
+#define DV_ROW_LABEL_0 16
+#define DV_ROW_LABEL_1 17
+#define DV_ROW_LABEL_2 18
+#define DV_ROW_LABEL_3 19
+#define DV_ROW_LABEL_4 20
+#define DV_ROW_LABEL_5 21
+#define DV_ROW_LABEL_6 22
+#define DV_ROW_LABEL_7 23
+#define DV_ROW_LABEL_8 24
+#define DV_ROW_COMPANION_TARGET_0 25
+#define DV_ROW_COMPANION_TARGET_1 26
+#define DV_ROW_COMPANION_PROCESS_0 27
+#define DV_ROW_COMPANION_PROCESS_1 28
+#define DV_ROW_COUNT 29
+static const uint8_t DV_ROW_TEXT[409] = { 97, 105, 46, 112, 111, 110, 116, 101, 46, 116, 97, 112, 46, 98, 108, 97, 99, 107, 104, 111, 108, 101, 104, 101, 97, 100, 112, 104, 111, 110, 101, 50, 99, 104, 46, 97, 112, 112, 112, 105, 100, 46, 97, 112, 112, 46, 112, 111, 110, 116, 101, 46, 116, 114, 97, 110, 115, 108, 97, 116, 111, 114, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 70, 97, 99, 101, 84, 105, 109, 101, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 83, 97, 102, 97, 114, 105, 99, 111, 109, 46, 98, 114, 111, 119, 115, 101, 114, 111, 115, 46, 66, 114, 111, 119, 115, 101, 114, 67, 108, 97, 119, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 46, 67, 104, 114, 111, 109, 101, 99, 111, 109, 46, 109, 105, 99, 114, 111, 115, 111, 102, 116, 46, 116, 101, 97, 109, 115, 50, 110, 101, 116, 46, 119, 104, 97, 116, 115, 97, 112, 112, 46, 87, 104, 97, 116, 115, 65, 112, 112, 111, 114, 103, 46, 116, 101, 108, 101, 103, 114, 97, 109, 46, 100, 101, 115, 107, 116, 111, 112, 114, 117, 46, 107, 101, 101, 112, 99, 111, 100, 101, 114, 46, 84, 101, 108, 101, 103, 114, 97, 109, 117, 115, 46, 122, 111, 111, 109, 46, 120, 111, 115, 70, 97, 99, 101, 84, 105, 109, 101, 83, 97, 102, 97, 114, 105, 32, 40, 77, 101, 101, 116, 41, 66, 114, 111, 119, 115, 101, 114, 79, 83, 32, 40, 77, 101, 101, 116, 41, 67, 104, 114, 111, 109, 101, 32, 40, 77, 101, 101, 116, 41, 84, 101, 97, 109, 115, 87, 104, 97, 116, 115, 65, 112, 112, 84, 101, 108, 101, 103, 114, 97, 109, 32, 68, 101, 115, 107, 116, 111, 112, 84, 101, 108, 101, 103, 114, 97, 109, 90, 111, 111, 109, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 70, 97, 99, 101, 84, 105, 109, 101, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 70, 97, 99, 101, 84, 105, 109, 101, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 97, 118, 99, 111, 110, 102, 101, 114, 101, 110, 99, 101, 100, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 84, 101, 108, 101, 112, 104, 111, 110, 121, 85, 116, 105, 108, 105, 116, 105, 101, 115 };
+static const uint32_t DV_ROW_OFFSETS[29] = { 0, 13, 22, 31, 34, 38, 42, 62, 80, 96, 121, 138, 158, 179, 199, 220, 231, 239, 252, 268, 281, 286, 294, 310, 318, 322, 340, 358, 381 };
+static const uint32_t DV_ROW_LENGTHS[29] = { 13, 9, 9, 3, 4, 4, 20, 18, 16, 25, 17, 20, 21, 20, 21, 11, 8, 13, 16, 13, 5, 8, 16, 8, 4, 18, 18, 23, 28 };
 #define DV_FX_MBP_SPEAKERS 0
 #define DV_FX_UID_SPEAKER 1
 #define DV_FX_EXT_HEADPHONES 2
@@ -176,10 +177,14 @@ static const uint32_t DV_ROW_LENGTHS[28] = { 13, 9, 9, 3, 4, 4, 18, 16, 25, 17, 
 #define DV_FX_ZOOM_NAME 66
 #define DV_FX_MUSIC_NAME 67
 #define DV_FX_NOTES_CAP 68
-#define DV_FX_COUNT 69
-static const uint8_t DV_FX_TEXT[1219] = { 77, 97, 99, 66, 111, 111, 107, 32, 80, 114, 111, 32, 83, 112, 101, 97, 107, 101, 114, 115, 66, 117, 105, 108, 116, 73, 110, 83, 112, 101, 97, 107, 101, 114, 68, 101, 118, 105, 99, 101, 69, 120, 116, 101, 114, 110, 97, 108, 32, 72, 101, 97, 100, 112, 104, 111, 110, 101, 115, 66, 117, 105, 108, 116, 73, 110, 72, 101, 97, 100, 112, 104, 111, 110, 101, 79, 117, 116, 112, 117, 116, 68, 101, 118, 105, 99, 101, 77, 97, 99, 66, 111, 111, 107, 32, 80, 114, 111, 32, 77, 105, 99, 114, 111, 112, 104, 111, 110, 101, 66, 117, 105, 108, 116, 73, 110, 77, 105, 99, 114, 111, 112, 104, 111, 110, 101, 68, 101, 118, 105, 99, 101, 79, 100, 100, 120, 66, 108, 97, 99, 107, 72, 111, 108, 101, 32, 50, 99, 104, 66, 108, 97, 99, 107, 72, 111, 108, 101, 50, 99, 104, 95, 85, 73, 68, 80, 111, 110, 116, 101, 32, 84, 97, 112, 97, 105, 46, 112, 111, 110, 116, 101, 46, 116, 97, 112, 46, 49, 50, 51, 83, 54, 45, 76, 50, 57, 54, 67, 49, 52, 50, 57, 65, 105, 114, 80, 111, 100, 115, 97, 85, 83, 66, 32, 65, 117, 100, 105, 111, 76, 71, 83, 116, 117, 100, 105, 111, 32, 68, 105, 115, 112, 108, 97, 121, 84, 86, 77, 117, 108, 116, 105, 45, 79, 117, 116, 112, 117, 116, 90, 111, 111, 109, 65, 117, 100, 105, 111, 68, 101, 118, 105, 99, 101, 105, 80, 104, 111, 110, 101, 32, 77, 105, 99, 114, 111, 112, 104, 111, 110, 101, 73, 110, 116, 101, 114, 102, 97, 99, 101, 63, 98, 108, 97, 99, 107, 104, 111, 108, 101, 32, 49, 54, 99, 104, 77, 121, 32, 66, 76, 65, 67, 75, 72, 79, 76, 69, 66, 108, 97, 99, 107, 32, 72, 111, 108, 101, 97, 105, 46, 112, 111, 110, 116, 101, 46, 116, 97, 97, 105, 46, 112, 111, 110, 116, 101, 46, 116, 97, 112, 46, 65, 66, 67, 112, 114, 111, 32, 115, 112, 97, 98, 97, 98, 99, 65, 98, 90, 45, 195, 167, 97, 98, 122, 45, 195, 167, 66, 108, 97, 99, 107, 72, 111, 108, 101, 32, 49, 54, 99, 104, 50, 57, 54, 67, 109, 105, 99, 114, 111, 112, 104, 111, 110, 101, 109, 97, 99, 98, 111, 111, 107, 66, 108, 97, 99, 107, 72, 111, 108, 101, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 46, 67, 104, 114, 111, 109, 101, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 83, 97, 102, 97, 114, 105, 99, 111, 109, 46, 98, 114, 111, 119, 115, 101, 114, 111, 115, 46, 66, 114, 111, 119, 115, 101, 114, 67, 108, 97, 119, 99, 111, 109, 46, 98, 114, 111, 119, 115, 101, 114, 111, 115, 46, 66, 114, 111, 119, 115, 101, 114, 67, 108, 97, 119, 46, 104, 101, 108, 112, 101, 114, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 46, 67, 104, 114, 111, 109, 101, 46, 104, 101, 108, 112, 101, 114, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 46, 67, 104, 114, 111, 109, 101, 46, 104, 101, 108, 112, 101, 114, 46, 82, 101, 110, 100, 101, 114, 101, 114, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 46, 67, 104, 114, 111, 109, 101, 88, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 87, 101, 98, 75, 105, 116, 46, 71, 80, 85, 47, 65, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 115, 47, 71, 111, 111, 103, 108, 101, 32, 67, 104, 114, 111, 109, 101, 46, 97, 112, 112, 47, 67, 111, 110, 116, 101, 110, 116, 115, 47, 70, 114, 97, 109, 101, 119, 111, 114, 107, 115, 47, 71, 111, 111, 103, 108, 101, 32, 67, 104, 114, 111, 109, 101, 32, 70, 114, 97, 109, 101, 119, 111, 114, 107, 46, 102, 114, 97, 109, 101, 119, 111, 114, 107, 47, 86, 101, 114, 115, 105, 111, 110, 115, 47, 49, 51, 49, 47, 72, 101, 108, 112, 101, 114, 115, 47, 71, 111, 111, 103, 108, 101, 32, 67, 104, 114, 111, 109, 101, 32, 72, 101, 108, 112, 101, 114, 46, 97, 112, 112, 47, 67, 111, 110, 116, 101, 110, 116, 115, 47, 77, 97, 99, 79, 83, 47, 71, 111, 111, 103, 108, 101, 32, 67, 104, 114, 111, 109, 101, 32, 72, 101, 108, 112, 101, 114, 47, 65, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 115, 47, 71, 111, 111, 103, 108, 101, 32, 67, 104, 114, 111, 109, 101, 46, 97, 112, 112, 47, 65, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 115, 47, 122, 111, 111, 109, 46, 117, 115, 46, 97, 112, 112, 47, 65, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 115, 47, 84, 195, 169, 108, 195, 169, 112, 104, 111, 110, 101, 46, 97, 112, 112, 47, 67, 111, 110, 116, 101, 110, 116, 115, 47, 77, 97, 99, 79, 83, 47, 120, 47, 65, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 115, 47, 84, 195, 169, 108, 195, 169, 112, 104, 111, 110, 101, 46, 97, 112, 112, 47, 117, 115, 114, 47, 98, 105, 110, 47, 97, 102, 112, 108, 97, 121, 47, 65, 112, 112, 115, 47, 77, 121, 46, 97, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 47, 120, 47, 120, 47, 46, 97, 112, 112, 47, 121, 47, 83, 121, 115, 116, 101, 109, 47, 76, 105, 98, 114, 97, 114, 121, 47, 70, 114, 97, 109, 101, 119, 111, 114, 107, 115, 47, 87, 101, 98, 75, 105, 116, 46, 102, 114, 97, 109, 101, 119, 111, 114, 107, 47, 86, 101, 114, 115, 105, 111, 110, 115, 47, 65, 47, 88, 80, 67, 83, 101, 114, 118, 105, 99, 101, 115, 47, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 87, 101, 98, 75, 105, 116, 46, 71, 80, 85, 46, 120, 112, 99, 47, 67, 111, 110, 116, 101, 110, 116, 115, 47, 77, 97, 99, 79, 83, 47, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 87, 101, 98, 75, 105, 116, 46, 71, 80, 85, 117, 115, 46, 122, 111, 111, 109, 46, 120, 111, 115, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 84, 101, 114, 109, 105, 110, 97, 108, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 97, 118, 99, 111, 110, 102, 101, 114, 101, 110, 99, 101, 100, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 70, 97, 99, 101, 84, 105, 109, 101, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 84, 101, 108, 101, 112, 104, 111, 110, 121, 85, 116, 105, 108, 105, 116, 105, 101, 115, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 77, 117, 115, 105, 99, 110, 111, 116, 101, 115, 90, 111, 111, 109, 77, 117, 115, 105, 99, 78, 111, 116, 101, 115 };
-static const uint32_t DV_FX_OFFSETS[69] = { 0, 20, 40, 59, 87, 109, 132, 135, 136, 149, 165, 174, 190, 194, 202, 209, 210, 219, 221, 235, 237, 249, 264, 281, 290, 291, 305, 317, 327, 338, 354, 360, 360, 362, 365, 371, 377, 391, 395, 405, 412, 421, 438, 448, 464, 489, 521, 545, 578, 596, 616, 783, 814, 839, 885, 914, 929, 951, 960, 1087, 1098, 1116, 1139, 1157, 1185, 1200, 1205, 1209, 1214 };
-static const uint32_t DV_FX_LENGTHS[69] = { 20, 20, 19, 28, 22, 23, 3, 1, 13, 16, 9, 16, 4, 8, 7, 1, 9, 2, 14, 2, 12, 15, 17, 9, 1, 14, 12, 10, 11, 16, 6, 0, 2, 3, 6, 6, 14, 4, 10, 7, 9, 17, 10, 16, 25, 32, 24, 33, 18, 20, 167, 31, 25, 46, 29, 15, 22, 9, 127, 11, 18, 23, 18, 28, 15, 5, 4, 5, 5 };
+#define DV_FX_PONTE_ID 69
+#define DV_FX_AIRPODS_PRO 70
+#define DV_FX_EXT_MIC 71
+#define DV_FX_JABRA 72
+#define DV_FX_COUNT 73
+static const uint8_t DV_FX_TEXT[1281] = { 77, 97, 99, 66, 111, 111, 107, 32, 80, 114, 111, 32, 83, 112, 101, 97, 107, 101, 114, 115, 66, 117, 105, 108, 116, 73, 110, 83, 112, 101, 97, 107, 101, 114, 68, 101, 118, 105, 99, 101, 69, 120, 116, 101, 114, 110, 97, 108, 32, 72, 101, 97, 100, 112, 104, 111, 110, 101, 115, 66, 117, 105, 108, 116, 73, 110, 72, 101, 97, 100, 112, 104, 111, 110, 101, 79, 117, 116, 112, 117, 116, 68, 101, 118, 105, 99, 101, 77, 97, 99, 66, 111, 111, 107, 32, 80, 114, 111, 32, 77, 105, 99, 114, 111, 112, 104, 111, 110, 101, 66, 117, 105, 108, 116, 73, 110, 77, 105, 99, 114, 111, 112, 104, 111, 110, 101, 68, 101, 118, 105, 99, 101, 79, 100, 100, 120, 66, 108, 97, 99, 107, 72, 111, 108, 101, 32, 50, 99, 104, 66, 108, 97, 99, 107, 72, 111, 108, 101, 50, 99, 104, 95, 85, 73, 68, 80, 111, 110, 116, 101, 32, 84, 97, 112, 97, 105, 46, 112, 111, 110, 116, 101, 46, 116, 97, 112, 46, 49, 50, 51, 83, 54, 45, 76, 50, 57, 54, 67, 49, 52, 50, 57, 65, 105, 114, 80, 111, 100, 115, 97, 85, 83, 66, 32, 65, 117, 100, 105, 111, 76, 71, 83, 116, 117, 100, 105, 111, 32, 68, 105, 115, 112, 108, 97, 121, 84, 86, 77, 117, 108, 116, 105, 45, 79, 117, 116, 112, 117, 116, 90, 111, 111, 109, 65, 117, 100, 105, 111, 68, 101, 118, 105, 99, 101, 105, 80, 104, 111, 110, 101, 32, 77, 105, 99, 114, 111, 112, 104, 111, 110, 101, 73, 110, 116, 101, 114, 102, 97, 99, 101, 63, 98, 108, 97, 99, 107, 104, 111, 108, 101, 32, 49, 54, 99, 104, 77, 121, 32, 66, 76, 65, 67, 75, 72, 79, 76, 69, 66, 108, 97, 99, 107, 32, 72, 111, 108, 101, 97, 105, 46, 112, 111, 110, 116, 101, 46, 116, 97, 97, 105, 46, 112, 111, 110, 116, 101, 46, 116, 97, 112, 46, 65, 66, 67, 112, 114, 111, 32, 115, 112, 97, 98, 97, 98, 99, 65, 98, 90, 45, 195, 167, 97, 98, 122, 45, 195, 167, 66, 108, 97, 99, 107, 72, 111, 108, 101, 32, 49, 54, 99, 104, 50, 57, 54, 67, 109, 105, 99, 114, 111, 112, 104, 111, 110, 101, 109, 97, 99, 98, 111, 111, 107, 66, 108, 97, 99, 107, 72, 111, 108, 101, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 46, 67, 104, 114, 111, 109, 101, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 83, 97, 102, 97, 114, 105, 99, 111, 109, 46, 98, 114, 111, 119, 115, 101, 114, 111, 115, 46, 66, 114, 111, 119, 115, 101, 114, 67, 108, 97, 119, 99, 111, 109, 46, 98, 114, 111, 119, 115, 101, 114, 111, 115, 46, 66, 114, 111, 119, 115, 101, 114, 67, 108, 97, 119, 46, 104, 101, 108, 112, 101, 114, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 46, 67, 104, 114, 111, 109, 101, 46, 104, 101, 108, 112, 101, 114, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 46, 67, 104, 114, 111, 109, 101, 46, 104, 101, 108, 112, 101, 114, 46, 82, 101, 110, 100, 101, 114, 101, 114, 99, 111, 109, 46, 103, 111, 111, 103, 108, 101, 46, 67, 104, 114, 111, 109, 101, 88, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 87, 101, 98, 75, 105, 116, 46, 71, 80, 85, 47, 65, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 115, 47, 71, 111, 111, 103, 108, 101, 32, 67, 104, 114, 111, 109, 101, 46, 97, 112, 112, 47, 67, 111, 110, 116, 101, 110, 116, 115, 47, 70, 114, 97, 109, 101, 119, 111, 114, 107, 115, 47, 71, 111, 111, 103, 108, 101, 32, 67, 104, 114, 111, 109, 101, 32, 70, 114, 97, 109, 101, 119, 111, 114, 107, 46, 102, 114, 97, 109, 101, 119, 111, 114, 107, 47, 86, 101, 114, 115, 105, 111, 110, 115, 47, 49, 51, 49, 47, 72, 101, 108, 112, 101, 114, 115, 47, 71, 111, 111, 103, 108, 101, 32, 67, 104, 114, 111, 109, 101, 32, 72, 101, 108, 112, 101, 114, 46, 97, 112, 112, 47, 67, 111, 110, 116, 101, 110, 116, 115, 47, 77, 97, 99, 79, 83, 47, 71, 111, 111, 103, 108, 101, 32, 67, 104, 114, 111, 109, 101, 32, 72, 101, 108, 112, 101, 114, 47, 65, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 115, 47, 71, 111, 111, 103, 108, 101, 32, 67, 104, 114, 111, 109, 101, 46, 97, 112, 112, 47, 65, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 115, 47, 122, 111, 111, 109, 46, 117, 115, 46, 97, 112, 112, 47, 65, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 115, 47, 84, 195, 169, 108, 195, 169, 112, 104, 111, 110, 101, 46, 97, 112, 112, 47, 67, 111, 110, 116, 101, 110, 116, 115, 47, 77, 97, 99, 79, 83, 47, 120, 47, 65, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 115, 47, 84, 195, 169, 108, 195, 169, 112, 104, 111, 110, 101, 46, 97, 112, 112, 47, 117, 115, 114, 47, 98, 105, 110, 47, 97, 102, 112, 108, 97, 121, 47, 65, 112, 112, 115, 47, 77, 121, 46, 97, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 47, 120, 47, 120, 47, 46, 97, 112, 112, 47, 121, 47, 83, 121, 115, 116, 101, 109, 47, 76, 105, 98, 114, 97, 114, 121, 47, 70, 114, 97, 109, 101, 119, 111, 114, 107, 115, 47, 87, 101, 98, 75, 105, 116, 46, 102, 114, 97, 109, 101, 119, 111, 114, 107, 47, 86, 101, 114, 115, 105, 111, 110, 115, 47, 65, 47, 88, 80, 67, 83, 101, 114, 118, 105, 99, 101, 115, 47, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 87, 101, 98, 75, 105, 116, 46, 71, 80, 85, 46, 120, 112, 99, 47, 67, 111, 110, 116, 101, 110, 116, 115, 47, 77, 97, 99, 79, 83, 47, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 87, 101, 98, 75, 105, 116, 46, 71, 80, 85, 117, 115, 46, 122, 111, 111, 109, 46, 120, 111, 115, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 84, 101, 114, 109, 105, 110, 97, 108, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 97, 118, 99, 111, 110, 102, 101, 114, 101, 110, 99, 101, 100, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 70, 97, 99, 101, 84, 105, 109, 101, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 84, 101, 108, 101, 112, 104, 111, 110, 121, 85, 116, 105, 108, 105, 116, 105, 101, 115, 99, 111, 109, 46, 97, 112, 112, 108, 101, 46, 77, 117, 115, 105, 99, 110, 111, 116, 101, 115, 90, 111, 111, 109, 77, 117, 115, 105, 99, 78, 111, 116, 101, 115, 97, 112, 112, 46, 112, 111, 110, 116, 101, 46, 116, 114, 97, 110, 115, 108, 97, 116, 111, 114, 65, 105, 114, 80, 111, 100, 115, 32, 80, 114, 111, 69, 120, 116, 101, 114, 110, 97, 108, 32, 77, 105, 99, 114, 111, 112, 104, 111, 110, 101, 74, 97, 98, 114, 97, 32, 69, 118, 111, 108, 118, 101 };
+static const uint32_t DV_FX_OFFSETS[73] = { 0, 20, 40, 59, 87, 109, 132, 135, 136, 149, 165, 174, 190, 194, 202, 209, 210, 219, 221, 235, 237, 249, 264, 281, 290, 291, 305, 317, 327, 338, 354, 360, 360, 362, 365, 371, 377, 391, 395, 405, 412, 421, 438, 448, 464, 489, 521, 545, 578, 596, 616, 783, 814, 839, 885, 914, 929, 951, 960, 1087, 1098, 1116, 1139, 1157, 1185, 1200, 1205, 1209, 1214, 1219, 1239, 1250, 1269 };
+static const uint32_t DV_FX_LENGTHS[73] = { 20, 20, 19, 28, 22, 23, 3, 1, 13, 16, 9, 16, 4, 8, 7, 1, 9, 2, 14, 2, 12, 15, 17, 9, 1, 14, 12, 10, 11, 16, 6, 0, 2, 3, 6, 6, 14, 4, 10, 7, 9, 17, 10, 16, 25, 32, 24, 33, 18, 20, 167, 31, 25, 46, 29, 15, 22, 9, 127, 11, 18, 23, 18, 28, 15, 5, 4, 5, 5, 20, 11, 19, 12 };
 #define DV_ID_HAL 0
 #define DV_ID_APP 1
 #define DV_ID_PID 2
@@ -191,6 +196,19 @@ static const uint32_t DV_FX_LENGTHS[69] = { 20, 20, 19, 28, 22, 23, 3, 1, 13, 16
 #define DV_BUNDLE_NAME_BUNDLE 2
 #define DV_BUNDLE_NAME_FILE 3
 #define DV_LAUNCHD_PID 1
+#define DV_READER_PONTE 0
+#define DV_READER_CALL 1
+#define DV_READER_OTHER 2
+#define DV_USE_NONE 0
+#define DV_USE_CALL_BLACKHOLE 1
+#define DV_USE_OTHER_BLACKHOLE 2
+#define DV_USE_CALL_REAL_MIC 3
+#define DV_LISTEN_UNKNOWN 0
+#define DV_LISTEN_OK 1
+#define DV_LISTEN_NOBODY 2
+#define DV_LISTEN_REAL_MIC 3
+#define DV_LISTEN_BOTH 4
+#define DV_LISTEN_NO_BLACKHOLE 5
 
 /* -------------------------------------------------------
    Function prototypes
@@ -241,6 +259,17 @@ bool dv_path_owner_regular(bool has_running, bool running_regular, bool has_self
 bool dv_app_playing(bool already_playing, bool process_playing);
 bool dv_prefers_owner(bool candidate_regular, bool current_regular);
 bool dv_needs_headphones(int64_t kind);
+bool dv_is_ponte_id(uint8_t text[static 8192], int64_t id_off, int64_t id_len);
+int64_t dv_reader_role(uint8_t text[static 8192], int64_t owner_off, int64_t owner_len, int64_t target_off, int64_t target_len, bool has_target, int32_t pid, int32_t self_pid);
+bool dv_is_real_mic_kind(int64_t kind);
+int64_t dv_reader_use(int64_t role, int64_t kind, bool running_input);
+int64_t dv_listen_status(int64_t uses[static 256], int64_t count, bool listed, bool blackhole_present);
+int64_t dv_first_use(int64_t uses[static 256], int64_t count, int64_t wanted);
+int64_t dv_listen_index(int64_t uses[static 256], int64_t count);
+bool dv_is_headphones_like(int64_t kind);
+bool dv_auto_mic_allowed(int64_t kind, int64_t channels);
+bool dv_headset_mic_matches(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t i, int64_t output);
+int64_t dv_pick_auto_mic_index(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t input_channels[static 256], int64_t count, int64_t output_index);
 int64_t dv_fixture(int64_t index, uint8_t text[static 8192], int64_t at);
 int64_t dv_fixture_push(int64_t index, uint8_t text[static 8192], int64_t at, uint32_t offsets[static 256], uint32_t lengths[static 256], int64_t slot);
 
@@ -849,6 +878,157 @@ bool dv_needs_headphones(int64_t kind) {
     return (dv_echo_risk(kind) == DV_ECHO_SPEAKER);
 }
 
+bool dv_is_ponte_id(uint8_t text[static 8192], int64_t id_off, int64_t id_len) {
+    return dv_equal_row(text, id_off, id_len, DV_ROW_PONTE_ID);
+}
+
+int64_t dv_reader_role(uint8_t text[static 8192], int64_t owner_off, int64_t owner_len, int64_t target_off, int64_t target_len, bool has_target, int32_t pid, int32_t self_pid) {
+    if (((pid == self_pid) || dv_is_ponte_id(text, owner_off, owner_len))) {
+        return DV_READER_PONTE;
+    }
+    if (has_target) {
+        if ((dv_equal(text, owner_off, owner_len, target_off, target_len) || dv_is_companion_process(text, owner_off, owner_len, target_off, target_len))) {
+            return DV_READER_CALL;
+        }
+        return DV_READER_OTHER;
+    }
+    if (dv_is_known_call_app(text, owner_off, owner_len)) {
+        return DV_READER_CALL;
+    }
+    return DV_READER_OTHER;
+}
+
+bool dv_is_real_mic_kind(int64_t kind) {
+    return ((((kind != DV_KIND_BLACKHOLE) && (kind != DV_KIND_PONTE_AGGREGATE)) && (kind != DV_KIND_VIRTUAL)) && (kind != DV_KIND_AGGREGATE));
+}
+
+int64_t dv_reader_use(int64_t role, int64_t kind, bool running_input) {
+    if (((running_input == false) || (role == DV_READER_PONTE))) {
+        return DV_USE_NONE;
+    }
+    if ((kind == DV_KIND_BLACKHOLE)) {
+        if ((role == DV_READER_CALL)) {
+            return DV_USE_CALL_BLACKHOLE;
+        }
+        return DV_USE_OTHER_BLACKHOLE;
+    }
+    if (((role == DV_READER_CALL) && dv_is_real_mic_kind(kind))) {
+        return DV_USE_CALL_REAL_MIC;
+    }
+    return DV_USE_NONE;
+}
+
+int64_t dv_listen_status(int64_t uses[static 256], int64_t count, bool listed, bool blackhole_present) {
+    if ((blackhole_present == false)) {
+        return DV_LISTEN_NO_BLACKHOLE;
+    }
+    if ((listed == false)) {
+        return DV_LISTEN_UNKNOWN;
+    }
+    int64_t n = dv_list_count(count);
+    bool call_blackhole = false;
+    bool other_blackhole = false;
+    bool call_mic = false;
+    int64_t i = 0;
+    while ((i < n)) {
+        if ((uses[i] == DV_USE_CALL_BLACKHOLE)) {
+            call_blackhole = true;
+        }
+        if ((uses[i] == DV_USE_OTHER_BLACKHOLE)) {
+            other_blackhole = true;
+        }
+        if ((uses[i] == DV_USE_CALL_REAL_MIC)) {
+            call_mic = true;
+        }
+        i = (i + 1);
+    }
+    if (call_mic) {
+        if (call_blackhole) {
+            return DV_LISTEN_BOTH;
+        }
+        return DV_LISTEN_REAL_MIC;
+    }
+    if ((call_blackhole || other_blackhole)) {
+        return DV_LISTEN_OK;
+    }
+    return DV_LISTEN_NOBODY;
+}
+
+int64_t dv_first_use(int64_t uses[static 256], int64_t count, int64_t wanted) {
+    int64_t n = dv_list_count(count);
+    int64_t i = 0;
+    while ((i < n)) {
+        if ((uses[i] == wanted)) {
+            return i;
+        }
+        i = (i + 1);
+    }
+    return -1;
+}
+
+int64_t dv_listen_index(int64_t uses[static 256], int64_t count) {
+    int64_t i = dv_first_use(uses, count, DV_USE_CALL_REAL_MIC);
+    if ((i >= 0)) {
+        return i;
+    }
+    i = dv_first_use(uses, count, DV_USE_CALL_BLACKHOLE);
+    if ((i >= 0)) {
+        return i;
+    }
+    return dv_first_use(uses, count, DV_USE_OTHER_BLACKHOLE);
+}
+
+bool dv_is_headphones_like(int64_t kind) {
+    return (((kind == DV_KIND_BUILT_IN_HEADPHONES) || (kind == DV_KIND_BLUETOOTH)) || (kind == DV_KIND_USB));
+}
+
+bool dv_auto_mic_allowed(int64_t kind, int64_t channels) {
+    return (((channels > 0) && (dv_is_excluded_for_monitoring(kind) == false)) && (kind != DV_KIND_CONTINUITY));
+}
+
+bool dv_headset_mic_matches(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t i, int64_t output) {
+    if ((i == output)) {
+        return true;
+    }
+    if ((kinds[i] != kinds[output])) {
+        return false;
+    }
+    if ((kinds[i] == DV_KIND_BUILT_IN_HEADPHONES)) {
+        return true;
+    }
+    return dv_equal(text, name_offsets[i], name_lengths[i], name_offsets[output], name_lengths[output]);
+}
+
+int64_t dv_pick_auto_mic_index(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t input_channels[static 256], int64_t count, int64_t output_index) {
+    int64_t n = dv_list_count(count);
+    int64_t i = 0;
+    if (((output_index >= 0) && (output_index < n))) {
+        if (dv_is_headphones_like(kinds[output_index])) {
+            while ((i < n)) {
+                if ((dv_auto_mic_allowed(kinds[i], input_channels[i]) && dv_headset_mic_matches(text, name_offsets, name_lengths, kinds, i, output_index))) {
+                    return i;
+                }
+                i = (i + 1);
+            }
+        }
+    }
+    i = 0;
+    while ((i < n)) {
+        if ((dv_auto_mic_allowed(kinds[i], input_channels[i]) && (kinds[i] == DV_KIND_BUILT_IN_MIC))) {
+            return i;
+        }
+        i = (i + 1);
+    }
+    i = 0;
+    while ((i < n)) {
+        if ((dv_auto_mic_allowed(kinds[i], input_channels[i]) && dv_is_real_mic_kind(kinds[i]))) {
+            return i;
+        }
+        i = (i + 1);
+    }
+    return -1;
+}
+
 int64_t dv_fixture(int64_t index, uint8_t text[static 8192], int64_t at) {
     if ((((index < 0) || (index >= DV_FX_COUNT)) || (at < 0))) {
         return 0;
@@ -1291,6 +1471,167 @@ void test_dv_moved_rules(void) {
     assert((t[3] == 46));
 }
 
+void test_dv_checklist_readers(void) {
+    uint8_t t[8192] = { [0 ... (8192) - 1] = 0 };
+    int64_t uses[256] = { [0 ... (256) - 1] = 0 };
+    int64_t o = dv_fixture(DV_FX_BROWSEROS, t, 0);
+    int64_t g = dv_fixture(DV_FX_BROWSEROS, t, 1000);
+    assert((dv_reader_role(t, 0, o, 1000, g, true, 5, 9) == DV_READER_CALL));
+    assert((dv_reader_role(t, 0, o, 1000, g, true, 9, 9) == DV_READER_PONTE));
+    assert((dv_reader_role(t, 0, o, 1000, 0, false, 5, 9) == DV_READER_CALL));
+    g = dv_fixture(DV_FX_ZOOM_ID, t, 1000);
+    assert((dv_reader_role(t, 0, o, 1000, g, true, 5, 9) == DV_READER_OTHER));
+    o = dv_fixture(DV_FX_PONTE_ID, t, 0);
+    assert((dv_reader_role(t, 0, o, 1000, g, true, 5, 9) == DV_READER_PONTE));
+    assert((dv_reader_role(t, 0, o, 1000, 0, false, 5, 9) == DV_READER_PONTE));
+    assert((dv_is_ponte_id(t, 0, o) == true));
+    assert((dv_is_ponte_id(t, 0, (o - 1)) == false));
+    o = dv_fixture(DV_FX_AVCONFERENCED, t, 0);
+    g = dv_fixture(DV_FX_FACETIME, t, 1000);
+    assert((dv_reader_role(t, 0, o, 1000, g, true, 5, 9) == DV_READER_CALL));
+    assert((dv_reader_role(t, 0, o, 1000, 0, false, 5, 9) == DV_READER_OTHER));
+    o = dv_fixture(DV_FX_MUSIC, t, 0);
+    assert((dv_reader_role(t, 0, o, 1000, 0, false, 5, 9) == DV_READER_OTHER));
+    assert((dv_reader_use(DV_READER_CALL, DV_KIND_BLACKHOLE, true) == DV_USE_CALL_BLACKHOLE));
+    assert((dv_reader_use(DV_READER_OTHER, DV_KIND_BLACKHOLE, true) == DV_USE_OTHER_BLACKHOLE));
+    assert((dv_reader_use(DV_READER_PONTE, DV_KIND_BLACKHOLE, true) == DV_USE_NONE));
+    assert((dv_reader_use(DV_READER_CALL, DV_KIND_BLACKHOLE, false) == DV_USE_NONE));
+    assert((dv_reader_use(DV_READER_CALL, DV_KIND_BUILT_IN_MIC, true) == DV_USE_CALL_REAL_MIC));
+    assert((dv_reader_use(DV_READER_CALL, DV_KIND_BLUETOOTH, true) == DV_USE_CALL_REAL_MIC));
+    assert((dv_reader_use(DV_READER_CALL, DV_KIND_CONTINUITY, true) == DV_USE_CALL_REAL_MIC));
+    assert((dv_reader_use(DV_READER_CALL, DV_KIND_VIRTUAL, true) == DV_USE_NONE));
+    assert((dv_reader_use(DV_READER_OTHER, DV_KIND_BUILT_IN_MIC, true) == DV_USE_NONE));
+    uses[0] = DV_USE_NONE;
+    uses[1] = DV_USE_CALL_BLACKHOLE;
+    assert((dv_listen_status(uses, 2, true, true) == DV_LISTEN_OK));
+    assert((dv_listen_index(uses, 2) == 1));
+    assert((dv_listen_status(uses, 2, true, false) == DV_LISTEN_NO_BLACKHOLE));
+    assert((dv_listen_status(uses, 2, false, true) == DV_LISTEN_UNKNOWN));
+    assert((dv_listen_status(uses, 1, true, true) == DV_LISTEN_NOBODY));
+    assert((dv_listen_index(uses, 1) == -1));
+    assert((dv_listen_status(uses, 0, true, true) == DV_LISTEN_NOBODY));
+    uses[0] = DV_USE_CALL_REAL_MIC;
+    assert((dv_listen_status(uses, 2, true, true) == DV_LISTEN_BOTH));
+    assert((dv_listen_status(uses, 1, true, true) == DV_LISTEN_REAL_MIC));
+    assert((dv_listen_index(uses, 2) == 0));
+    uses[0] = DV_USE_OTHER_BLACKHOLE;
+    uses[1] = DV_USE_NONE;
+    assert((dv_listen_status(uses, 2, true, true) == DV_LISTEN_OK));
+    assert((dv_listen_index(uses, 2) == 0));
+    uses[1] = DV_USE_CALL_BLACKHOLE;
+    assert((dv_listen_index(uses, 2) == 1));
+    int64_t a = 0;
+    uint32_t bad = 0;
+    while ((a < 4)) {
+        int64_t b = 0;
+        while ((b < 4)) {
+            uses[0] = a;
+            uses[1] = b;
+            int64_t st = dv_listen_status(uses, 2, true, true);
+            bool mic = ((a == DV_USE_CALL_REAL_MIC) || (b == DV_USE_CALL_REAL_MIC));
+            bool bh = ((((a == DV_USE_CALL_BLACKHOLE) || (b == DV_USE_CALL_BLACKHOLE)) || (a == DV_USE_OTHER_BLACKHOLE)) || (b == DV_USE_OTHER_BLACKHOLE));
+            if ((mic && ((st == DV_LISTEN_OK) || (st == DV_LISTEN_NOBODY)))) {
+                bad = (bad + 1);
+            }
+            if (((st == DV_LISTEN_OK) && (bh == false))) {
+                bad = (bad + 1);
+            }
+            if (((st == DV_LISTEN_NOBODY) != ((mic == false) && (bh == false)))) {
+                bad = (bad + 1);
+            }
+            if (((dv_listen_index(uses, 2) < 0) != (st == DV_LISTEN_NOBODY))) {
+                bad = (bad + 1);
+            }
+            b = (b + 1);
+        }
+        a = (a + 1);
+    }
+    assert((bad == 0));
+    assert((dv_is_headphones_like(DV_KIND_BUILT_IN_HEADPHONES) == true));
+    assert((dv_is_headphones_like(DV_KIND_BLUETOOTH) == true));
+    assert((dv_is_headphones_like(DV_KIND_USB) == true));
+    assert((dv_is_headphones_like(DV_KIND_BUILT_IN_SPEAKER) == false));
+    assert((dv_is_headphones_like(DV_KIND_DISPLAY) == false));
+    assert((dv_is_headphones_like(DV_KIND_AIRPLAY) == false));
+    assert((dv_is_headphones_like(DV_KIND_BLACKHOLE) == false));
+}
+
+void test_dv_auto_mic(void) {
+    uint8_t t[8192] = { [0 ... (8192) - 1] = 0 };
+    uint32_t offs[256] = { [0 ... (256) - 1] = 0 };
+    uint32_t lens[256] = { [0 ... (256) - 1] = 0 };
+    int64_t kinds[256] = { [0 ... (256) - 1] = 0 };
+    int64_t ins[256] = { [0 ... (256) - 1] = 0 };
+    int64_t at = dv_fixture_push(DV_FX_IPHONE_MIC, t, 0, offs, lens, 0);
+    at = dv_fixture_push(DV_FX_BH_2CH, t, at, offs, lens, 1);
+    at = dv_fixture_push(DV_FX_MBP_MIC, t, at, offs, lens, 2);
+    at = dv_fixture_push(DV_FX_MBP_SPEAKERS, t, at, offs, lens, 3);
+    kinds[0] = DV_KIND_CONTINUITY;
+    kinds[1] = DV_KIND_BLACKHOLE;
+    kinds[2] = DV_KIND_BUILT_IN_MIC;
+    kinds[3] = DV_KIND_BUILT_IN_SPEAKER;
+    ins[0] = 1;
+    ins[1] = 2;
+    ins[2] = 1;
+    ins[3] = 0;
+    assert((dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 4, 3) == 2));
+    assert((dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 4, -1) == 2));
+    at = dv_fixture_push(DV_FX_AIRPODS_PRO, t, at, offs, lens, 4);
+    kinds[4] = DV_KIND_BLUETOOTH;
+    ins[4] = 1;
+    assert((dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 5, 4) == 4));
+    at = dv_fixture_push(DV_FX_AIRPODS_PRO, t, at, offs, lens, 5);
+    kinds[5] = DV_KIND_BLUETOOTH;
+    ins[4] = 0;
+    ins[5] = 1;
+    assert((dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 6, 4) == 5));
+    at = dv_fixture_push(DV_FX_S6L, t, at, offs, lens, 6);
+    kinds[6] = DV_KIND_BLUETOOTH;
+    ins[6] = 0;
+    assert((dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 7, 6) == 2));
+    at = dv_fixture_push(DV_FX_EXT_HEADPHONES, t, at, offs, lens, 7);
+    at = dv_fixture_push(DV_FX_EXT_MIC, t, at, offs, lens, 8);
+    kinds[7] = DV_KIND_BUILT_IN_HEADPHONES;
+    kinds[8] = DV_KIND_BUILT_IN_HEADPHONES;
+    ins[7] = 0;
+    ins[8] = 1;
+    assert((dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 9, 7) == 8));
+    at = dv_fixture_push(DV_FX_JABRA, t, at, offs, lens, 9);
+    at = dv_fixture_push(DV_FX_USB_AUDIO, t, at, offs, lens, 10);
+    kinds[9] = DV_KIND_USB;
+    kinds[10] = DV_KIND_USB;
+    ins[9] = 0;
+    ins[10] = 1;
+    assert((dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 11, 9) == 2));
+    ins[9] = 1;
+    assert((dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 11, 9) == 9));
+    ins[2] = 0;
+    assert((dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 11, 3) == 5));
+    ins[5] = 0;
+    ins[8] = 0;
+    ins[9] = 0;
+    ins[10] = 0;
+    assert((dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 11, 3) == -1));
+    assert((dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 0, 3) == -1));
+    int64_t k = 0;
+    uint32_t bad = 0;
+    while ((k <= DV_KIND_OTHER_WIRED)) {
+        kinds[0] = k;
+        ins[0] = 1;
+        int64_t o = -1;
+        while ((o < 1)) {
+            int64_t pick = dv_pick_auto_mic_index(t, offs, lens, kinds, ins, 1, o);
+            bool never = (((k == DV_KIND_CONTINUITY) || (k == DV_KIND_BLACKHOLE)) || (k == DV_KIND_PONTE_AGGREGATE));
+            if ((never && (pick != -1))) {
+                bad = (bad + 1);
+            }
+            o = (o + 1);
+        }
+        k = (k + 1);
+    }
+    assert((bad == 0));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1305,7 +1646,9 @@ int main(void) {
     test_dv_app_catalog();
     test_dv_tap_targets_and_order();
     test_dv_moved_rules();
-    printf("All %d tests passed.\n", 6);
+    test_dv_checklist_readers();
+    test_dv_auto_mic();
+    printf("All %d tests passed.\n", 8);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

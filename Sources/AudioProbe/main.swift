@@ -2,6 +2,7 @@
 //
 //   AudioProbe devices
 //   AudioProbe apps [--raw]
+//   AudioProbe inputs [--bundle <call app id>]   (which apps read which input devices; who listens to BlackHole)
 //   AudioProbe tap (--bundle <id> | --pid <n> [--pid <n>…] | --system) --seconds N --out file.wav
 //                  [--self-play file]   (also plays the file from this process: checks self-exclusion)
 //   AudioProbe mic [--device <name>] --seconds N --out file.wav [--request]
@@ -68,6 +69,7 @@ enum ProbeError: Error, CustomStringConvertible {
 let usageText = """
 AudioProbe devices
 AudioProbe apps [--raw]
+AudioProbe inputs [--bundle <call app id>]
 AudioProbe tap (--bundle <id> | --pid <n> [--pid <n>...] | --system) --seconds N --out file.wav [--self-play file]
 AudioProbe mic [--device <name>] --seconds N --out file.wav [--request]
 AudioProbe permissions
@@ -291,6 +293,51 @@ func cmdApps(raw: Bool) {
             print("  pid \(p.pid)  \(p.bundleID ?? "-")  → \(p.ownerName) [\(p.ownerBundleID)]\(p.playing ? "  PLAYING" : "")")
         }
     }
+}
+
+/// Which apps read which input devices (HAL process objects, input scope), and the checklist's listener status
+/// for a call app (`--bundle`; without it, all Mac audio is the source and any known call app counts).
+func cmdInputs(_ args: Args) {
+    let target = args.value("--bundle")
+    guard let readers = AudioInputReaders.snapshot() else {
+        print("The HAL process list could not be read.")
+        return
+    }
+    func roleName(_ role: Int) -> String {
+        [AudioRules.readerPonte: "Ponte", AudioRules.readerCall: "call app", AudioRules.readerOther: "other"][role] ?? "role \(role)"
+    }
+    func useName(_ use: Int) -> String {
+        [AudioRules.useNone: "-", AudioRules.useCallBlackHole: "call app on BlackHole",
+         AudioRules.useOtherBlackHole: "other on BlackHole", AudioRules.useCallRealMic: "CALL APP ON A REAL MIC"][use] ?? "use \(use)"
+    }
+    print("Input readers (kAudioProcessPropertyDevices, input scope), \(readers.count) pairs:")
+    for r in readers.sorted(by: { ($0.pid, $0.device.id) < ($1.pid, $1.device.id) }) {
+        let role = AudioRules.readerRole(ownerBundleID: r.ownerBundleID, targetBundleID: target, pid: r.pid, selfPID: getpid())
+        let use = AudioRules.readerUse(role: role, kind: r.deviceKind, runningInput: r.isRunningInput)
+        print("  pid \(r.pid)  \(r.bundleID ?? "-") → \(r.appName) [\(r.ownerBundleID)]  reads «\(r.device.name)» "
+              + "(\(kindName(r.deviceKind)))  \(r.isRunningInput ? "running" : "not running")  role=\(roleName(role))  use=\(useName(use))")
+    }
+    var byApp: [String: [String]] = [:]
+    for r in readers where r.isRunningInput { byApp[r.appName, default: []].append(r.device.name) }
+    print("By app (running input):")
+    for app in byApp.keys.sorted() { print("  \(app): \(byApp[app]!.joined(separator: ", "))") }
+    if byApp.isEmpty { print("  none") }
+
+    let catalog = CoreAudioDeviceCatalog()
+    let blackHole = BlackHoleCheck.find(in: catalog)
+    let check = AudioInputReaders.check(readers, targetBundleID: target, blackHolePresent: blackHole != nil)
+    let statusName = [AudioRules.listenUnknown: "unknown", AudioRules.listenOK: "OK", AudioRules.listenNobody: "NOBODY",
+                      AudioRules.listenRealMic: "REAL MIC", AudioRules.listenBoth: "BOTH",
+                      AudioRules.listenNoBlackHole: "NO BLACKHOLE"][check.status] ?? "status \(check.status)"
+    print("Source: \(target.map { "app \($0)" } ?? "all Mac audio (any known call app)")")
+    print("Listener status: \(statusName)" + (check.reader.map { " — \($0.appName) reads «\($0.device.name)»" } ?? ""))
+    if let blackHole {
+        print("BlackHole input running somewhere (device flag, includes Ponte): \(AudioInputReaders.inputRunsSomewhere(blackHole) ? "yes" : "no")")
+    }
+    let listening = catalog.defaultOutput()
+    let auto = catalog.autoMic(in: catalog.devices(), listening: listening)
+    print("Default output: \(listening?.name ?? "none") (headphones-like: \(listening.map { AudioRules.isHeadphonesLike(kind: catalog.kind(of: $0)) } ?? false ? "yes" : "no"))"
+          + ";  automatic mic for Ponte: \(auto?.name ?? "none")")
 }
 
 func cmdTap(_ args: Args) throws {
@@ -653,6 +700,7 @@ do {
     switch args.positional.first {
     case "devices": cmdDevices()
     case "apps": cmdApps(raw: args.flags.contains("--raw"))
+    case "inputs": cmdInputs(args)
     case "tap": try cmdTap(args)
     case "mic": try await cmdMic(args)
     case "permissions": cmdPermissions()

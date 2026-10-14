@@ -33,10 +33,9 @@ struct PonteMain: App {
                                                              set: { model.overlayVisible = $0 }))
                     .keyboardShortcut("t", modifiers: [.command, .shift])
                 Divider()
-                Button("Мастер настройки…") {
-                    model.wizardStep = .permissions
-                    model.showWizard = true
-                }
+                Button("Перед звонком…") { model.openChecklist() }
+                    .keyboardShortcut("k", modifiers: [.command, .shift])
+                Button("Мастер настройки…") { model.openWizard(.permissions) }
             }
         }
 

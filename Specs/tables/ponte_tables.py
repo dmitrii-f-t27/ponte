@@ -27,6 +27,7 @@ DEVICE_WORDS = [
     ("TWO_CH", "2ch"),
     ("APP_SUFFIX", ".app"),
     ("PID_PREFIX", "pid."),                  # fallback owner ID of a process without a bundle ID
+    ("PONTE_ID", "app.ponte.translator"),    # Ponte's bundle ID: another Ponte instance is never a call app's reader
 ]
 # knownCallAppBundleIDs / knownCallAppLabels (AudioRules), sorted by bundle ID.
 CALL_APPS = [
@@ -74,6 +75,8 @@ DEVICE_FIXTURES = [
     ("ZOOM_ID", "us.zoom.xos"), ("TERMINAL", "com.apple.Terminal"), ("AVCONFERENCED", "com.apple.avconferenced"),
     ("FACETIME", "com.apple.FaceTime"), ("TELEPHONY", "com.apple.TelephonyUtilities"), ("MUSIC", "com.apple.Music"),
     ("NOTES", "notes"), ("ZOOM_NAME", "Zoom"), ("MUSIC_NAME", "Music"), ("NOTES_CAP", "Notes"),
+    ("PONTE_ID", "app.ponte.translator"), ("AIRPODS_PRO", "AirPods Pro"), ("EXT_MIC", "External Microphone"),
+    ("JABRA", "Jabra Evolve"),
 ]
 
 # --- segment_rules.t27 --------------------------------------------------------------------------------------

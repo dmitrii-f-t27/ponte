@@ -273,6 +273,31 @@ private struct Samples {
         #expect(dv_pick_listen_output_index(&kinds, &outputs, 1, 0) == -1)
     }
 
+    @Test func checklistReadersAndAutoMic() {
+        // Ponte's own bundle ID is the one the app bundle carries (Resources/Info.plist).
+        var t = TextBuffer(["app.ponte.translator", "com.browseros.BrowserClaw"])
+        #expect(dv_is_ponte_id(&t.bytes, t.off(0), t.len(0)))
+        #expect(dv_reader_role(&t.bytes, t.off(0), t.len(0), t.off(1), t.len(1), true, 5, 9) == DV_READER_PONTE)
+        #expect(dv_reader_role(&t.bytes, t.off(1), t.len(1), t.off(1), t.len(1), true, 5, 9) == DV_READER_CALL)
+        #expect(dv_reader_use(Int64(DV_READER_CALL), Int64(DV_KIND_BUILT_IN_MIC), true) == DV_USE_CALL_REAL_MIC)
+        var uses = [Int64](repeating: 0, count: 256)
+        uses[0] = Int64(DV_USE_OTHER_BLACKHOLE); uses[1] = Int64(DV_USE_CALL_BLACKHOLE)
+        #expect(dv_listen_status(&uses, 2, true, true) == DV_LISTEN_OK)
+        #expect(dv_listen_index(&uses, 2) == 1)
+        var names = TextBuffer(["iPhone Microphone", "BlackHole 2ch", "MacBook Pro Microphone", "AirPods Pro"])
+        var kinds = [Int64](repeating: 0, count: 256)
+        var inputs = [Int64](repeating: 0, count: 256)
+        kinds[0] = Int64(DV_KIND_CONTINUITY); kinds[1] = Int64(DV_KIND_BLACKHOLE)
+        kinds[2] = Int64(DV_KIND_BUILT_IN_MIC); kinds[3] = Int64(DV_KIND_BLUETOOTH)
+        inputs[0] = 1; inputs[1] = 2; inputs[2] = 1; inputs[3] = 1
+        #expect(dv_pick_auto_mic_index(&names.bytes, &names.offsets, &names.lengths, &kinds, &inputs, 4, 3) == 3)
+        #expect(dv_pick_auto_mic_index(&names.bytes, &names.offsets, &names.lengths, &kinds, &inputs, 4, -1) == 2)
+        let plist = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Resources/Info.plist")
+        let info = NSDictionary(contentsOf: plist)
+        #expect(info?["CFBundleIdentifier"] as? String == "app.ponte.translator")
+    }
+
     @Test func knownCallAppsMatchContracts() {
         let ids = AudioApp.knownCallApps.keys.sorted()
         #expect(DV_CALL_APPS == ids.count)
@@ -432,5 +457,9 @@ private struct Samples {
         #expect(ln_lane_mode(LN_DIR_INCOMING, LN_MODE_PUSH_TO_TALK) == LN_MODE_CONTINUOUS)
         #expect(ln_lane_mode(LN_DIR_OUTGOING, LN_MODE_PUSH_TO_TALK) == LN_MODE_PUSH_TO_TALK)
         #expect(ln_glossary_source_is_pt(LN_DIR_INCOMING) && !ln_glossary_source_is_pt(LN_DIR_OUTGOING))
+        // The checklist: dv_listen_status (device_rules) feeds ui_checklist_mark (ui_rules).
+        #expect([UI_LISTEN_UNKNOWN, UI_LISTEN_OK, UI_LISTEN_NOBODY, UI_LISTEN_REAL_MIC, UI_LISTEN_BOTH, UI_LISTEN_NO_BLACKHOLE].map(Int64.init)
+                == [DV_LISTEN_UNKNOWN, DV_LISTEN_OK, DV_LISTEN_NOBODY, DV_LISTEN_REAL_MIC, DV_LISTEN_BOTH, DV_LISTEN_NO_BLACKHOLE].map(Int64.init))
+        #expect(ui_listener_mark(Int32(DV_LISTEN_REAL_MIC)) == UI_CK_BAD)
     }
 }

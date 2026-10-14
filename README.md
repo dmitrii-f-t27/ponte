@@ -55,7 +55,7 @@ open dist/Ponte.app
 4. Check BlackHole.
 5. Play a test phrase into the call.
 
-The command-line probes help with diagnosis: `swift run AudioProbe devices|apps|tap|mic|play` and `swift run SpeechProbe transcribe|translate|synth|pipeline`. `scripts/make-fixtures.sh` creates test phrases with the system voices.
+The command-line probes help with diagnosis: `swift run AudioProbe devices|apps|inputs|tap|mic|play` and `swift run SpeechProbe transcribe|translate|synth|pipeline`. `scripts/make-fixtures.sh` creates test phrases with the system voices.
 
 ## Status
 
@@ -66,12 +66,14 @@ This is a work in progress. These parts are verified on a Mac:
 - Excluding Ponte's own sound.
 - On-device recognition of pt-BR and ru-RU, 0.35–0.8 s after the speaker stops.
 - Speech synthesis.
-- Every decision runs in the C generated from the t27 specs. The three Swift rules facades only pass values to it. The Swift they replaced is kept as a test oracle. 42 differential tests compare the two bit for bit over about 23.6 million inputs.
-- The full app, built and signed, with 176 tests passing and no build warnings.
+- Every decision runs in the C generated from the t27 specs. The three Swift rules facades only pass values to it. The Swift they replaced is kept as a test oracle. 49 differential tests compare the two bit for bit over about 24.9 million inputs.
+- The full app, built and signed, with 196 tests passing and no build warnings.
 - An end-to-end run with test files, one phrase each way, from the end of the phrase to the translation on screen:
   - Ru → Pt took 0.6 s.
   - Pt → Ru took 0.4 s.
   - The first run after a build took 1.5 s and 0.7 s.
+
+Before each call, the sheet «Перед звонком» opens (it can be turned off, and it is in the toolbar and the «Звонок» menu). It shows live, about once a second, whether the call app reads BlackHole 2ch or a real microphone, whether you listen on headphones, and which microphone Ponte uses. `AudioProbe inputs` prints which apps read which input devices.
 
 Next step: a live call test.
 

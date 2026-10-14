@@ -710,4 +710,77 @@ extension AudioRulesLegacy {
     static func prefersOwner(candidateRegular: Bool, currentRegular: Bool) -> Bool { candidateRegular && !currentRegular }
     /// AppModel.refreshSpeakerWarning: `echoRisk == echoSpeaker`.
     static func needsHeadphones(kind: Int) -> Bool { echoRisk(kind: kind) == echoSpeaker }
+
+    // MARK: - The checklist «Перед звонком» (2026-10-13; written for device_rules.t27, mirrored here)
+
+    static let readerPonte = 0
+    static let readerCall = 1
+    static let readerOther = 2
+    static let useNone = 0
+    static let useCallBlackHole = 1
+    static let useOtherBlackHole = 2
+    static let useCallRealMic = 3
+    static let listenUnknown = 0
+    static let listenOK = 1
+    static let listenNobody = 2
+    static let listenRealMic = 3
+    static let listenBoth = 4
+    static let listenNoBlackHole = 5
+    static let ponteBundleID = "app.ponte.translator"
+
+    private static func sameBytes(_ a: String, _ b: String) -> Bool { Array(a.utf8) == Array(b.utf8) }
+
+    static func isPonteID(_ bundleID: String) -> Bool { sameBytes(bundleID, ponteBundleID) }
+
+    /// Ponte (this process or any Ponte); with a chosen app, its own processes and companions; with all Mac
+    /// audio, any known call app; else another program.
+    static func readerRole(ownerBundleID: String, targetBundleID: String?, pid: Int32, selfPID: Int32) -> Int {
+        if pid == selfPID || isPonteID(ownerBundleID) { return readerPonte }
+        if let target = targetBundleID {
+            let companion = zip(companionTargetBundleIDs, companionProcessBundleIDs).contains {
+                sameBytes($0, target) && sameBytes($1, ownerBundleID)
+            }
+            return sameBytes(ownerBundleID, target) || companion ? readerCall : readerOther
+        }
+        return knownCallAppBundleIDs.contains { sameBytes($0, ownerBundleID) } ? readerCall : readerOther
+    }
+
+    static func isRealMicKind(_ kind: Int) -> Bool {
+        ![kindBlackHole, kindPonteAggregate, kindVirtual, kindAggregate].contains(kind)
+    }
+
+    static func readerUse(role: Int, kind: Int, runningInput: Bool) -> Int {
+        guard runningInput, role != readerPonte else { return useNone }
+        if kind == kindBlackHole { return role == readerCall ? useCallBlackHole : useOtherBlackHole }
+        return role == readerCall && isRealMicKind(kind) ? useCallRealMic : useNone
+    }
+
+    static func listenStatus(uses: [Int], listed: Bool, blackHolePresent: Bool) -> Int {
+        guard blackHolePresent else { return listenNoBlackHole }
+        guard listed else { return listenUnknown }
+        let callBlackHole = uses.contains(useCallBlackHole)
+        if uses.contains(useCallRealMic) { return callBlackHole ? listenBoth : listenRealMic }
+        return callBlackHole || uses.contains(useOtherBlackHole) ? listenOK : listenNobody
+    }
+
+    static func listenIndex(uses: [Int]) -> Int {
+        uses.firstIndex(of: useCallRealMic) ?? uses.firstIndex(of: useCallBlackHole) ?? uses.firstIndex(of: useOtherBlackHole) ?? -1
+    }
+
+    static func isHeadphonesLike(kind: Int) -> Bool { [kindBuiltInHeadphones, kindBluetooth, kindUSB].contains(kind) }
+
+    /// The headset's own microphone when the listening output is headphones-like; else the built-in microphone;
+    /// else the first real one. Never BlackHole, Ponte's tap or an iPhone.
+    static func pickAutoMicIndex(names: [String], kinds: [Int], inputChannels: [Int], outputIndex: Int) -> Int {
+        let allowed = { (i: Int) in inputChannels[i] > 0 && !isExcludedForMonitoring(kind: kinds[i]) && kinds[i] != kindContinuity }
+        if kinds.indices.contains(outputIndex), isHeadphonesLike(kind: kinds[outputIndex]) {
+            let headset = kinds.indices.first { i in
+                allowed(i) && (i == outputIndex || (kinds[i] == kinds[outputIndex]
+                    && (kinds[i] == kindBuiltInHeadphones || sameBytes(names[i], names[outputIndex]))))
+            }
+            if let headset { return headset }
+        }
+        if let i = kinds.indices.first(where: { allowed($0) && kinds[$0] == kindBuiltInMic }) { return i }
+        return kinds.indices.first { allowed($0) && isRealMicKind(kinds[$0]) } ?? -1
+    }
 }

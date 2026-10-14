@@ -29,9 +29,15 @@ struct MainView: View {
         .navigationTitle("Ponte")
         .navigationSubtitle(model.ownVoice ? OwnVoiceBar.notice
                             : model.isRunning ? "Идёт перевод · \(model.activeSourceName ?? "")" : "PT-BR ⇄ RU")
-        .sheet(isPresented: $model.showWizard) {
-            SetupWizardView()
-                .environment(model)
+        .sheet(item: $model.sheet) { sheet in
+            switch sheet {
+            case .wizard:
+                SetupWizardView()
+                    .environment(model)
+            case .checklist:
+                ChecklistView()
+                    .environment(model)
+            }
         }
         .task { model.appDidLaunchOnce() }
     }
@@ -59,8 +65,14 @@ private struct MainToolbar: ToolbarContent {
             .disabled(!model.enabled(AppRules.BTN_SAVE_TRANSCRIPT))
 
             Button {
-                model.wizardStep = .permissions
-                model.showWizard = true
+                model.openChecklist()
+            } label: {
+                Label("Перед звонком", systemImage: "checklist")
+            }
+            .accessibilityHint("Перед звонком: BlackHole в Meet, наушники, микрофон")
+
+            Button {
+                model.openWizard(.permissions)
             } label: {
                 Label("Мастер настройки", systemImage: "wand.and.stars")
             }
