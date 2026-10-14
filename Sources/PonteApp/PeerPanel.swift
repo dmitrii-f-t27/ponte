@@ -1,3 +1,4 @@
+import AppKit
 import PontePeer
 import SwiftUI
 
@@ -11,28 +12,26 @@ struct PeerPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Русские в звонке")
                 .font(.headline)
-            Text("Если в звонке двое русских с Ponte, вы слышите друг друга своими голосами, без перевода. Португалец этот голос не слышит. Второй русский вводит в своём Ponte тот же код встречи.")
+            Text("Русские в звонке слышат друг друга своими голосами, без перевода, а португалец этот голос не слышит. Один нажимает «Создать код» и отправляет код остальным русским (в Telegram или WhatsApp, не португальцу). Все вводят этот код и нажимают «Подключиться».")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
-                TextField("Код встречи Meet: abc-defg-hij", text: $model.peerCode)
+                TextField("Код русских: abcd-efgh-jkmn", text: $model.peerSecret)
                     .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 200)
+                    .font(.body.monospaced())
+                    .frame(minWidth: 180)
                     .disabled(model.peerOn)
-                Button("Взять из Meet") {
-                    Task {
-                        if let code = await model.detectMeetCode() {
-                            model.peerCode = code
-                            model.peerNotice = nil
-                        } else {
-                            model.peerNotice = "Код встречи не найден. Скопируйте его из адреса Meet: meet.google.com/abc-defg-hij."
-                        }
-                    }
+                Button("Создать код") { model.newPeerSecret() }
+                    .disabled(model.peerOn)
+                    .accessibilityHint("Новый случайный код для русских в этом звонке")
+                Button("Скопировать") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(model.peerSecret, forType: .string)
                 }
-                .disabled(model.peerOn)
-                .accessibilityHint("Найти код встречи в окне Meet")
+                .disabled(model.peerSecret.isEmpty)
+                .accessibilityHint("Скопировать код, чтобы отправить его второму русскому")
             }
 
             HStack(spacing: 10) {
@@ -48,6 +47,13 @@ struct PeerPanel: View {
 
             Label(statusText, systemImage: statusIcon)
                 .foregroundStyle(statusColor)
+            if model.peerOn && !model.isRunning {
+                Label("Вас услышат, когда перевод запущен (кнопка «Старт»). Других русских вы слышите уже сейчас.",
+                      systemImage: "info.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if model.peerOn && !model.headphonesLike {
                 Label("Без наушников вас слышно только пока вы держите кнопку разговора: иначе второй русский услышит себя эхом.",
                       systemImage: "headphones")

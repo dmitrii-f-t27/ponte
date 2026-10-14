@@ -230,6 +230,7 @@ final class AppModel {
         didSet {
             defaults.set(headphonesUID, forKey: PrefKey.headphonesUID)
             refreshSpeakerWarning()
+            if peerOn { peerVoices.setDevice(headphonesDevice) }
         }
     }
     var callOutputUID: String {
@@ -411,7 +412,7 @@ final class AppModel {
         callOutputUID = d.string(forKey: PrefKey.callOutputUID) ?? ""
         voicePT = d.string(forKey: PrefKey.voicePT) ?? ""
         voiceRU = d.string(forKey: PrefKey.voiceRU) ?? ""
-        peerCode = d.string(forKey: PrefKey.peerCode) ?? ""
+        peerSecret = d.string(forKey: PrefKey.peerSecret) ?? ""
         speakRussian = d.object(forKey: PrefKey.speakRussian) == nil ? AppRules.DEFAULT_SPEAK_RUSSIAN
             : d.bool(forKey: PrefKey.speakRussian)
         hearOriginal = d.object(forKey: PrefKey.hearOriginal) == nil ? AppRules.DEFAULT_HEAR_ORIGINAL
@@ -1178,17 +1179,21 @@ final class AppModel {
         case .problem(let text):
             banner = Banner(kind: .warning, text: text)
         case .voiceOut(let text, let playing):
-            // Only the outgoing lane speaks into the call: the other Russians' Ponte apps must not translate it.
-            guard direction == .outgoing, let link = peerLink else { return }
-            link.sendVoice(kind: text == nil ? PeerRules.voiceOwn : PeerRules.voiceTTS,
-                           state: playing ? PeerRules.voiceStart : PeerRules.voiceEnd, text: text ?? "")
+            // Only the outgoing lane speaks into the call: neither this Ponte (its voice echoed back by the far side)
+            // nor the other Russians' Pontes may translate it.
+            guard direction == .outgoing else { return }
+            let kind = text == nil ? PeerRules.voiceOwn : PeerRules.voiceTTS
+            let state = playing ? PeerRules.voiceStart : PeerRules.voiceEnd
+            selfWindows.record(sender: 0, kind: kind, state: state, text: text ?? "", at: Date())
+            peerLink?.sendVoice(kind: kind, state: state, text: text ?? "")
         }
     }
 
     // MARK: «Русские в звонке»
 
-    /// The Meet code both Russians enter (abc-defg-hij); the room and the key of the link come from it.
-    var peerCode: String { didSet { defaults.set(peerCode, forKey: PrefKey.peerCode) } }
+    /// The code only the Russians share (PeerRules.secretNormalized, shown as abcd-efgh-jkmn); the room and the key
+    /// of the link come from it. Never the Meet code: every participant of the call has that one.
+    var peerSecret: String { didSet { defaults.set(peerSecret, forKey: PrefKey.peerSecret) } }
     /// The link is on (the owner pressed «Подключиться»).
     private(set) var peerOn = false
     /// «Мой голос русским» off: the other Russians do not hear the owner.
@@ -1197,12 +1202,14 @@ final class AppModel {
     private(set) var peerCount = 0
     /// Another Russian's voice is playing in the owner's ears now.
     private(set) var peerSpeaking = false
-    /// Why the link could not start (shown in the panel); nil when nothing to say.
+    /// Why the link could not start or stopped (shown in the panel); nil when nothing to say.
     var peerNotice: String?
 
     @ObservationIgnored private var peerLink: PeerLink?
     @ObservationIgnored private let peerVoices = PeerVoices()
     @ObservationIgnored private let peerWindows = PeerWindows()
+    /// This Ponte's own voice into the call (sender 0): the far side may echo it back (pe_is_peer_voice).
+    @ObservationIgnored private let selfWindows = PeerWindows()
     @ObservationIgnored private let peerMic = PeerMicGate()
 
     /// The relay (Info.plist PonteRelayURL; the defaults key peerRelayURL overrides it for tests).
@@ -1212,66 +1219,57 @@ final class AppModel {
         return URL(string: text)
     }
 
-    /// The Meet code: in the call app's window titles (Accessibility, which Ponte has for the push-to-talk key),
-    /// else in the browser's local tab list (PeerRules.browserTabPorts; BrowserOS serves one); nil when none.
-    func detectMeetCode() async -> String? {
-        if let code = meetCodeInWindowTitles() { return code }
-        for port in PeerRules.browserTabPorts {
-            guard let url = URL(string: "http://127.0.0.1:\(port)/json/list") else { continue }
-            var request = URLRequest(url: url, timeoutInterval: Double(PeerRules.tabListTimeoutMs) / 1000)
-            request.httpMethod = "GET"
-            guard let (data, _) = try? await URLSession.shared.data(for: request),
-                  let tabs = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { continue }
-            for tab in tabs where (tab["type"] as? String) == "page" {
-                if let address = tab["url"] as? String, address.contains("meet.google.com"),
-                   let code = PeerRules.meetCode(in: address) {
-                    return code
-                }
+    /// «Создать код»: a new random code from PeerRules.secretAlphabet, shown in groups.
+    func newPeerSecret() {
+        let alphabet = PeerRules.secretAlphabet
+        var bytes = [UInt8](repeating: 0, count: PeerRules.secretLength)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return }
+        // Rejection sampling keeps every symbol equally likely.
+        var code: [UInt8] = []
+        var pool = bytes
+        while code.count < PeerRules.secretLength {
+            if pool.isEmpty {
+                pool = [UInt8](repeating: 0, count: PeerRules.secretLength)
+                guard SecRandomCopyBytes(kSecRandomDefault, pool.count, &pool) == errSecSuccess else { return }
             }
+            let byte = pool.removeLast()
+            let limit = 256 - 256 % alphabet.count
+            if Int(byte) < limit { code.append(alphabet[Int(byte) % alphabet.count]) }
         }
-        return nil
-    }
-
-    private func meetCodeInWindowTitles() -> String? {
-        guard case .app(let bundleID) = source else { return nil }
-        for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID) {
-            let element = AXUIElementCreateApplication(app.processIdentifier)
-            var windows: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &windows) == .success,
-                  let list = windows as? [AXUIElement] else { continue }
-            for window in list {
-                var title: CFTypeRef?
-                if AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title) == .success,
-                   let text = title as? String, let code = PeerRules.meetCode(in: text) {
-                    return code
-                }
-            }
-        }
-        return nil
+        peerSecret = PeerRules.secretDisplay(String(decoding: code, as: UTF8.self))
+        peerNotice = nil
     }
 
     /// «Подключиться» / «Отключиться».
     func setPeer(on: Bool) {
         peerNotice = nil
         if on {
-            guard let code = PeerRules.meetCode(in: peerCode) else {
-                peerNotice = "Введите код встречи Meet, например abc-defg-hij."
+            guard let secret = PeerRules.secretNormalized(peerSecret) else {
+                peerNotice = "Нужен код русских из 12 знаков. Нажмите «Создать код» и отправьте его второму русскому (не португальцу)."
                 return
             }
             guard let relay = peerRelayURL else {
                 peerNotice = "Не задан адрес сервера связи."
                 return
             }
-            peerCode = code
+            peerSecret = PeerRules.secretDisplay(secret)
             peerLink?.stop()
-            let link = PeerLink(relay: relay, meetCode: code)
-            let windows = peerWindows, voices = peerVoices
+            let link = PeerLink(relay: relay, secret: secret)
+            let windows = peerWindows, voices = peerVoices, echo = echoGuard
+            voices.setDevice(headphonesDevice)
+            voices.onPlay = { echo.notePeerAudio(at: Date()) }
             link.onStatus = { [weak self] status, count in
                 MainActor.assumeIsolated {
                     guard let self, self.peerLink === link else { return }
                     self.peerStatus = status
                     self.peerCount = count
                     self.updatePeerMic()
+                }
+            }
+            link.onRoomFull = { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.peerLink === link else { return }
+                    self.peerNotice = "В этой комнате уже \(PeerRules.maxPeers) участников. Создайте новый код."
                 }
             }
             link.onVoice = { windows.record($0) }
@@ -1283,7 +1281,7 @@ final class AppModel {
             peerLink = link
             peerOn = true
             link.start()
-            PonteDiagnostics.log("peer link on, room \(link.roomID.prefix(8))")
+            PonteDiagnostics.log("peer link on")
         } else {
             peerLink?.stop()
             peerLink = nil
@@ -1297,8 +1295,7 @@ final class AppModel {
         attachPeer()
     }
 
-    /// The running lanes follow the link: the incoming lane drops another Ponte's Portuguese voice, the outgoing
-    /// lane's microphone also goes to the other Russians.
+    /// The running lanes follow the link: the outgoing lane's microphone also goes to the other Russians.
     private func attachPeer() {
         let mic = peerMic
         incomingLane?.dropsPhrase = incomingPhraseFilter()
@@ -1306,13 +1303,15 @@ final class AppModel {
         updatePeerMic()
     }
 
-    /// What the incoming lane must not translate: the owner's own voice coming back from the call
-    /// (lane_rules: ln_own_talk_drops) and, with «Русские в звонке», another Ponte's Portuguese voice (pe_is_peer_voice).
+    /// What the incoming lane must not translate: the owner's own voice coming back from the call (lane_rules:
+    /// ln_own_talk_drops; his own Portuguese voice and «Свой голос» echoed back, pe_is_peer_voice over selfWindows) and,
+    /// with «Русские в звонке», another Ponte's voice (pe_is_peer_voice over peerWindows).
     private func incomingPhraseFilter() -> (String, Date, Date) -> Bool {
-        let ownTalk = self.ownTalk
+        let ownTalk = self.ownTalk, mine = selfWindows
         let windows: PeerWindows? = peerLink == nil ? nil : peerWindows
         return { text, start, end in
-            ownTalk.drops(start: start, end: end) || (windows?.isPeerVoice(text, start: start, end: end) ?? false)
+            ownTalk.drops(start: start, end: end) || mine.isPeerVoice(text, start: start, end: end)
+                || (windows?.isPeerVoice(text, start: start, end: end) ?? false)
         }
     }
 

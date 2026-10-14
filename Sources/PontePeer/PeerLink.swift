@@ -1,18 +1,22 @@
 import AVFoundation
+import CommonCrypto
 import CryptoKit
 import Foundation
 import PonteAudio
 import PonteCore
 
-/// «Русские в звонке»: links the Ponte apps of the Russians in one Meet call through a WebSocket relay, so they hear
-/// each other's own Russian voice (the Portuguese side never does: it only goes through this link), and each Ponte
-/// knows when another one speaks Portuguese into the call, so it does not translate that voice back.
+/// «Русские в звонке»: links the Ponte apps of the Russians in one call through a WebSocket relay, so they hear each
+/// other's own Russian voice, and each Ponte knows when another one speaks into the call, so it does not translate
+/// that voice back.
 ///
-/// Everything is end to end encrypted: the room on the relay is SHA-256 of the Meet code, the key AES-GCM from
-/// another hash of it; the relay only forwards opaque frames. Plain frame (inside AES-GCM):
-///   [kind u8][sender u64 LE][seq u32 LE][payload]
+/// The secret is a code only the Russians share (PeerRules.secretNormalized), never the Meet code, which every
+/// participant of the call has. PBKDF2-HMAC-SHA256 (PeerRules.kdfIterations) derives, with two different salts, the
+/// room on the relay and the AES-GCM key, so the relay and its logs learn nothing useful. Plain frame (inside AES-GCM):
+///   [kind u8][sender u64 LE][seq u32 LE][sent ms i64 LE][payload]
 ///   audio: 16 kHz mono Int16 LE; voice: [voiceKind u8][state u8][UTF-8 text]; hello, bye: empty.
-/// The decisions (status, reconnect backoff, presence, frame size) come from PeerRules (peer_rules.t27).
+/// Stale or replayed frames are dropped (PeerRules.frameFresh, seqNewer). A voice still playing is announced again
+/// every PeerRules.voiceRefreshMs, so a lost end or a Russian who joins later never leaves a window open for good.
+/// The decisions (status, backoff, presence, limits, frame size) come from PeerRules (peer_rules.t27).
 public final class PeerLink: @unchecked Sendable {
     public struct VoiceEvent: Sendable {
         public let sender: UInt64
@@ -20,10 +24,20 @@ public final class PeerLink: @unchecked Sendable {
         public let state: Int
         public let text: String
         public let receivedAt: Date
+
+        public init(sender: UInt64, kind: Int, state: Int, text: String, receivedAt: Date) {
+            self.sender = sender
+            self.kind = kind
+            self.state = state
+            self.text = text
+            self.receivedAt = receivedAt
+        }
     }
 
     /// Status (PeerRules.status*) and how many other Russians are in the room; on the main queue.
     public var onStatus: ((Int, Int) -> Void)?
+    /// The room already has PeerRules.maxPeers members; the link stops. On the main queue.
+    public var onRoomFull: (() -> Void)?
     /// Another Ponte speaks into the call (TTS or the owner's own voice) or stopped; on the link queue.
     public var onVoice: ((VoiceEvent) -> Void)?
     /// A frame of another Russian's voice (16 kHz mono Float32); on the link queue.
@@ -31,45 +45,44 @@ public final class PeerLink: @unchecked Sendable {
     /// Another Russian left (bye) or went silent past PeerRules.peerTimeoutMs; on the link queue.
     public var onPeerGone: ((UInt64) -> Void)?
 
-    public let roomID: String
     public let sender = UInt64.random(in: 1...UInt64.max)
 
-    private let url: URL
-    private let key: SymmetricKey
+    private static let headerBytes = 21
+    private let relay: URL
+    private let secret: String
     private let queue = DispatchQueue(label: "app.ponte.peer.link")
     private let events = SocketEvents()
     private lazy var session = URLSession(configuration: .ephemeral, delegate: events, delegateQueue: nil)
+    private var url: URL?
+    private var key: SymmetricKey?
     private var task: URLSessionWebSocketTask?
     private var running = false
     private var connected = false
+    private var roomFull = false
     private var failures = 0
     private var seq: UInt32 = 0
     private var peers: [UInt64: Date] = [:]
+    private var lastSeq: [UInt64: UInt32] = [:]
+    /// Voices of this Ponte still playing into the call: kind → text (announced again on every tick).
+    private var activeVoices: [Int: String] = [:]
     private var helloTimer: DispatchSourceTimer?
     private var lastStatus: (Int, Int) = (-1, -1)
     // Microphone → 16 kHz frames.
     private var converter: PCM.Converter?
     private var pendingSamples: [Int16] = []
 
-    /// `relay`: the relay's base URL (wss://host/r/); `meetCode`: the Meet code both Russians entered (abc-defg-hij).
-    public init(relay: URL, meetCode: String) {
-        let code = meetCode.lowercased()
-        roomID = SHA256.hash(data: Data("ponte-room-v1|\(code)".utf8)).map { String(format: "%02x", $0) }.joined()
-        key = SymmetricKey(data: SHA256.hash(data: Data("ponte-key-v1|\(code)".utf8)))
-        url = relay.appendingPathComponent(roomID)
+    /// `relay`: the relay's base URL (wss://host/r/); `secret`: the code the Russians share, normalized
+    /// (PeerRules.secretNormalized).
+    public init(relay: URL, secret: String) {
+        self.relay = relay
+        self.secret = secret
         events.onOpen = { [weak self] task in
             guard let self else { return }
-            self.queue.async {
-                guard task === self.task, self.running else { return }
-                self.connected = true
-                self.failures = 0
-                self.send(kind: PeerRules.msgHello, payload: Data())
-                self.reportStatus()
-            }
+            self.queue.async { self.opened(task) }
         }
-        events.onClose = { [weak self] task in
+        events.onClose = { [weak self] task, code in
             guard let self else { return }
-            self.queue.async { self.dropped(task) }
+            self.queue.async { self.dropped(task, closeCode: code) }
         }
     }
 
@@ -79,15 +92,22 @@ public final class PeerLink: @unchecked Sendable {
         queue.async { [self] in
             guard !running else { return }
             running = true
+            roomFull = false
             failures = 0
+            reportStatus()
+            if key == nil {
+                // Slow on purpose (PBKDF2): done once, off the main thread.
+                let room = Self.derive(secret, salt: "ponte-room-v2")
+                key = SymmetricKey(data: Self.derive(secret, salt: "ponte-key-v2"))
+                url = relay.appendingPathComponent(room.map { String(format: "%02x", $0) }.joined())
+            }
             connect()
             let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(deadline: .now() + .milliseconds(PeerRules.helloEveryMs),
-                           repeating: .milliseconds(PeerRules.helloEveryMs))
+            let every = min(PeerRules.helloEveryMs, PeerRules.voiceRefreshMs)
+            timer.schedule(deadline: .now() + .milliseconds(every), repeating: .milliseconds(every))
             timer.setEventHandler { [weak self] in self?.tick() }
             timer.resume()
             helloTimer = timer
-            reportStatus()
         }
     }
 
@@ -102,6 +122,8 @@ public final class PeerLink: @unchecked Sendable {
             task = nil
             connected = false
             peers.removeAll()
+            lastSeq.removeAll()
+            activeVoices.removeAll()
             reportStatus()
         }
     }
@@ -140,22 +162,42 @@ public final class PeerLink: @unchecked Sendable {
     }
 
     /// This Ponte starts or stops speaking into the call: PeerRules.voiceTTS with the Portuguese text, or voiceOwn.
+    /// A voice that is still playing is announced again on every tick.
     public func sendVoice(kind: Int, state: Int, text: String) {
         queue.async { [self] in
-            var payload = Data([UInt8(truncatingIfNeeded: kind), UInt8(truncatingIfNeeded: state)])
-            payload.append(Data(text.utf8.prefix(4000)))
-            send(kind: PeerRules.msgVoice, payload: payload)
+            if state == PeerRules.voiceStart { activeVoices[kind] = text } else { activeVoices.removeValue(forKey: kind) }
+            sendVoiceFrame(kind: kind, state: state, text: text)
         }
+    }
+
+    private func sendVoiceFrame(kind: Int, state: Int, text: String) {
+        var payload = Data([UInt8(truncatingIfNeeded: kind), UInt8(truncatingIfNeeded: state)])
+        payload.append(Data(text.utf8.prefix(4000)))
+        send(kind: PeerRules.msgVoice, payload: payload)
     }
 
     // MARK: Link (on `queue`)
 
     private func connect() {
-        guard running else { return }
+        guard running, !roomFull, let url else { return }
         let task = session.webSocketTask(with: url)
         self.task = task
         task.resume()
         receive(on: task)
+    }
+
+    private func opened(_ task: URLSessionWebSocketTask) {
+        guard task === self.task, running else { return }
+        connected = true
+        send(kind: PeerRules.msgHello, payload: Data())
+        for (kind, text) in activeVoices { sendVoiceFrame(kind: kind, state: PeerRules.voiceStart, text: text) }
+        reportStatus()
+        // The relay accepts and then closes a full room: failures only count as overcome once the socket held.
+        queue.asyncAfter(deadline: .now() + .milliseconds(PeerRules.stableMs)) { [weak self] in
+            guard let self, task === self.task, self.connected, self.failures != 0 else { return }
+            self.failures = 0
+            self.reportStatus()
+        }
     }
 
     private func receive(on task: URLSessionWebSocketTask) {
@@ -168,19 +210,27 @@ public final class PeerLink: @unchecked Sendable {
                     if case .data(let data) = message { self.open(data) }
                     self.receive(on: task)
                 case .failure:
-                    self.dropped(task)
+                    self.dropped(task, closeCode: task.closeCode.rawValue)
                 }
             }
         }
     }
 
-    private func dropped(_ task: URLSessionWebSocketTask) {
+    private func dropped(_ task: URLSessionWebSocketTask, closeCode: Int) {
         guard running, task === self.task else { return }
         connected = false
         self.task = nil
-        failures += 1
         for peer in peers.keys { onPeerGone?(peer) }
         peers.removeAll()
+        if !PeerRules.reconnects(afterCloseCode: closeCode) {
+            roomFull = true
+            failures = max(failures, PeerRules.failedAfter)
+            reportStatus()
+            let handler = onRoomFull
+            DispatchQueue.main.async { handler?() }
+            return
+        }
+        failures += 1
         reportStatus()
         let delay = PeerRules.reconnectDelayMs(attempt: failures - 1)
         queue.asyncAfter(deadline: .now() + .milliseconds(delay)) { [weak self] in
@@ -192,48 +242,59 @@ public final class PeerLink: @unchecked Sendable {
     private func tick() {
         guard running else { return }
         send(kind: PeerRules.msgHello, payload: Data())
+        for (kind, text) in activeVoices { sendVoiceFrame(kind: kind, state: PeerRules.voiceStart, text: text) }
         let now = Date()
         let gone = peers.filter { !PeerRules.peerAlive(msSinceHello: Int64(now.timeIntervalSince($0.value) * 1000)) }.keys
         for peer in gone {
             peers.removeValue(forKey: peer)
+            lastSeq.removeValue(forKey: peer)
             onPeerGone?(peer)
         }
         reportStatus()
     }
 
     private func send(kind: UInt8, payload: Data) {
-        guard let task else { return }
+        guard let task, connected, let key else { return }
         seq &+= 1
         var plain = Data([kind])
         withUnsafeBytes(of: sender.littleEndian) { plain.append(contentsOf: $0) }
         withUnsafeBytes(of: seq.littleEndian) { plain.append(contentsOf: $0) }
+        withUnsafeBytes(of: Self.ms(Date()).littleEndian) { plain.append(contentsOf: $0) }
         plain.append(payload)
-        guard connected, let sealed = try? AES.GCM.seal(plain, using: key).combined else { return }
+        guard let sealed = try? AES.GCM.seal(plain, using: key).combined else { return }
         task.send(.data(sealed)) { [weak self] error in
             guard let self, error != nil else { return }
-            self.queue.async { self.dropped(task) }
+            self.queue.async { self.dropped(task, closeCode: task.closeCode.rawValue) }
         }
     }
 
     private func open(_ data: Data) {
-        guard let box = try? AES.GCM.SealedBox(combined: data),
-              let plain = try? AES.GCM.open(box, using: key), plain.count >= 13 else { return }
-        let kind = plain[plain.startIndex]
-        let from = plain.subdata(in: plain.startIndex + 1 ..< plain.startIndex + 9).withUnsafeBytes { $0.loadUnaligned(as: UInt64.self) }
-        let peer = UInt64(littleEndian: from)
-        guard peer != sender else { return }
-        let payload = plain.subdata(in: plain.startIndex + 13 ..< plain.endIndex)
+        guard let key, let box = try? AES.GCM.SealedBox(combined: data),
+              let plain = try? AES.GCM.open(box, using: key), plain.count >= Self.headerBytes else { return }
+        let bytes = [UInt8](plain)
+        let kind = bytes[0]
+        let peer = bytes[1..<9].enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << (8 * UInt64($1.offset)) }
+        let frameSeq = bytes[9..<13].enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) }
+        let sentMs = Int64(bitPattern: bytes[13..<21].enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << (8 * UInt64($1.offset)) })
         let now = Date()
+        guard peer != sender, PeerRules.frameFresh(sentMs: sentMs, nowMs: Self.ms(now)) else { return }
+        let last = lastSeq[peer]
+        guard PeerRules.seqNewer(seq: frameSeq, lastSeq: last ?? 0, hasLast: last != nil) else { return }
+        if peers[peer] == nil, kind != PeerRules.msgBye, !PeerRules.acceptsNewPeer(knownPeers: peers.count) { return }
+        lastSeq[peer] = frameSeq
+        if failures != 0 {
+            failures = 0   // the room answers: the link holds
+        }
+        let payload = Array(bytes[Self.headerBytes...])
         switch kind {
         case PeerRules.msgBye:
-            peers.removeValue(forKey: peer)
-            onPeerGone?(peer)
+            if peers.removeValue(forKey: peer) != nil { onPeerGone?(peer) }
+            lastSeq.removeValue(forKey: peer)
             reportStatus()
             return
         default:
-            let isNew = peers[peer] == nil
             peers[peer] = now
-            if isNew { reportStatus() }
+            reportStatus()
         }
         switch kind {
         case PeerRules.msgAudio:
@@ -241,19 +302,16 @@ public final class PeerLink: @unchecked Sendable {
             guard count > 0, let buffer = AVAudioPCMBuffer(pcmFormat: PCM.monoFormat(sampleRate: PeerRules.sampleRate),
                                                            frameCapacity: AVAudioFrameCount(count)),
                   let out = buffer.floatChannelData else { return }
-            payload.withUnsafeBytes { raw in
-                for i in 0..<count {
-                    let s = Int16(littleEndian: raw.loadUnaligned(fromByteOffset: i * 2, as: Int16.self))
-                    out[0][i] = Float(s) / Float(Int16.max)
-                }
+            for i in 0..<count {
+                let s = Int16(bitPattern: UInt16(payload[2 * i]) | UInt16(payload[2 * i + 1]) << 8)
+                out[0][i] = Float(s) / Float(Int16.max)
             }
             buffer.frameLength = AVAudioFrameCount(count)
             onAudio?(peer, buffer)
         case PeerRules.msgVoice:
             guard payload.count >= 2 else { return }
-            let text = String(decoding: payload.dropFirst(2), as: UTF8.self)
-            onVoice?(VoiceEvent(sender: peer, kind: Int(payload[payload.startIndex]),
-                                state: Int(payload[payload.startIndex + 1]), text: text, receivedAt: now))
+            let text = String(decoding: payload[2...], as: UTF8.self)
+            onVoice?(VoiceEvent(sender: peer, kind: Int(payload[0]), state: Int(payload[1]), text: text, receivedAt: now))
         default:
             break   // hello: presence only
         }
@@ -267,12 +325,31 @@ public final class PeerLink: @unchecked Sendable {
         let handler = onStatus
         DispatchQueue.main.async { handler?(current.0, current.1) }
     }
+
+    static func ms(_ date: Date) -> Int64 { Int64((date.timeIntervalSince1970 * 1000).rounded()) }
+
+    /// PBKDF2-HMAC-SHA256 of the secret, 32 bytes.
+    static func derive(_ secret: String, salt: String) -> Data {
+        var out = [UInt8](repeating: 0, count: 32)
+        let password = Array(secret.utf8)
+        let saltBytes = Array(salt.utf8)
+        _ = password.withUnsafeBufferPointer { p in
+            saltBytes.withUnsafeBufferPointer { s in
+                CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2),
+                                     p.baseAddress.map { UnsafeRawPointer($0).assumingMemoryBound(to: Int8.self) }, password.count,
+                                     s.baseAddress, saltBytes.count,
+                                     CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256), UInt32(PeerRules.kdfIterations),
+                                     &out, out.count)
+            }
+        }
+        return Data(out)
+    }
 }
 
 /// URLSession reports the socket opening and closing to its delegate only.
 private final class SocketEvents: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
     var onOpen: ((URLSessionWebSocketTask) -> Void)?
-    var onClose: ((URLSessionWebSocketTask) -> Void)?
+    var onClose: ((URLSessionWebSocketTask, Int) -> Void)?
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
         onOpen?(webSocketTask)
@@ -280,10 +357,10 @@ private final class SocketEvents: NSObject, URLSessionWebSocketDelegate, @unchec
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-        onClose?(webSocketTask)
+        onClose?(webSocketTask, closeCode.rawValue)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let socket = task as? URLSessionWebSocketTask { onClose?(socket) }
+        if let socket = task as? URLSessionWebSocketTask { onClose?(socket, socket.closeCode.rawValue) }
     }
 }

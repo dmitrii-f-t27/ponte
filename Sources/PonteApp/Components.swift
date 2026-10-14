@@ -162,7 +162,7 @@ struct LineRow: View {
                 if marker == TextRules.MARK_KEYBOARD {
                     Image(systemName: "keyboard")
                         .accessibilityLabel("Напечатано")
-                        .help("Напечатано, а не сказано голосом")
+                        .accessibilityHint("Напечатано, а не сказано голосом")
                 }
                 Text(line.at, format: .dateTime.hour().minute().second())
                 if let latency = line.latency {

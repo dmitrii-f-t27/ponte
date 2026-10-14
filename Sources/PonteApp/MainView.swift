@@ -421,7 +421,7 @@ private struct TextComposer: View {
                 .controlSize(.large)
                 .disabled(!TextRules.sayEnabled(check: check))
                 .keyboardShortcut(model.commandReturnShortcut(TextRules.CMDRET_SAY))
-                .help("⌘↩ — сказать, ↩ — новая строка")
+                .accessibilityHint("⌘↩ — сказать, ↩ — новая строка")
                 .accessibilityHint("Перевести текст и сказать его в звонок (⌘↩)")
             }
             if let text = noteText(note) {

@@ -3,6 +3,7 @@ import Foundation
 import os
 import PonteAudio
 import PonteCore
+import PontePeer
 
 // One direction of the call:
 // AudioSource → Transcriber → (.final) → Translator (+ last 4 phrases as context)
@@ -95,6 +96,7 @@ final class EchoGuard: @unchecked Sendable {
     private var speakerOutput = false
     private var speaking = false
     private var lastSpeechAt: Date?
+    private var lastPeerAt: Date?
 
     func configure(speakerOutput: Bool) {
         lock.withLock {
@@ -111,10 +113,15 @@ final class EchoGuard: @unchecked Sendable {
         }
     }
 
+    /// «Русские в звонке»: another Russian's voice just played (on speakers the mic would hear it, like the Russian voice).
+    func notePeerAudio(at now: Date) { lock.withLock { lastPeerAt = now } }
+
     func blocksMic(at now: Date) -> Bool {
         lock.withLock {
             AppRules.echoGuardBlocksMic(speakerOutput: speakerOutput, incomingSpeaking: speaking,
                                         msSinceSpeech: lastSpeechAt.map { millis(now.timeIntervalSince($0)) } ?? -1)
+                || AppRules.echoGuardBlocksMic(speakerOutput: speakerOutput, incomingSpeaking: false,
+                                               msSinceSpeech: lastPeerAt.map { millis(now.timeIntervalSince($0)) } ?? -1)
         }
     }
 }
@@ -227,6 +234,10 @@ final class TranslationLane {
         self.speechOutputEnabled = speechOutputEnabled
         self.clock = clock
         self.intake = AudioIntake(clock: clock)
+        // «Свой голос»: the other Pontes are told only while the owner actually speaks, not for the whole mode.
+        intake.onOwnTalk = { [weak self] on in
+            DispatchQueue.main.async { self?.onEvent(.voiceOut(text: nil, playing: on)) }
+        }
     }
 
     var audioStats: LaneAudioStats { intake.stats() }
@@ -317,7 +328,6 @@ final class TranslationLane {
     func setOwnVoice(_ on: Bool) {
         guard on != ownVoice else { return }
         ownVoice = on
-        onEvent(.voiceOut(text: nil, playing: on))
         if !on { intake.setRelay(nil) }
         if AppRules.cancelsSpeech(event: AppRules.SCE_OWN_VOICE, value: on) { cancelSpeech() }
         if on, let player { intake.setRelay(LiveRelay(player: player)) }
@@ -450,7 +460,7 @@ final class TranslationLane {
                 let start = timing.map { $0.audioEndArrivedAt.addingTimeInterval(-max(0, $0.audioEnd - $0.audioStart)) }
                     ?? end.addingTimeInterval(-Double(AppRules.PHRASE_FALLBACK_MS) / 1000)
                 if dropsPhrase(phrase, start, end) {
-                    log.info("dropped a phrase that was not the other side: \(phrase, privacy: .public)")
+                    log.info("dropped a phrase that was not the other side: \(phrase, privacy: .private)")
                     PonteDiagnostics.log("incoming phrase dropped (own voice from the call)")
                     return
                 }
@@ -672,6 +682,11 @@ final class AudioIntake: @unchecked Sendable {
     private var echoGuard: EchoGuard?
     private var relay: LiveRelay?
     private var peerSink: ((AVAudioPCMBuffer, Bool) -> Void)?
+    /// «Свой голос»: whether the owner is speaking into the call now (mic signal with PeerRules.vadHangoverMs).
+    private var ownTalking = false
+    private var lastOwnSignalAt: Date?
+    /// Called (on the capture thread) when `ownTalking` changes.
+    var onOwnTalk: ((Bool) -> Void)?
     private var current = LaneAudioStats()
     private let clock: @Sendable () -> Date
 
@@ -692,6 +707,13 @@ final class AudioIntake: @unchecked Sendable {
         let old = lock.withLock { () -> LiveRelay? in
             defer { self.relay = relay }
             return self.relay
+        }
+        if relay == nil {
+            let ended = lock.withLock { () -> Bool in
+                defer { ownTalking = false; lastOwnSignalAt = nil }
+                return ownTalking
+            }
+            if ended { onOwnTalk?(false) }
         }
         if let stats = old?.stop() {
             PonteDiagnostics.log("own voice relay stopped: sent \(stats.sent), dropped \(stats.dropped), trimmed \(stats.trimmed), refills \(stats.refills), max queued \(Int(stats.maxQueuedMs)) ms")
@@ -715,9 +737,23 @@ final class AudioIntake: @unchecked Sendable {
             if signal { current.lastSignalAt = now }
             return (self.segment, self.echoGuard, self.relay, self.peerSink)
         }
-        relay?.push(buffer)
-        peer?(buffer, signal)
+        // On speakers the mic also hears Ponte's Russian voice and the other Russians: none of it goes on.
         let blocks = echo?.blocksMic(at: now) ?? false
+        if !blocks {
+            relay?.push(buffer)
+            peer?(buffer, signal)
+        }
+        if relay != nil {
+            let change: Bool? = lock.withLock {
+                if signal && !blocks { lastOwnSignalAt = now }
+                let since = lastOwnSignalAt.map { millis(now.timeIntervalSince($0)) } ?? -1
+                let talking = !blocks && PeerRules.vadSends(hasSignal: signal, msSinceSignal: since)
+                guard talking != ownTalking else { return nil }
+                ownTalking = talking
+                return talking
+            }
+            if let change { onOwnTalk?(change) }
+        }
         guard AppRules.intakeForwards(hasSegment: segment != nil, echoBlocks: blocks), let segment else { return }
         segment.append(buffer)
     }
