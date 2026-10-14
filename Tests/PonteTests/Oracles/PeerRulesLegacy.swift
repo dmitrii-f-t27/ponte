@@ -31,6 +31,8 @@ enum PeerRulesLegacy {
     static let helloEveryMs = 5000
     static let peerTimeoutMs = 15_000
     static let vadHangoverMs = 600
+    static let maxAudioInFlight = 6
+    static func audioSends(inFlight: Int) -> Bool { inFlight >= 0 && inFlight < 6 }
     static let stableMs = 3000
     static let closeRoomFull = 4001
 

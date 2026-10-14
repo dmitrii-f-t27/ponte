@@ -69,6 +69,9 @@ pub const PE_CLOSE_ROOM_FULL : i64 = 4001;
 ; --- The microphone to the peers ----------------------------------------------------------------------------------
 ; Frames keep going this long after the last frame with signal (word ends and short pauses are not cut).
 pub const PE_VAD_HANGOVER_MS : i64 = 600;
+; Backpressure on a slow uplink (review 2026-10-14): at most this many audio frames handed to the socket and not yet
+; sent; a newer frame is dropped instead of letting the voice fall behind (6 frames = 240 ms).
+pub const PE_MAX_AUDIO_IN_FLIGHT : i64 = 6;
 
 ; --- Jitter buffer of a peer's voice (as au_relay_action, deeper for the network) ----------------------------------
 pub const PE_JITTER_TARGET_MS : f64 = 120.0;
@@ -284,6 +287,11 @@ pub fn pe_sends_mic(link_up: bool, muted: bool, headphones_like: bool, key_held:
 ; A frame goes out when it has signal, or within PE_VAD_HANGOVER_MS after the last frame that had.
 pub fn pe_vad_sends(has_signal: bool, ms_since_signal: i64) -> bool {
     return has_signal or (ms_since_signal >= 0 and ms_since_signal < PE_VAD_HANGOVER_MS);
+}
+
+; audioSends: one more audio frame may go to the socket now.
+pub fn pe_audio_sends(in_flight: i64) -> bool {
+    return in_flight >= 0 and in_flight < PE_MAX_AUDIO_IN_FLIGHT;
 }
 
 ; --- Jitter buffer --------------------------------------------------------------------------------------------------
@@ -661,6 +669,10 @@ pub fn pe_fixture_display_is(text: i64, expected: i64) -> bool {
 }
 
 test pe_link_rules {
+    assert pe_audio_sends(0) == true;
+    assert pe_audio_sends(5) == true;
+    assert pe_audio_sends(6) == false;
+    assert pe_audio_sends(-1) == false;
     // Status: off, linked, waiting, failed, connecting.
     assert pe_status(false, true, 2, 0) == PE_STATUS_OFF;
     assert pe_status(false, false, 0, 9) == PE_STATUS_OFF;

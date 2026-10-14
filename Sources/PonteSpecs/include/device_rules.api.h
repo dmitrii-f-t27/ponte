@@ -266,6 +266,7 @@ bool dv_output_needs_rescue(int64_t kind);
 int64_t dv_pick_rescue_output_index(int64_t kinds[static 256], int64_t output_channels[static 256], int64_t selectable[static 256], int64_t count);
 bool dv_auto_mic_allowed(int64_t kind, int64_t channels);
 bool dv_headset_mic_matches(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t i, int64_t output);
+bool dv_mic_is_output_headset(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t count, int64_t mic_index, int64_t output_index);
 int64_t dv_pick_auto_mic_index(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t input_channels[static 256], int64_t count, int64_t output_index);
 int64_t dv_fixture(int64_t index, uint8_t text[static 8192], int64_t at);
 int64_t dv_fixture_push(int64_t index, uint8_t text[static 8192], int64_t at, uint32_t offsets[static 256], uint32_t lengths[static 256], int64_t slot);

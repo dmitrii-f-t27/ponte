@@ -38,6 +38,7 @@
 #define PE_STABLE_MS 3000
 #define PE_CLOSE_ROOM_FULL 4001
 #define PE_VAD_HANGOVER_MS 600
+#define PE_MAX_AUDIO_IN_FLIGHT 6
 #define PE_JITTER_TARGET_MS 120.0
 #define PE_JITTER_MAX_MS 400.0
 #define PE_JITTER_SLACK_MS 40.0
@@ -129,6 +130,7 @@ bool pe_accepts_new_peer(int64_t known_peers);
 bool pe_reconnects(int64_t close_code);
 bool pe_sends_mic(bool link_up, bool muted, bool headphones_like, bool key_held);
 bool pe_vad_sends(bool has_signal, int64_t ms_since_signal);
+bool pe_audio_sends(int64_t in_flight);
 int64_t pe_jitter_action(bool filling, double pending_ms, double queued_ms, bool output_running, double low_ms, int64_t low_count);
 bool pe_jitter_window_ends(int64_t low_count);
 bool pe_jitter_trims(double pending_ms, double oldest_ms);

@@ -134,6 +134,10 @@ public enum PeerRules {
         pe_vad_sends(hasSignal, msSinceSignal)
     }
 
+    /// Backpressure: one more audio frame may go to the socket (`inFlight` frames not yet sent).
+    public static let maxAudioInFlight = Int(PE_MAX_AUDIO_IN_FLIGHT)
+    public static func audioSends(inFlight: Int) -> Bool { pe_audio_sends(Int64(inFlight)) }
+
     // MARK: - Jitter buffer of a peer's voice
 
     public static let jitterTargetMs: Double = PE_JITTER_TARGET_MS
@@ -215,24 +219,6 @@ public enum PeerRules {
                                    phraseEndMs: Int64, windowStartMs: Int64, windowEndMs: Int64) -> Bool {
         pe_is_peer_voice(Int64(kind), isSelf, Int64(phraseWords), Int64(containmentMilli), phraseStartMs, phraseEndMs,
                          windowStartMs, windowEndMs)
-    }
-
-    // MARK: - Deprecated (version 2 signatures, kept only until the callers move to the rules above)
-
-    /// Deprecated: `windowEndMs(endMs:lastSeenMs:nowMs:refreshed:)` with `refreshed: true` (version 2 treated every
-    /// window as refreshed). Remove once PeerWindows passes `refreshed`.
-    @available(*, deprecated, message: "Use windowEndMs(endMs:lastSeenMs:nowMs:refreshed:)")
-    public static func windowEndMs(endMs: Int64, lastSeenMs: Int64, nowMs: Int64) -> Int64 {
-        windowEndMs(endMs: endMs, lastSeenMs: lastSeenMs, nowMs: nowMs, refreshed: true)
-    }
-
-    /// Deprecated: `isPeerVoice(kind:isSelf:phraseWords:...)` with `isSelf: false` and `phraseWords: minWords`
-    /// (version 2 neither knew whose window it was nor counted words). Remove once PeerWindows passes both.
-    @available(*, deprecated, message: "Use isPeerVoice(kind:isSelf:phraseWords:containmentMilli:...)")
-    public static func isPeerVoiceV2(kind: Int, containmentMilli: Int, phraseStartMs: Int64, phraseEndMs: Int64,
-                                     windowStartMs: Int64, windowEndMs: Int64) -> Bool {
-        isPeerVoice(kind: kind, isSelf: false, phraseWords: minWords, containmentMilli: containmentMilli,
-                    phraseStartMs: phraseStartMs, phraseEndMs: phraseEndMs, windowStartMs: windowStartMs, windowEndMs: windowEndMs)
     }
 
     // MARK: - Bytes (the differential tests also pass invalid UTF-8)

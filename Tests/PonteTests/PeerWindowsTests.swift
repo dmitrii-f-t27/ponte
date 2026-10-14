@@ -2,7 +2,7 @@ import Foundation
 @testable import PontePeer
 import Testing
 
-/// «Русские в звонке»: which incoming phrases are a Ponte's own voice (PeerWindows over PeerRules.isPeerVoiceV2).
+/// «Русские в звонке»: which incoming phrases are a Ponte's own voice (PeerWindows over PeerRules.isPeerVoice).
 @Suite("Peer voice windows") struct PeerWindowsTests {
     private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
 

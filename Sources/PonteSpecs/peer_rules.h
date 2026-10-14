@@ -42,6 +42,7 @@
 #define PE_STABLE_MS 3000
 #define PE_CLOSE_ROOM_FULL 4001
 #define PE_VAD_HANGOVER_MS 600
+#define PE_MAX_AUDIO_IN_FLIGHT 6
 #define PE_JITTER_TARGET_MS 120.0
 #define PE_JITTER_MAX_MS 400.0
 #define PE_JITTER_SLACK_MS 40.0
@@ -135,6 +136,7 @@ bool pe_accepts_new_peer(int64_t known_peers);
 bool pe_reconnects(int64_t close_code);
 bool pe_sends_mic(bool link_up, bool muted, bool headphones_like, bool key_held);
 bool pe_vad_sends(bool has_signal, int64_t ms_since_signal);
+bool pe_audio_sends(int64_t in_flight);
 int64_t pe_jitter_action(bool filling, double pending_ms, double queued_ms, bool output_running, double low_ms, int64_t low_count);
 bool pe_jitter_window_ends(int64_t low_count);
 bool pe_jitter_trims(double pending_ms, double oldest_ms);
@@ -214,6 +216,10 @@ bool pe_sends_mic(bool link_up, bool muted, bool headphones_like, bool key_held)
 
 bool pe_vad_sends(bool has_signal, int64_t ms_since_signal) {
     return (has_signal || ((ms_since_signal >= 0) && (ms_since_signal < PE_VAD_HANGOVER_MS)));
+}
+
+bool pe_audio_sends(int64_t in_flight) {
+    return ((in_flight >= 0) && (in_flight < PE_MAX_AUDIO_IN_FLIGHT));
 }
 
 int64_t pe_jitter_action(bool filling, double pending_ms, double queued_ms, bool output_running, double low_ms, int64_t low_count) {
@@ -600,6 +606,10 @@ bool pe_fixture_display_is(int64_t text, int64_t expected) {
    ------------------------------------------------------- */
 
 void test_pe_link_rules(void) {
+    assert((pe_audio_sends(0) == true));
+    assert((pe_audio_sends(5) == true));
+    assert((pe_audio_sends(6) == false));
+    assert((pe_audio_sends(-1) == false));
     assert((pe_status(false, true, 2, 0) == PE_STATUS_OFF));
     assert((pe_status(false, false, 0, 9) == PE_STATUS_OFF));
     assert((pe_status(true, true, 1, 0) == PE_STATUS_LINKED));

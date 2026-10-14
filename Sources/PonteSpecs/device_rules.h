@@ -272,6 +272,7 @@ bool dv_output_needs_rescue(int64_t kind);
 int64_t dv_pick_rescue_output_index(int64_t kinds[static 256], int64_t output_channels[static 256], int64_t selectable[static 256], int64_t count);
 bool dv_auto_mic_allowed(int64_t kind, int64_t channels);
 bool dv_headset_mic_matches(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t i, int64_t output);
+bool dv_mic_is_output_headset(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t count, int64_t mic_index, int64_t output_index);
 int64_t dv_pick_auto_mic_index(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t input_channels[static 256], int64_t count, int64_t output_index);
 int64_t dv_fixture(int64_t index, uint8_t text[static 8192], int64_t at);
 int64_t dv_fixture_push(int64_t index, uint8_t text[static 8192], int64_t at, uint32_t offsets[static 256], uint32_t lengths[static 256], int64_t slot);
@@ -1033,6 +1034,17 @@ bool dv_headset_mic_matches(uint8_t text[static 8192], uint32_t name_offsets[sta
     return dv_equal(text, name_offsets[i], name_lengths[i], name_offsets[output], name_lengths[output]);
 }
 
+bool dv_mic_is_output_headset(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t count, int64_t mic_index, int64_t output_index) {
+    int64_t n = dv_list_count(count);
+    if (((((mic_index < 0) || (output_index < 0)) || (mic_index >= n)) || (output_index >= n))) {
+        return false;
+    }
+    if ((dv_is_headphones_like(kinds[output_index]) == false)) {
+        return false;
+    }
+    return dv_headset_mic_matches(text, name_offsets, name_lengths, kinds, mic_index, output_index);
+}
+
 int64_t dv_pick_auto_mic_index(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t input_channels[static 256], int64_t count, int64_t output_index) {
     int64_t n = dv_list_count(count);
     int64_t i = 0;
@@ -1700,6 +1712,26 @@ void test_dv_rescue_output(void) {
     assert((dv_pick_rescue_output_index(kinds, outs, sel, 3) == 2));
 }
 
+void test_dv_mic_headset(void) {
+    uint8_t t[8192] = { [0 ... (8192) - 1] = 0 };
+    uint32_t offs[256] = { [0 ... (256) - 1] = 0 };
+    uint32_t lens[256] = { [0 ... (256) - 1] = 0 };
+    int64_t kinds[256] = { [0 ... (256) - 1] = 0 };
+    int64_t at = dv_fixture_push(DV_FX_MBP_MIC, t, 0, offs, lens, 0);
+    at = dv_fixture_push(DV_FX_MBP_SPEAKERS, t, at, offs, lens, 1);
+    at = dv_fixture_push(DV_FX_MBP_MIC, t, at, offs, lens, 2);
+    at = dv_fixture_push(DV_FX_MBP_MIC, t, at, offs, lens, 3);
+    kinds[0] = DV_KIND_BUILT_IN_MIC;
+    kinds[1] = DV_KIND_BUILT_IN_SPEAKER;
+    kinds[2] = DV_KIND_BLUETOOTH;
+    kinds[3] = DV_KIND_BLUETOOTH;
+    assert((dv_mic_is_output_headset(t, offs, lens, kinds, 4, 2, 3) == true));
+    assert((dv_mic_is_output_headset(t, offs, lens, kinds, 4, 0, 3) == false));
+    assert((dv_mic_is_output_headset(t, offs, lens, kinds, 4, 0, 1) == false));
+    assert((dv_mic_is_output_headset(t, offs, lens, kinds, 4, -1, 3) == false));
+    assert((dv_mic_is_output_headset(t, offs, lens, kinds, 4, 2, 9) == false));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1718,7 +1750,8 @@ int main(void) {
     test_dv_auto_mic();
     test_dv_hear_menu();
     test_dv_rescue_output();
-    printf("All %d tests passed.\n", 10);
+    test_dv_mic_headset();
+    printf("All %d tests passed.\n", 11);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

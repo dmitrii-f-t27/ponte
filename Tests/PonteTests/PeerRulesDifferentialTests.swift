@@ -571,6 +571,13 @@ private typealias L = PeerRulesLegacy
         #expect(drops(F.voiceTTS, isSelf: true, "Dez mil?", said: price, 69_000, 70_000, window: 10_000, own))
     }
 
+    @Test func audioBackpressure() {
+        let log = DiffLog("audioSends")
+        log.check(F.maxAudioInFlight, L.maxAudioInFlight, "maxAudioInFlight")
+        for n in -5...40 { log.check(F.audioSends(inFlight: n), L.audioSends(inFlight: n), "\(n)") }
+        log.finish(minimumCases: 40)
+    }
+
     // MARK: - Inputs
 
     /// The spec's own test texts (pe_fixture).

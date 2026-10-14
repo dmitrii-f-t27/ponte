@@ -149,6 +149,8 @@ int64_t ln_latency_ms(int64_t end_ms, int64_t ready_ms);
 int32_t ln_context_overflow(int32_t count);
 bool ln_ptt_key_down(int32_t key, uint64_t flags);
 int32_t ln_ptt_scope(bool running, int32_t mode, bool accessibility_granted);
+bool ln_output_sealed(bool echo_risk_none, bool mic_is_output_headset);
+bool ln_peer_audio_blocks_call(bool output_sealed, int64_t ms_since_peer_audio);
 bool ln_own_talk_drops(int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t talk_start_ms, int64_t talk_end_ms);
 int64_t ln_millis(double seconds);
 bool ln_echo_marks_time(bool was_speaking, bool now_speaking);
@@ -407,6 +409,17 @@ int32_t ln_ptt_scope(bool running, int32_t mode, bool accessibility_granted) {
         return LN_PTT_SCOPE_GLOBAL;
     }
     return LN_PTT_SCOPE_WINDOW;
+}
+
+bool ln_output_sealed(bool echo_risk_none, bool mic_is_output_headset) {
+    return (echo_risk_none || mic_is_output_headset);
+}
+
+bool ln_peer_audio_blocks_call(bool output_sealed, int64_t ms_since_peer_audio) {
+    if (output_sealed) {
+        return false;
+    }
+    return ((ms_since_peer_audio >= 0) && (ms_since_peer_audio < LN_ECHO_TAIL_MS));
 }
 
 bool ln_own_talk_drops(int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t talk_start_ms, int64_t talk_end_ms) {
@@ -856,6 +869,17 @@ void test_ln_speech_control_rules(void) {
     assert((ln_ptt_scope(true, LN_MODE_PUSH_TO_TALK, true) == LN_PTT_SCOPE_GLOBAL));
 }
 
+void test_ln_peer_audio_guard(void) {
+    assert((ln_output_sealed(true, false) == true));
+    assert((ln_output_sealed(false, true) == true));
+    assert((ln_output_sealed(false, false) == false));
+    assert((ln_peer_audio_blocks_call(false, 0) == true));
+    assert((ln_peer_audio_blocks_call(false, 699) == true));
+    assert((ln_peer_audio_blocks_call(false, 700) == false));
+    assert((ln_peer_audio_blocks_call(false, -1) == false));
+    assert((ln_peer_audio_blocks_call(true, 0) == false));
+}
+
 void test_ln_own_talk(void) {
     assert((ln_own_talk_drops(10200, 12400, 10000, 12000) == true));
     assert((ln_own_talk_drops(10200, 12400, 10000, -1) == true));
@@ -947,9 +971,10 @@ int main(void) {
     test_ln_gate_rules();
     test_ln_phrase_rules();
     test_ln_speech_control_rules();
+    test_ln_peer_audio_guard();
     test_ln_own_talk();
     test_ln_moved_rules();
-    printf("All %d tests passed.\n", 5);
+    printf("All %d tests passed.\n", 6);
     return 0;
 }
 #endif /* T27_TEST_MAIN */
