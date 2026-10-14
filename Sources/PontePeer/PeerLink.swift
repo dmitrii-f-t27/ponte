@@ -34,8 +34,10 @@ public final class PeerLink: @unchecked Sendable {
         }
     }
 
-    /// Status (PeerRules.status*) and how many other Russians are in the room; on the main queue.
-    public var onStatus: ((Int, Int) -> Void)?
+    /// Status (PeerRules.status*), how many other Pontes announced themselves, and how many connections the relay
+    /// counts in the room (this one included; -1 until it says): on the main queue. More connections than Pontes
+    /// means someone listens without announcing himself.
+    public var onStatus: ((Int, Int, Int) -> Void)?
     /// The room already has PeerRules.maxPeers members; the link stops. On the main queue.
     public var onRoomFull: (() -> Void)?
     /// Another Ponte speaks into the call (TTS or the owner's own voice) or stopped; on the link queue.
@@ -67,7 +69,11 @@ public final class PeerLink: @unchecked Sendable {
     /// Voices of this Ponte still playing into the call: kind → text (announced again on every tick).
     private var activeVoices: [Int: String] = [:]
     private var helloTimer: DispatchSourceTimer?
-    private var lastStatus: (Int, Int) = (-1, -1)
+    private var lastStatus: (Int, Int, Int) = (-1, -1, -1)
+    /// Connections in the room as the relay counts them (-1: not told yet).
+    private var members = -1
+    /// Audio frames handed to the socket and not yet sent (backpressure on a slow uplink).
+    private var audioInFlight = 0
     // Microphone → 16 kHz frames.
     private var converter: PCM.Converter?
     private var pendingSamples: [Int16] = []
@@ -87,7 +93,12 @@ public final class PeerLink: @unchecked Sendable {
         }
     }
 
-    deinit { stop() }
+    deinit {
+        // Nothing else holds the link now: no queue hop (a deinit on `queue` must not wait for `queue`).
+        helloTimer?.cancel()
+        task?.cancel(with: .goingAway, reason: nil)
+        session.invalidateAndCancel()
+    }
 
     public func start() {
         queue.async { [self] in
@@ -112,20 +123,27 @@ public final class PeerLink: @unchecked Sendable {
         }
     }
 
+    /// Says goodbye and closes; returns at once (the main thread never waits for the link queue).
     public func stop() {
-        queue.sync {
+        queue.async { [self] in
             guard running else { return }
             send(kind: PeerRules.msgBye, payload: Data())
             running = false
             helloTimer?.cancel()
             helloTimer = nil
-            task?.cancel(with: .goingAway, reason: nil)
+            let closing = task
             task = nil
             connected = false
             peers.removeAll()
             lastSeq.removeAll()
             activeVoices.removeAll()
+            members = -1
             reportStatus()
+            // Let the bye go out, then close the socket and release the session.
+            queue.asyncAfter(deadline: .now() + .milliseconds(200)) { [session] in
+                closing?.cancel(with: .goingAway, reason: nil)
+                session.finishTasksAndInvalidate()
+            }
         }
     }
 
@@ -152,7 +170,10 @@ public final class PeerLink: @unchecked Sendable {
                 var payload = Data(capacity: frame * 2)
                 for s in pendingSamples.prefix(frame) { withUnsafeBytes(of: s.littleEndian) { payload.append(contentsOf: $0) } }
                 pendingSamples.removeFirst(frame)
-                send(kind: PeerRules.msgAudio, payload: payload)
+                // A slow uplink: drop live audio rather than let it pile up (late voice is useless).
+                guard PeerRules.audioSends(inFlight: audioInFlight) else { continue }
+                audioInFlight += 1
+                send(kind: PeerRules.msgAudio, payload: payload) { [weak self] in self?.audioInFlight -= 1 }
             }
         }
     }
@@ -162,17 +183,18 @@ public final class PeerLink: @unchecked Sendable {
         queue.async { [self] in pendingSamples.removeAll() }
     }
 
-    /// This Ponte starts or stops speaking into the call: PeerRules.voiceTTS with the Portuguese text, or voiceOwn.
-    /// A voice that is still playing is announced again on every tick.
-    public func sendVoice(kind: Int, state: Int, text: String) {
+    /// This Ponte starts or stops speaking into the call at `at`: PeerRules.voiceTTS with the Portuguese text, or
+    /// voiceOwn. A voice that is still playing is announced again on every tick.
+    public func sendVoice(kind: Int, state: Int, text: String, at: Date = Date()) {
         queue.async { [self] in
             if state == PeerRules.voiceStart { activeVoices[kind] = text } else { activeVoices.removeValue(forKey: kind) }
-            sendVoiceFrame(kind: kind, state: state, text: text)
+            sendVoiceFrame(kind: kind, state: state, text: text, at: at)
         }
     }
 
-    private func sendVoiceFrame(kind: Int, state: Int, text: String) {
+    private func sendVoiceFrame(kind: Int, state: Int, text: String, at: Date = Date()) {
         var payload = Data([UInt8(truncatingIfNeeded: kind), UInt8(truncatingIfNeeded: state)])
+        withUnsafeBytes(of: Self.ms(at).littleEndian) { payload.append(contentsOf: $0) }
         payload.append(Data(text.utf8.prefix(4000)))
         send(kind: PeerRules.msgVoice, payload: payload)
     }
@@ -208,7 +230,11 @@ public final class PeerLink: @unchecked Sendable {
                 guard task === self.task else { return }
                 switch result {
                 case .success(let message):
-                    if case .data(let data) = message { self.open(data) }
+                    switch message {
+                    case .data(let data): self.open(data)
+                    case .string(let text): self.relayNote(text)
+                    @unknown default: break
+                    }
                     self.receive(on: task)
                 case .failure:
                     self.dropped(task, closeCode: task.closeCode.rawValue)
@@ -217,10 +243,21 @@ public final class PeerLink: @unchecked Sendable {
         }
     }
 
+    /// The relay's own plain note: {"members": n}, the connections in the room (it cannot read the frames).
+    private func relayNote(_ text: String) {
+        guard text.utf8.count <= 64, let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let n = object["members"] as? Int, n >= 0, n <= 64 else { return }
+        members = n
+        reportStatus()
+    }
+
     private func dropped(_ task: URLSessionWebSocketTask, closeCode: Int) {
         guard running, task === self.task else { return }
         connected = false
         self.task = nil
+        members = -1
+        audioInFlight = 0
         for peer in peers.keys { onPeerGone?(peer) }
         peers.removeAll()
         if !PeerRules.reconnects(afterCloseCode: closeCode) {
@@ -253,18 +290,27 @@ public final class PeerLink: @unchecked Sendable {
         reportStatus()
     }
 
-    private func send(kind: UInt8, payload: Data) {
-        guard let task, connected, let key else { return }
+    private func send(kind: UInt8, payload: Data, sent: (() -> Void)? = nil) {
+        guard let task, connected, let key else {
+            sent?()
+            return
+        }
         seq &+= 1
         var plain = Data([kind])
         withUnsafeBytes(of: sender.littleEndian) { plain.append(contentsOf: $0) }
         withUnsafeBytes(of: seq.littleEndian) { plain.append(contentsOf: $0) }
         withUnsafeBytes(of: Self.ms(Date()).littleEndian) { plain.append(contentsOf: $0) }
         plain.append(payload)
-        guard let sealed = try? AES.GCM.seal(plain, using: key).combined else { return }
+        guard let sealed = try? AES.GCM.seal(plain, using: key).combined else {
+            sent?()
+            return
+        }
         task.send(.data(sealed)) { [weak self] error in
-            guard let self, error != nil else { return }
-            self.queue.async { self.dropped(task, closeCode: task.closeCode.rawValue) }
+            guard let self else { return }
+            self.queue.async {
+                sent?()
+                if error != nil { self.dropped(task, closeCode: task.closeCode.rawValue) }
+            }
         }
     }
 
@@ -308,9 +354,12 @@ public final class PeerLink: @unchecked Sendable {
             buffer.frameLength = AVAudioFrameCount(count)
             onAudio?(peer, buffer)
         case PeerRules.msgVoice:
-            guard payload.count >= 2 else { return }
-            let text = String(decoding: payload[2...], as: UTF8.self)
-            onVoice?(VoiceEvent(sender: peer, kind: Int(payload[0]), state: Int(payload[1]), text: text, receivedAt: now))
+            guard payload.count >= 10 else { return }
+            let atMs = Int64(bitPattern: payload[2..<10].enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << (8 * UInt64($1.offset)) })
+            // When it really started or ended on the sender's Mac, if the clocks agree; else when it arrived.
+            let at = PeerRules.frameFresh(sentMs: atMs, nowMs: Self.ms(now)) ? Date(timeIntervalSince1970: Double(atMs) / 1000) : now
+            let text = String(decoding: payload[10...], as: UTF8.self)
+            onVoice?(VoiceEvent(sender: peer, kind: Int(payload[0]), state: Int(payload[1]), text: text, receivedAt: at))
         default:
             break   // hello: presence only
         }
@@ -318,11 +367,11 @@ public final class PeerLink: @unchecked Sendable {
 
     private func reportStatus() {
         let status = PeerRules.status(linkOn: running, connected: connected, peers: peers.count, failures: failures)
-        let current = (status, peers.count)
+        let current = (status, peers.count, members)
         guard current != lastStatus else { return }
         lastStatus = current
         let handler = onStatus
-        DispatchQueue.main.async { handler?(current.0, current.1) }
+        DispatchQueue.main.async { handler?(current.0, current.1, current.2) }
     }
 
     static func ms(_ date: Date) -> Int64 { Int64((date.timeIntervalSince1970 * 1000).rounded()) }

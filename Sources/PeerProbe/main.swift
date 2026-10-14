@@ -28,7 +28,7 @@ let lock = NSLock()
 var received: [Float] = []
 var frames = 0
 var voices: [String] = []
-link.onStatus = { status, peers in print("status \(status) peers \(peers)") }
+link.onStatus = { status, peers, members in print("status \(status) peers \(peers) members \(members)") }
 link.onAudio = { _, buffer in
     lock.withLock {
         frames += 1

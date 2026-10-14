@@ -16,7 +16,11 @@ const RATE_LIMIT = 200; // messages per second per connection; excess is dropped
 const RATE_WINDOW_MS = 1000;
 const PING_INTERVAL_MS = 20000;
 const STATS_INTERVAL_MS = 60000;
-const MAX_BUFFERED = 1 << 20; // a receiver this far behind skips frames (live audio)
+const MAX_BUFFERED = 64 * 1024; // a receiver this far behind (about 2 s of voice) skips frames: late audio is useless
+const MAX_CONNECTIONS = 1000; // across all rooms
+const MAX_ROOMS = 300;
+const MAX_PER_ADDRESS = 12; // connections from one client address
+const SERVER_FULL = 4002; // close code: the relay itself is full
 
 function noop() {}
 
@@ -39,12 +43,30 @@ function rejectUpgrade(socket, status, text) {
 
 /**
  * Starts the relay. Resolves with { port, server, stats, close } once it listens.
- * port 0 picks a free port. options.pingIntervalMs and options.log exist for tests.
+ * port 0 picks a free port. options.pingIntervalMs, maxPerAddress, maxConnections and log exist for tests.
  */
 function start(port = 0, options = {}) {
   const pingIntervalMs = options.pingIntervalMs ?? PING_INTERVAL_MS;
+  const maxPerAddress = options.maxPerAddress ?? MAX_PER_ADDRESS;
+  const maxConnections = options.maxConnections ?? MAX_CONNECTIONS;
   const log = options.log ?? ((line) => console.log(line));
   const rooms = new Map(); // room id -> Set of peers
+  const perAddress = new Map(); // client address -> open connections
+
+  // The client address as Railway's proxy reports it (the last hop it added), else the socket's.
+  function clientAddress(req) {
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
+    return forwarded.length ? forwarded[forwarded.length - 1] : req.socket.remoteAddress || '?';
+  }
+
+  // Tells every member how many connections the room has (the only plain text the relay sends): a client that
+  // sees more connections than Pontes that announced themselves knows someone listens silently.
+  function announce(members) {
+    const note = JSON.stringify({ members: members.size });
+    for (const other of members) {
+      if (other.ws.readyState === WebSocket.OPEN) other.ws.send(note);
+    }
+  }
 
   function stats() {
     let connections = 0;
@@ -75,22 +97,31 @@ function start(port = 0, options = {}) {
       rejectUpgrade(socket, 400, 'Bad Request');
       return;
     }
-    wss.handleUpgrade(req, socket, head, (ws) => join(ws, match[1]));
+    const address = clientAddress(req);
+    wss.handleUpgrade(req, socket, head, (ws) => join(ws, match[1], address));
   });
 
-  function join(ws, roomId) {
+  function join(ws, roomId, address) {
     ws.on('error', noop);
     let members = rooms.get(roomId);
     if (members && members.size >= MAX_MEMBERS) {
       ws.close(ROOM_FULL, 'room full');
       return;
     }
+    const total = stats();
+    if (total.connections >= maxConnections || (!members && total.rooms >= MAX_ROOMS) ||
+        (perAddress.get(address) || 0) >= maxPerAddress) {
+      ws.close(SERVER_FULL, 'relay full');
+      return;
+    }
     if (!members) {
       members = new Set();
       rooms.set(roomId, members);
     }
+    perAddress.set(address, (perAddress.get(address) || 0) + 1);
     const peer = { ws, alive: true, windowStart: 0, count: 0 };
     members.add(peer);
+    announce(members);
 
     ws.on('pong', () => {
       peer.alive = true;
@@ -114,7 +145,11 @@ function start(port = 0, options = {}) {
 
     ws.on('close', () => {
       members.delete(peer);
+      const left = (perAddress.get(address) || 1) - 1;
+      if (left > 0) perAddress.set(address, left);
+      else perAddress.delete(address);
       if (members.size === 0 && rooms.get(roomId) === members) rooms.delete(roomId);
+      else announce(members);
     });
   }
 
@@ -150,6 +185,7 @@ function start(port = 0, options = {}) {
       for (const peer of members) peer.ws.terminate();
     }
     rooms.clear();
+    perAddress.clear();
     return new Promise((resolve) => {
       server.close(() => resolve());
       server.closeAllConnections();

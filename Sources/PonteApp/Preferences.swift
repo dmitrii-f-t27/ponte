@@ -12,7 +12,7 @@ enum PrefKey {
     static let voicePT = "voicePT"                  // "" = best available
     static let voiceRU = "voiceRU"
     static let speakRussian = "speakRussian"
-    static let peerSecret = "peerSecret"            // «Русские в звонке»: the code only the Russians share
+    static let peerSecret = "peerSecret"            // removed at launch: 0.1.12 stored the code (now per call only)
     static let peerRelayURL = "peerRelayURL"        // overrides Info.plist PonteRelayURL (tests)
     static let hearOriginal = "hearOriginal"        // the other side's own voices on the Mac («Слышать их»)
     static let translator = "translator"            // TranslatorKind

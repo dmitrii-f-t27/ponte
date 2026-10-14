@@ -361,6 +361,20 @@ pub const LN_OWN_TALK_DROP_PERMILLE : i64 = 600;
 ; When the transcriber gives no timing, a phrase is taken to have started this long before its end.
 pub const LN_PHRASE_FALLBACK_MS : i64 = 3000;
 
+; --- The other Russians' voices never reach the call (review 2026-10-14) ----------------------------------------
+; Another Russian's voice plays in the owner's ears (Russians in the call). Unless the output is sealed - a jack
+; headphone (echo risk none) or the headset whose own microphone Ponte uses - the microphone can hear it; then for
+; LN_ECHO_TAIL_MS after each frame of it nothing from the microphone goes into the call (the push-to-talk
+; translation and «Свой голос»). Checked against the output the owner hears now, so a change mid-call counts.
+pub fn ln_output_sealed(echo_risk_none: bool, mic_is_output_headset: bool) -> bool {
+    return echo_risk_none or mic_is_output_headset;
+}
+
+pub fn ln_peer_audio_blocks_call(output_sealed: bool, ms_since_peer_audio: i64) -> bool {
+    if (output_sealed) { return false; }
+    return ms_since_peer_audio >= 0 and ms_since_peer_audio < LN_ECHO_TAIL_MS;
+}
+
 ; ownTalkDrops: talk_end_ms < 0 while the key is still held. Times in ms on one clock.
 pub fn ln_own_talk_drops(phrase_start_ms: i64, phrase_end_ms: i64, talk_start_ms: i64, talk_end_ms: i64) -> bool {
     var start: i64 = phrase_start_ms;
@@ -781,6 +795,17 @@ test ln_speech_control_rules {
     assert ln_ptt_scope(true, LN_MODE_CONTINUOUS, true) == LN_PTT_SCOPE_NONE;
     assert ln_ptt_scope(true, LN_MODE_PUSH_TO_TALK, false) == LN_PTT_SCOPE_WINDOW;
     assert ln_ptt_scope(true, LN_MODE_PUSH_TO_TALK, true) == LN_PTT_SCOPE_GLOBAL;
+}
+
+test ln_peer_audio_guard {
+    assert ln_output_sealed(true, false) == true;
+    assert ln_output_sealed(false, true) == true;
+    assert ln_output_sealed(false, false) == false;
+    assert ln_peer_audio_blocks_call(false, 0) == true;
+    assert ln_peer_audio_blocks_call(false, 699) == true;
+    assert ln_peer_audio_blocks_call(false, 700) == false;
+    assert ln_peer_audio_blocks_call(false, -1) == false;
+    assert ln_peer_audio_blocks_call(true, 0) == false;
 }
 
 test ln_own_talk {

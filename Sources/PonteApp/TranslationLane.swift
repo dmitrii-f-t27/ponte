@@ -41,7 +41,7 @@ enum LaneEvent {
     case problem(String)
     /// This lane's voice starts or stops playing: `text` is what it says (the translation), nil for «Свой голос».
     /// The outgoing lane plays into the call, so the other Russians' Ponte apps are told (PeerLink.sendVoice).
-    case voiceOut(text: String?, playing: Bool)
+    case voiceOut(text: String?, playing: Bool, at: Date)
 }
 
 /// When the owner held the talk key: the incoming lane drops his own voice coming back from the call
@@ -89,11 +89,12 @@ final class ConversationMemory: @unchecked Sendable {
     func reset() { lock.withLock { items.removeAll() } }
 }
 
-/// Shared between the lanes: is Ponte's Russian voice playing through the Mac's speakers?
-/// Read on the capture thread of the outgoing lane.
+/// Shared between the lanes: may the microphone hear a Russian voice now — Ponte's own (through speakers) or another
+/// Russian's (on an output that is not sealed)? Read on the capture thread of the outgoing lane.
 final class EchoGuard: @unchecked Sendable {
     private let lock = NSLock()
     private var speakerOutput = false
+    private var outputSealed = true
     private var speaking = false
     private var lastSpeechAt: Date?
     private var lastPeerAt: Date?
@@ -103,6 +104,14 @@ final class EchoGuard: @unchecked Sendable {
             self.speakerOutput = speakerOutput
             speaking = false
             lastSpeechAt = nil
+        }
+    }
+
+    /// The output the owner hears changed (headphones dropped mid-call, «Звук» menu): the guard follows at once.
+    func setOutput(speakerOutput: Bool, sealed: Bool) {
+        lock.withLock {
+            self.speakerOutput = speakerOutput
+            outputSealed = sealed
         }
     }
 
@@ -116,13 +125,22 @@ final class EchoGuard: @unchecked Sendable {
     /// «Русские в звонке»: another Russian's voice just played (on speakers the mic would hear it, like the Russian voice).
     func notePeerAudio(at now: Date) { lock.withLock { lastPeerAt = now } }
 
+    /// Ponte's Russian voice on speakers: the mic goes nowhere (not into the call, not to the other Russians).
     func blocksMic(at now: Date) -> Bool {
         lock.withLock {
             AppRules.echoGuardBlocksMic(speakerOutput: speakerOutput, incomingSpeaking: speaking,
                                         msSinceSpeech: lastSpeechAt.map { millis(now.timeIntervalSince($0)) } ?? -1)
-                || AppRules.echoGuardBlocksMic(speakerOutput: speakerOutput, incomingSpeaking: false,
-                                               msSinceSpeech: lastPeerAt.map { millis(now.timeIntervalSince($0)) } ?? -1)
         }
+    }
+
+    /// Nothing from the mic may go into the call now: Ponte's Russian voice on speakers, or another Russian's voice
+    /// on an output that is not sealed (lane_rules: ln_peer_audio_blocks_call).
+    func blocksCall(at now: Date) -> Bool {
+        let peer = lock.withLock {
+            AppRules.peerAudioBlocksCall(outputSealed: outputSealed,
+                                         msSincePeerAudio: lastPeerAt.map { millis(now.timeIntervalSince($0)) } ?? -1)
+        }
+        return peer || blocksMic(at: now)
     }
 }
 
@@ -235,8 +253,8 @@ final class TranslationLane {
         self.clock = clock
         self.intake = AudioIntake(clock: clock)
         // «Свой голос»: the other Pontes are told only while the owner actually speaks, not for the whole mode.
-        intake.onOwnTalk = { [weak self] on in
-            DispatchQueue.main.async { self?.onEvent(.voiceOut(text: nil, playing: on)) }
+        intake.onOwnTalk = { [weak self] on, at in
+            DispatchQueue.main.async { self?.onEvent(.voiceOut(text: nil, playing: on, at: at)) }
         }
     }
 
@@ -324,6 +342,9 @@ final class TranslationLane {
     /// and what the player still holds are dropped, and the lane listens again.
     /// «Русские в звонке» (outgoing lane): the microphone also goes to PeerMicGate.
     func setPeerSink(_ sink: ((AVAudioPCMBuffer, Bool) -> Void)?) { intake.setPeerSink(sink) }
+
+    /// «Свой голос»: end the owner's speech if the microphone stopped delivering (see AudioIntake.expireOwnTalk).
+    func expireOwnTalk(at now: Date) { intake.expireOwnTalk(at: now) }
 
     func setOwnVoice(_ on: Bool) {
         guard on != ownVoice else { return }
@@ -661,10 +682,10 @@ final class TranslationLane {
             return
         }
         onEvent(.speaking(true))
-        onEvent(.voiceOut(text: request.text, playing: true))
+        onEvent(.voiceOut(text: request.text, playing: true, at: clock()))
         // One gapless call per phrase; cancelSpeech() → player.stopAll() ends it early.
         await player.play(request.buffers)
-        onEvent(.voiceOut(text: request.text, playing: false))
+        onEvent(.voiceOut(text: request.text, playing: false, at: clock()))
         let finish = AppRules.phraseStep(stage: AppRules.PH_PLAYING, event: AppRules.PEV_PLAYED, flags: 0)
         endOfSpeech(request.counted)
         if AppRules.playEndReports(action: AppRules.stepAction(finish), generationCurrent: request.generation == speechGeneration) {
@@ -685,8 +706,11 @@ final class AudioIntake: @unchecked Sendable {
     /// «Свой голос»: whether the owner is speaking into the call now (mic signal with PeerRules.vadHangoverMs).
     private var ownTalking = false
     private var lastOwnSignalAt: Date?
-    /// Called (on the capture thread) when `ownTalking` changes.
-    var onOwnTalk: ((Bool) -> Void)?
+    /// Bumped whenever the relay changes: an own-talk change computed for an old relay is dropped.
+    private var relayGeneration = 0
+    /// Called (on the capture thread) when `ownTalking` changes, with the time it changed: the start, or the last
+    /// signal before the hangover ran out (so the other Pontes' windows end when the owner stopped speaking).
+    var onOwnTalk: ((Bool, Date) -> Void)?
     private var current = LaneAudioStats()
     private let clock: @Sendable () -> Date
 
@@ -709,11 +733,14 @@ final class AudioIntake: @unchecked Sendable {
             return self.relay
         }
         if relay == nil {
-            let ended = lock.withLock { () -> Bool in
+            let ended = lock.withLock { () -> Date? in
+                relayGeneration += 1
                 defer { ownTalking = false; lastOwnSignalAt = nil }
-                return ownTalking
+                return ownTalking ? (lastOwnSignalAt ?? clock()) : nil
             }
-            if ended { onOwnTalk?(false) }
+            if let ended { onOwnTalk?(false, ended) }
+        } else {
+            lock.withLock { relayGeneration += 1 }
         }
         if let stats = old?.stop() {
             PonteDiagnostics.log("own voice relay stopped: sent \(stats.sent), dropped \(stats.dropped), trimmed \(stats.trimmed), refills \(stats.refills), max queued \(Int(stats.maxQueuedMs)) ms")
@@ -730,32 +757,46 @@ final class AudioIntake: @unchecked Sendable {
         let (rms, peak) = buffer.laneLevels
         let signal = AudioRules.hasSignal(peak: peak, rms: rms)
         let now = clock()
-        let (segment, echo, relay, peer): (Segment?, EchoGuard?, LiveRelay?, ((AVAudioPCMBuffer, Bool) -> Void)?) = lock.withLock {
+        let (segment, echo, relay, peer, generation): (Segment?, EchoGuard?, LiveRelay?, ((AVAudioPCMBuffer, Bool) -> Void)?, Int) = lock.withLock {
             current.buffers += 1
             current.lastBufferAt = now
             current.level = rms
             if signal { current.lastSignalAt = now }
-            return (self.segment, self.echoGuard, self.relay, self.peerSink)
+            return (self.segment, self.echoGuard, self.relay, self.peerSink, relayGeneration)
         }
-        // On speakers the mic also hears Ponte's Russian voice and the other Russians: none of it goes on.
-        let blocks = echo?.blocksMic(at: now) ?? false
-        if !blocks {
-            relay?.push(buffer)
-            peer?(buffer, signal)
-        }
+        // A Russian voice the mic may hear never goes into the call (Ponte's on speakers, another Russian's on an
+        // output that is not sealed); Ponte's own Russian voice on speakers does not go to the other Russians either.
+        let callBlocks = echo?.blocksCall(at: now) ?? false
+        let peerBlocks = echo?.blocksMic(at: now) ?? false
+        if !callBlocks { relay?.push(buffer) }
+        if !peerBlocks { peer?(buffer, signal) }
         if relay != nil {
-            let change: Bool? = lock.withLock {
-                if signal && !blocks { lastOwnSignalAt = now }
+            let change: (Bool, Date)? = lock.withLock {
+                guard generation == relayGeneration, self.relay === relay else { return nil }   // the relay changed meanwhile
+                if signal && !callBlocks { lastOwnSignalAt = now }
                 let since = lastOwnSignalAt.map { millis(now.timeIntervalSince($0)) } ?? -1
-                let talking = !blocks && PeerRules.vadSends(hasSignal: signal, msSinceSignal: since)
+                let talking = !callBlocks && PeerRules.vadSends(hasSignal: signal, msSinceSignal: since)
                 guard talking != ownTalking else { return nil }
                 ownTalking = talking
-                return talking
+                return (talking, talking ? now : (lastOwnSignalAt ?? now))
             }
-            if let change { onOwnTalk?(change) }
+            if let change { onOwnTalk?(change.0, change.1) }
         }
-        guard AppRules.intakeForwards(hasSegment: segment != nil, echoBlocks: blocks), let segment else { return }
+        guard AppRules.intakeForwards(hasSegment: segment != nil, echoBlocks: callBlocks), let segment else { return }
         segment.append(buffer)
+    }
+
+    /// «Свой голос» while the microphone stopped delivering (its device went away): the owner is no longer speaking
+    /// once the hangover has passed without any buffer. Called from the app's poll.
+    func expireOwnTalk(at now: Date) {
+        let ended: Date? = lock.withLock {
+            guard ownTalking else { return nil }
+            let since = lastOwnSignalAt.map { millis(now.timeIntervalSince($0)) } ?? -1
+            guard !PeerRules.vadSends(hasSignal: false, msSinceSignal: since) else { return nil }
+            ownTalking = false
+            return lastOwnSignalAt ?? now
+        }
+        if let ended { onOwnTalk?(false, ended) }
     }
 }
 

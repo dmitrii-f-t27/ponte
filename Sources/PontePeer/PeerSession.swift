@@ -9,8 +9,11 @@ import PonteCore
 /// (peer_rules.t27) smooths the frames. `onPlay` is told on every frame (the echo guard on speakers).
 public final class PeerVoices: @unchecked Sendable {
     private let lock = NSLock()
-    private var voices: [UInt64: (player: DeviceAudioPlayer, relay: LiveRelay, lastAt: Date)] = [:]
+    private var voices: [UInt64: (player: DeviceAudioPlayer, relay: LiveRelay)] = [:]
     private var device: AudioDevice?
+    /// When each Russian's voice last played; its own lock, never held across audio work (the UI reads it).
+    private let timesLock = NSLock()
+    private var lastAt: [UInt64: Date] = [:]
 
     /// Called on the link queue for every frame that is played.
     public var onPlay: (() -> Void)?
@@ -34,38 +37,45 @@ public final class PeerVoices: @unchecked Sendable {
 
     /// A frame from `sender`; on the link queue. PeerLink admits at most PeerRules.maxPeers - 1 senders.
     public func play(_ buffer: AVAudioPCMBuffer, from sender: UInt64) {
-        let relay: LiveRelay = lock.withLock {
-            if let voice = voices[sender] {
-                voices[sender]?.lastAt = Date()
-                return voice.relay
-            }
-            let player = DeviceAudioPlayer(device: device)
+        var relay = lock.withLock { voices[sender]?.relay }
+        if relay == nil {
+            // Start the player without holding the lock: an engine start takes tens of milliseconds.
+            let target = lock.withLock { device }
+            let player = DeviceAudioPlayer(device: target)
             try? player.prepare()
-            let relay = LiveRelay(player: player, rules: Self.rules)
-            voices[sender] = (player, relay, Date())
-            return relay
+            let made = LiveRelay(player: player, rules: Self.rules)
+            let (kept, spare) = lock.withLock { () -> (LiveRelay, DeviceAudioPlayer?) in
+                if let existing = voices[sender] { return (existing.relay, player) }
+                voices[sender] = (player, made)
+                return (made, nil)
+            }
+            spare?.stopAll()
+            relay = kept
         }
-        relay.push(buffer)
+        timesLock.withLock { lastAt[sender] = Date() }
+        relay?.push(buffer)
         onPlay?()
     }
 
     /// Whether another Russian's voice reached the owner within the last half second (for the UI).
     public var speaking: Bool {
-        lock.withLock { voices.values.contains { Date().timeIntervalSince($0.lastAt) < 0.5 } }
+        timesLock.withLock { lastAt.values.contains { Date().timeIntervalSince($0) < 0.5 } }
     }
 
     /// A Russian left the room.
     public func remove(_ sender: UInt64) {
         let voice = lock.withLock { voices.removeValue(forKey: sender) }
+        timesLock.withLock { _ = lastAt.removeValue(forKey: sender) }
         voice?.relay.stop()
         voice?.player.stopAll()
     }
 
     public func stopAll() {
-        let all = lock.withLock { () -> [(player: DeviceAudioPlayer, relay: LiveRelay, lastAt: Date)] in
+        let all = lock.withLock { () -> [(player: DeviceAudioPlayer, relay: LiveRelay)] in
             defer { voices.removeAll() }
             return Array(voices.values)
         }
+        timesLock.withLock { lastAt.removeAll() }
         for voice in all {
             voice.relay.stop()
             voice.player.stopAll()
@@ -101,7 +111,7 @@ public final class PeerWindows: @unchecked Sendable {
         let ms = Self.ms(date)
         lock.withLock {
             windows.removeAll {
-                let end = PeerRules.windowEndMs(endMs: $0.endMs, lastSeenMs: $0.lastSeenMs, nowMs: ms)
+                let end = PeerRules.windowEndMs(endMs: $0.endMs, lastSeenMs: $0.lastSeenMs, nowMs: ms, refreshed: $0.sender != 0)
                 return end >= 0 && ms - end > PeerRules.windowKeepMs
             }
             let open = windows.lastIndex { $0.sender == sender && $0.kind == kind && $0.endMs < 0 }
@@ -119,14 +129,19 @@ public final class PeerWindows: @unchecked Sendable {
     }
 
     /// Whether a phrase the owner's Ponte heard between `start` and `end` was a Ponte's voice (now: `now`).
+    /// Sender 0 is this Ponte itself: its windows are never refreshed, so they never go stale, and its own voice
+    /// (Meet never plays the owner's microphone back) and its Portuguese words repeated later are not dropped.
     public func isPeerVoice(_ text: String, start: Date, end: Date, now: Date = Date()) -> Bool {
         let s = Self.ms(start), e = Self.ms(end), n = Self.ms(now)
+        let words = PeerRules.wordCount(text)
         let snapshot = lock.withLock { windows }
         return snapshot.contains { w in
             let contained = w.kind == PeerRules.voiceTTS ? PeerRules.containmentMilli(phrase: text, said: w.text) : 0
-            return PeerRules.isPeerVoiceV2(kind: w.kind, containmentMilli: contained, phraseStartMs: s, phraseEndMs: e,
-                                           windowStartMs: w.startMs,
-                                           windowEndMs: PeerRules.windowEndMs(endMs: w.endMs, lastSeenMs: w.lastSeenMs, nowMs: n))
+            let own = w.sender == 0
+            return PeerRules.isPeerVoice(kind: w.kind, isSelf: own, phraseWords: words, containmentMilli: contained,
+                                         phraseStartMs: s, phraseEndMs: e, windowStartMs: w.startMs,
+                                         windowEndMs: PeerRules.windowEndMs(endMs: w.endMs, lastSeenMs: w.lastSeenMs,
+                                                                            nowMs: n, refreshed: !own))
         }
     }
 

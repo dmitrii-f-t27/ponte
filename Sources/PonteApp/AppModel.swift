@@ -414,7 +414,7 @@ final class AppModel {
         callOutputUID = d.string(forKey: PrefKey.callOutputUID) ?? ""
         voicePT = d.string(forKey: PrefKey.voicePT) ?? ""
         voiceRU = d.string(forKey: PrefKey.voiceRU) ?? ""
-        peerSecret = d.string(forKey: PrefKey.peerSecret) ?? ""
+        d.removeObject(forKey: PrefKey.peerSecret)   // 0.1.12 kept the code: a code is for one call only
         speakRussian = d.object(forKey: PrefKey.speakRussian) == nil ? AppRules.DEFAULT_SPEAK_RUSSIAN
             : d.bool(forKey: PrefKey.speakRussian)
         hearOriginal = d.object(forKey: PrefKey.hearOriginal) == nil ? AppRules.DEFAULT_HEAR_ORIGINAL
@@ -577,6 +577,24 @@ final class AppModel {
         }
         let auto = deviceCatalog.autoMic(in: devices, listening: listeningDevice)
         if auto != autoMicDevice { autoMicDevice = auto }
+        // While a call runs, the echo guard follows the output the owner hears now (headphones dropped, «Звук»).
+        if isRunning {
+            echoGuard.setOutput(speakerOutput: AppRules.echoGuardApplies(speakerOutput: warning, micIsLive: true),
+                                sealed: outputSealed)
+        }
+    }
+
+    /// The owner's ears are sealed from Ponte's microphone (lane_rules: ln_output_sealed): a jack headphone, or the
+    /// headset whose own microphone Ponte uses. Otherwise the mic may hear the other Russians' voices.
+    var outputSealed: Bool {
+        guard let output = listeningDevice else { return false }
+        let kind = deviceCatalog.kind(of: output)
+        let mic = micDevice.flatMap { m in devices.firstIndex { $0.id == m.id } } ?? -1
+        let out = devices.firstIndex { $0.id == output.id } ?? -1
+        let headset = AudioRules.micIsOutputHeadset(names: devices.map(\.name), kinds: devices.map { deviceCatalog.kind(of: $0) },
+                                                    micIndex: mic, outputIndex: out)
+        return AppRules.outputSealed(echoRiskNone: AudioRules.echoRisk(kind: kind) == AudioRules.echoNone,
+                                     micIsOutputHeadset: headset)
     }
 
     var source: SourceChoice { SourceChoice(key: sourceKey) }
@@ -783,6 +801,7 @@ final class AppModel {
     }
 
     private func pollAudioStats() {
+        outgoingLane?.expireOwnTalk(at: Date())
         let speaking = peerOn && peerVoices.speaking
         if speaking != peerSpeaking { peerSpeaking = speaking }
         let now = Date()
@@ -943,6 +962,7 @@ final class AppModel {
         liveSynth = synth
         let echoOutput = AppRules.echoGuardApplies(speakerOutput: speakerWarning, micIsLive: micIsLive)
         echoGuard.configure(speakerOutput: echoOutput)
+        echoGuard.setOutput(speakerOutput: echoOutput, sealed: outputSealed)
         let callOutput: AudioPlayer?
         switch AppRules.callOutput(hasSink: launch.outgoingSink != nil, hasBlackHole: blackHoleDevice != nil) {
         case AppRules.OUT_SINK: callOutput = launch.outgoingSink.map { WAVFileSink(url: $0) }
@@ -1183,14 +1203,14 @@ final class AppModel {
             if AppRules.laneEchoSource(direction: AppRules.directionCode(direction)) { echoGuard.setSpeaking(on, at: Date()) }
         case .problem(let text):
             banner = Banner(kind: .warning, text: text)
-        case .voiceOut(let text, let playing):
+        case .voiceOut(let text, let playing, let at):
             // Only the outgoing lane speaks into the call: neither this Ponte (its voice echoed back by the far side)
             // nor the other Russians' Pontes may translate it.
             guard direction == .outgoing else { return }
             let kind = text == nil ? PeerRules.voiceOwn : PeerRules.voiceTTS
             let state = playing ? PeerRules.voiceStart : PeerRules.voiceEnd
-            selfWindows.record(sender: 0, kind: kind, state: state, text: text ?? "", at: Date())
-            peerLink?.sendVoice(kind: kind, state: state, text: text ?? "")
+            selfWindows.record(sender: 0, kind: kind, state: state, text: text ?? "", at: at)
+            peerLink?.sendVoice(kind: kind, state: state, text: text ?? "", at: at)
         }
     }
 
@@ -1198,13 +1218,18 @@ final class AppModel {
 
     /// The code only the Russians share (PeerRules.secretNormalized, shown as abcd-efgh-jkmn); the room and the key
     /// of the link come from it. Never the Meet code: every participant of the call has that one.
-    var peerSecret: String { didSet { defaults.set(peerSecret, forKey: PrefKey.peerSecret) } }
+    /// Kept only while Ponte runs (never stored): a code is for one call, «Создать код» makes the next one.
+    var peerSecret = 
     /// The link is on (the owner pressed «Подключиться»).
     private(set) var peerOn = false
     /// «Мой голос русским» off: the other Russians do not hear the owner.
     var peerMuted = false { didSet { updatePeerMic() } }
     private(set) var peerStatus = PeerRules.statusOff
     private(set) var peerCount = 0
+    /// Connections the relay counts in the room, this one included (-1: unknown).
+    private(set) var peerMembers = -1
+    /// The room was full: the link stopped for good.
+    private(set) var peerRoomFull = false
     /// Another Russian's voice is playing in the owner's ears now.
     private(set) var peerSpeaking = false
     /// Why the link could not start or stopped (shown in the panel); nil when nothing to say.
@@ -1263,17 +1288,19 @@ final class AppModel {
             let windows = peerWindows, voices = peerVoices, echo = echoGuard
             voices.setDevice(headphonesDevice)
             voices.onPlay = { echo.notePeerAudio(at: Date()) }
-            link.onStatus = { [weak self] status, count in
+            link.onStatus = { [weak self, weak link] status, count, members in
                 MainActor.assumeIsolated {
-                    guard let self, self.peerLink === link else { return }
+                    guard let self, let link, self.peerLink === link else { return }
                     self.peerStatus = status
                     self.peerCount = count
+                    self.peerMembers = members
                     self.updatePeerMic()
                 }
             }
-            link.onRoomFull = { [weak self] in
+            link.onRoomFull = { [weak self, weak link] in
                 MainActor.assumeIsolated {
-                    guard let self, self.peerLink === link else { return }
+                    guard let self, let link, self.peerLink === link else { return }
+                    self.peerRoomFull = true
                     self.peerNotice = "В этой комнате уже \(PeerRules.maxPeers) участников. Создайте новый код."
                 }
             }
@@ -1285,6 +1312,8 @@ final class AppModel {
             }
             peerLink = link
             peerOn = true
+            peerRoomFull = false
+            peerMembers = -1
             link.start()
             PonteDiagnostics.log("peer link on")
         } else {
@@ -1295,6 +1324,7 @@ final class AppModel {
             peerOn = false
             peerStatus = PeerRules.statusOff
             peerCount = 0
+            peerMembers = -1
             PonteDiagnostics.log("peer link off")
         }
         attachPeer()

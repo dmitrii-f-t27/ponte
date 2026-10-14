@@ -1009,6 +1009,16 @@ pub fn dv_headset_mic_matches(text: [8192]u8, name_offsets: [256]u32, name_lengt
     return dv_equal(text, name_offsets[i], name_lengths[i], name_offsets[output], name_lengths[output]);
 }
 
+; micIsOutputHeadset: Ponte's microphone (mic_index) belongs to the headset the owner listens on (output_index):
+; the output is headphones-like and dv_headset_mic_matches (AirPods, a USB headset, the jack). Then what plays in
+; his ears does not reach the microphone (review 2026-10-14: the other Russian's voice must never reach the call).
+pub fn dv_mic_is_output_headset(text: [8192]u8, name_offsets: [256]u32, name_lengths: [256]u32, kinds: [256]i64, count: i64, mic_index: i64, output_index: i64) -> bool {
+    var n: i64 = dv_list_count(count);
+    if (mic_index < 0 or output_index < 0 or mic_index >= n or output_index >= n) { return false; }
+    if (dv_is_headphones_like(kinds[output_index]) == false) { return false; }
+    return dv_headset_mic_matches(text, name_offsets, name_lengths, kinds, mic_index, output_index);
+}
+
 ; pickAutoMicIndex: Ponte's microphone when none is chosen in the settings (owner 2026-10-13). When the
 ; listening output (output_index; -1: none) is headphones-like, the first allowed microphone of that headset
 ; (dv_headset_mic_matches: AirPods, a USB headset, the jack's microphone). Otherwise the first built-in
@@ -1682,4 +1692,28 @@ test dv_rescue_output {
     kinds[2] = DV_KIND_DISPLAY;
     outs[2] = 2;
     assert dv_pick_rescue_output_index(kinds, outs, sel, 3) == 2;
+}
+
+test dv_mic_headset {
+    var t: [8192]u8 = [0; 8192];
+    var offs: [256]u32 = [0; 256];
+    var lens: [256]u32 = [0; 256];
+    var kinds: [256]i64 = [0; 256];
+    // This Mac on 2026-10-14: the MacBook mic, the MacBook speakers, AirPods mic and AirPods output (same name).
+    var at: i64 = dv_fixture_push(DV_FX_MBP_MIC, t, 0, offs, lens, 0);
+    at = dv_fixture_push(DV_FX_MBP_SPEAKERS, t, at, offs, lens, 1);
+    at = dv_fixture_push(DV_FX_MBP_MIC, t, at, offs, lens, 2);
+    at = dv_fixture_push(DV_FX_MBP_MIC, t, at, offs, lens, 3);
+    kinds[0] = DV_KIND_BUILT_IN_MIC;
+    kinds[1] = DV_KIND_BUILT_IN_SPEAKER;
+    kinds[2] = DV_KIND_BLUETOOTH;
+    kinds[3] = DV_KIND_BLUETOOTH;
+    // A Bluetooth headset whose mic has the output's name: sealed.
+    assert dv_mic_is_output_headset(t, offs, lens, kinds, 4, 2, 3) == true;
+    // The built-in mic with Bluetooth output (a Bluetooth speaker, or AirPods with the Mac's mic): not sealed.
+    assert dv_mic_is_output_headset(t, offs, lens, kinds, 4, 0, 3) == false;
+    // Speakers are never a headset.
+    assert dv_mic_is_output_headset(t, offs, lens, kinds, 4, 0, 1) == false;
+    assert dv_mic_is_output_headset(t, offs, lens, kinds, 4, -1, 3) == false;
+    assert dv_mic_is_output_headset(t, offs, lens, kinds, 4, 2, 9) == false;
 }

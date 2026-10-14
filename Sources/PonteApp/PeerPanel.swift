@@ -47,6 +47,13 @@ struct PeerPanel: View {
 
             Label(statusText, systemImage: statusIcon)
                 .foregroundStyle(statusColor)
+            if model.peerOn, model.peerMembers > model.peerCount + 1 {
+                Label("В комнате есть участник, который не назвался: возможно, кто-то подслушивает. Отключитесь и создайте новый код.",
+                      systemImage: "exclamationmark.shield.fill")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if model.peerOn && !model.isRunning {
                 Label("Вас услышат, когда перевод запущен (кнопка «Старт»). Других русских вы слышите уже сейчас.",
                       systemImage: "info.circle")
@@ -78,7 +85,8 @@ struct PeerPanel: View {
             return model.peerSpeaking ? "Говорит второй русский" : "Связь есть: русских рядом — \(model.peerCount)"
         case PeerRules.statusWaiting: return "Подключено. Ждём второго русского…"
         case PeerRules.statusConnecting: return "Подключаемся…"
-        case PeerRules.statusFailed: return "Нет связи с сервером. Пробуем снова…"
+        case PeerRules.statusFailed:
+            return model.peerRoomFull ? "Комната занята: в ней уже \(PeerRules.maxPeers) участников." : "Нет связи с сервером. Пробуем снова…"
         default: return "Выключено"
         }
     }

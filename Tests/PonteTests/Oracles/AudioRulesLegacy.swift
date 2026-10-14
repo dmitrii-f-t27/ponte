@@ -773,6 +773,15 @@ extension AudioRulesLegacy {
     }
 
     static func isHeadphonesLike(kind: Int) -> Bool { [kindBuiltInHeadphones, kindBluetooth, kindUSB].contains(kind) }
+    /// The mic is the listening headset's own: same kind and (jack, or same name), on a headphones-like output.
+    static func micIsOutputHeadset(names: [String], kinds: [Int], micIndex: Int, outputIndex: Int) -> Bool {
+        let n = min(kinds.count, 256)
+        guard micIndex >= 0, outputIndex >= 0, micIndex < n, outputIndex < n, isHeadphonesLike(kind: kinds[outputIndex]) else { return false }
+        if micIndex == outputIndex { return true }
+        guard kinds[micIndex] == kinds[outputIndex] else { return false }
+        if kinds[micIndex] == kindBuiltInHeadphones { return true }
+        return names[micIndex] == names[outputIndex]
+    }
     /// Never the call's virtual mic or Ponte's tap.
     static func outputNeedsRescue(kind: Int) -> Bool { kind == kindBlackHole || kind == kindPonteAggregate }
     static func pickRescueOutputIndex(kinds: [Int], outputChannels: [Int], selectable: [Bool]) -> Int {

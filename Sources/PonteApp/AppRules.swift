@@ -482,6 +482,15 @@ enum AppRules {
     }
     static let PHRASE_FALLBACK_MS = Int64(LN_PHRASE_FALLBACK_MS)
 
+    /// The owner's ears are sealed from the microphone: a jack headphone, or the headset whose mic Ponte uses.
+    static func outputSealed(echoRiskNone: Bool, micIsOutputHeadset: Bool) -> Bool {
+        ln_output_sealed(echoRiskNone, micIsOutputHeadset)
+    }
+    /// Another Russian's voice just played and the mic may hear it: nothing from the mic goes into the call.
+    static func peerAudioBlocksCall(outputSealed: Bool, msSincePeerAudio: Int64) -> Bool {
+        ln_peer_audio_blocks_call(outputSealed, msSincePeerAudio)
+    }
+
     /// Seconds to whole milliseconds, rounded half away from zero (finite input).
     static func millis(_ seconds: Double) -> Int64 { ln_millis(seconds) }
 

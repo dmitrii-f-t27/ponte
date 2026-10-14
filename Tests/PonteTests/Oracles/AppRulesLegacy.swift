@@ -703,6 +703,10 @@ extension AppRulesLegacy {
         return max(0, to - from) * 1000 >= 600 * duration
     }
     static let PHRASE_FALLBACK_MS: Int64 = 3_000
+    static func outputSealed(echoRiskNone: Bool, micIsOutputHeadset: Bool) -> Bool { echoRiskNone || micIsOutputHeadset }
+    static func peerAudioBlocksCall(outputSealed: Bool, msSincePeerAudio: Int64) -> Bool {
+        !outputSealed && msSincePeerAudio >= 0 && msSincePeerAudio < 700
+    }
     static func millis(_ seconds: Double) -> Int64 { Int64((seconds * 1000).rounded()) }
     /// EchoGuard.setSpeaking: `if speaking || on`.
     static func echoMarksTime(wasSpeaking: Bool, nowSpeaking: Bool) -> Bool { wasSpeaking || nowSpeaking }

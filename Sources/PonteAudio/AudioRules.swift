@@ -855,6 +855,13 @@ public enum AudioRules {
     /// Ponte's microphone when the settings say «Автоматически»: the headset's own microphone when the listening
     /// output (`outputIndex`, -1 for none) is one, else the built-in microphone, else the first real one; never
     /// BlackHole, Ponte's tap or an iPhone. -1 if none.
+    /// The microphone (`micIndex`) is the own microphone of the headset the owner listens on (`outputIndex`).
+    public static func micIsOutputHeadset(names: [String], kinds: [Int], micIndex: Int, outputIndex: Int) -> Bool {
+        var t = DeviceText(names)
+        var k = DeviceText.list(kinds)
+        return dv_mic_is_output_headset(&t.bytes, &t.offsets, &t.lengths, &k, t.count, Int64(micIndex), Int64(outputIndex))
+    }
+
     public static func pickAutoMicIndex(names: [String], kinds: [Int], inputChannels: [Int], outputIndex: Int) -> Int {
         var t = DeviceText(names)
         var k = DeviceText.list(kinds)

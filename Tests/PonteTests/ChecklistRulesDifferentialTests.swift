@@ -234,4 +234,21 @@ private typealias PL = AppRulesLegacy
         }
         log.finish(minimumCases: 5000)
     }
+
+    @Test func micIsOutputHeadset() {
+        let log = DiffLog("micIsOutputHeadset")
+        let names = ["MacBook Pro Microphone", "MacBook Pro Speakers", "Sergey’s AirPods", "Jabra Evolve", "AirPods SSD"]
+        let kinds = [AF.kindBuiltInMic, AF.kindBuiltInSpeaker, AF.kindBluetooth, AF.kindUSB, AF.kindBuiltInHeadphones,
+                     AF.kindBlackHole, AF.kindDisplay, AF.kindUnknown]
+        var r = DiffRandom(seed: 1415)
+        for _ in 0..<20_000 {
+            let n = r.int(0...6)
+            let ns = (0..<n).map { _ in names[r.int(0...(names.count - 1))] }
+            let ks = (0..<n).map { _ in kinds[r.int(0...(kinds.count - 1))] }
+            let mic = r.int(-1...7), out = r.int(-1...7)
+            log.check(AF.micIsOutputHeadset(names: ns, kinds: ks, micIndex: mic, outputIndex: out),
+                      AL.micIsOutputHeadset(names: ns, kinds: ks, micIndex: mic, outputIndex: out), "\(ns) \(ks) \(mic) \(out)")
+        }
+        log.finish(minimumCases: 20_000)
+    }
 }

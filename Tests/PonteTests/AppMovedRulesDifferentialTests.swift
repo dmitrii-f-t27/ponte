@@ -278,4 +278,19 @@ private typealias L = AppRulesLegacy
         }
         log.finish(minimumCases: 50_000)
     }
+
+    @Test func peerAudioGuard() {
+        let log = DiffLog("outputSealed, peerAudioBlocksCall")
+        for a in [false, true] { for b in [false, true] {
+            log.check(F.outputSealed(echoRiskNone: a, micIsOutputHeadset: b), L.outputSealed(echoRiskNone: a, micIsOutputHeadset: b), "\(a) \(b)")
+        } }
+        var r = DiffRandom(seed: 1414)
+        for _ in 0..<20_000 {
+            let sealed = r.int(0...1) == 1
+            let ms = Int64(r.int(-2000...3000))
+            log.check(F.peerAudioBlocksCall(outputSealed: sealed, msSincePeerAudio: ms),
+                      L.peerAudioBlocksCall(outputSealed: sealed, msSincePeerAudio: ms), "\(sealed) \(ms)")
+        }
+        log.finish(minimumCases: 20_000)
+    }
 }

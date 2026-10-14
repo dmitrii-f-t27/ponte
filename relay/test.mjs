@@ -50,7 +50,7 @@ function connect(port, path, options = {}) {
 const tagged = (clientObj, tag) => clientObj.msgs.filter((m) => m.data[0] === tag);
 
 async function main() {
-  const relay = await start(0, { log: () => {} });
+  const relay = await start(0, { log: () => {}, maxPerAddress: 100 });
   const { port } = relay;
 
   // HTTP
@@ -175,6 +175,32 @@ async function main() {
   const silentCode = await Promise.race([silent.closed, sleep(2000).then(() => 'timeout')]);
   check('client that misses a pong is terminated', silentCode === 1006, `got ${silentCode}`);
   check('client that answers pings stays', lively.ws.readyState === WebSocket.OPEN);
+
+  // Member notes: the relay tells every member how many connections the room has (plain text, nothing else)
+  const notesRelay = await start(0, { log: () => {} });
+  const notesRoom = '/r/' + 'e'.repeat(64);
+  const n1 = await connect(notesRelay.port, notesRoom);
+  await waitFor(() => n1.msgs.some((m) => !m.isBinary));
+  const n2 = await connect(notesRelay.port, notesRoom);
+  const lastNote = (c) => { const t = c.msgs.filter((m) => !m.isBinary).map((m) => JSON.parse(m.data.toString())); return t.length ? t[t.length - 1].members : -1; };
+  await waitFor(() => lastNote(n1) === 2 && lastNote(n2) === 2);
+  check('members note on join', lastNote(n1) === 2 && lastNote(n2) === 2, `${lastNote(n1)} ${lastNote(n2)}`);
+  n2.ws.close();
+  await waitFor(() => lastNote(n1) === 1);
+  check('members note on leave', lastNote(n1) === 1, `${lastNote(n1)}`);
+  n1.ws.close();
+  await notesRelay.close();
+
+  // Per-address cap: the 3rd connection from one address is refused with 4002
+  const capped = await start(0, { log: () => {}, maxPerAddress: 2 });
+  const k1 = await connect(capped.port, '/r/' + 'f'.repeat(64));
+  const k2 = await connect(capped.port, '/r/' + '1'.repeat(64));
+  const k3 = await connect(capped.port, '/r/' + '2'.repeat(64));
+  const k3code = await k3.closed;
+  check('3rd connection from one address is closed with 4002', k3code === 4002, `got ${k3code}`);
+  k1.ws.close();
+  k2.ws.close();
+  await capped.close();
   lively.ws.close();
   await fast.close();
 }

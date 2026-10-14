@@ -163,7 +163,8 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
     /// so does a node that has not rendered yet: whatever was queued before it starts would stay as latency.
     public func stream(_ buffers: [AVAudioPCMBuffer]) -> Double? {
         lock.lock()
-        var resume = checkEngineAlive()
+        // Live audio comes 25 times a second: only the cheap check here; the device check is the watchdog's (1 s).
+        var resume = checkEngineAlive(checkDevice: false)
         if book.state == AudioRules.playerIdle { resume += startNow() }
         var queued: Double?
         if book.state == AudioRules.playerRunning, let player, let target = playFormat, let position = Self.renderedFrames(player) {
@@ -346,13 +347,13 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
     // MARK: Engine events
 
     /// Lock held. A stop that no notification reported (yet) is handled like the notification.
-    private func checkEngineAlive() -> [CheckedContinuation<Void, Never>] {
+    private func checkEngineAlive(checkDevice: Bool = true) -> [CheckedContinuation<Void, Never>] {
         guard book.state == AudioRules.playerRunning, let engine else { return [] }
         if !engine.isRunning {
             PonteDiagnostics.log("player \(name): engine found stopped")
             return carryOut(book.configurationChanged(engineRunning: false))
         }
-        if let wrong = wrongOutputDevice(engine) {
+        if checkDevice, let wrong = wrongOutputDevice(engine) {
             PonteDiagnostics.log("player \(name): engine plays into \(wrong), not \(name); rebuilding")
             _ = PonteCatchObjC {
                 self.player?.stop()
