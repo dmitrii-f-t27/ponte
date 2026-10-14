@@ -35,6 +35,8 @@
 #define PE_RECONNECT_MAX_MS 8000
 #define PE_HELLO_EVERY_MS 5000
 #define PE_PEER_TIMEOUT_MS 15000
+#define PE_STABLE_MS 3000
+#define PE_CLOSE_ROOM_FULL 4001
 #define PE_VAD_HANGOVER_MS 600
 #define PE_JITTER_TARGET_MS 120.0
 #define PE_JITTER_MAX_MS 400.0
@@ -45,19 +47,26 @@
 #define PE_JIT_DROP 2
 #define PE_JIT_TRIM 3
 #define PE_JIT_REFILL 4
+#define PE_SECRET_LENGTH 12
+#define PE_SECRET_GROUP 4
+#define PE_SECRET_DISPLAY_LEN 14
+#define PE_KDF_ITERATIONS 200000
+#define PE_MAX_SKEW_MS 30000
+#define PE_VOICE_REFRESH_MS 5000
+#define PE_VOICE_STALE_MS 12000
+#define PE_WINDOW_KEEP_MS 20000
 #define PE_TEXT_MAX 4096
 #define PE_WORDS_MAX 512
-#define PE_SIMILARITY_SCALE 1000
+#define PE_PERMILLE 1000
 #define PE_WINDOW_BEFORE_MS 300
 #define PE_WINDOW_AFTER_MS 1500
 #define PE_TEXT_WINDOW_MS 15000
-#define PE_SIMILARITY_MIN_MILLI 350
-#define PE_SIMILARITY_SURE_MILLI 700
-#define PE_WINDOW_KEEP_MS 20000
-#define PE_BROWSER_TAB_PORT_1 9111
-#define PE_BROWSER_TAB_PORT_2 9222
-#define PE_TAB_LIST_TIMEOUT_MS 1500
-#define PE_MEET_CODE_LEN 12
+#define PE_CONTAIN_MIN_MILLI 800
+#define PE_CONTAIN_SURE_MILLI 900
+#define PE_OWN_OVERLAP_PERMILLE 600
+#define PE_MIN_WORDS 3
+#define PE_OWN_AFTER_MS 300
+#define PE_ECHO_LAG_MS 800
 #define PE_HYPHEN 45
 #define PE_DIGIT_0 48
 #define PE_DIGIT_9 57
@@ -67,93 +76,57 @@
 #define PE_LOWER_Z 122
 #define PE_CASE_STEP 32
 #define PE_FIRST_NON_ASCII 128
-#define PE_FX_TTS_OI 0
-#define PE_FX_HEARD_OI 1
-#define PE_FX_TTS_OI_PT 2
-#define PE_FX_HEARD_OI_PT 3
-#define PE_FX_TTS_BOM_DIA 4
-#define PE_FX_HEARD_BOM_DIA 5
-#define PE_FX_TTS_THANKS 6
-#define PE_FX_HEARD_PRICE 7
-#define PE_FX_RU_PRIVET 8
-#define PE_FX_RU_PRIVET_LOWER 9
-#define PE_FX_SIM_THREE 10
-#define PE_FX_NAO_TWO 11
-#define PE_FX_DIGITS 12
-#define PE_FX_DIGITS_HEARD 13
-#define PE_FX_PUNCTUATION 14
-#define PE_FX_EMPTY 15
-#define PE_FX_MEET_TITLE 16
-#define PE_FX_MEET_TITLE_BROWSEROS 17
-#define PE_FX_MEET_CODE 18
-#define PE_FX_MEET_URL 19
-#define PE_FX_MEET_URL_CODE 20
-#define PE_FX_MEET_LETTER_BEFORE 21
-#define PE_FX_MEET_LETTER_AFTER 22
-#define PE_FX_MEET_DIGIT_AFTER 23
-#define PE_FX_MEET_SHORT 24
-#define PE_FX_MEET_TWO 25
-#define PE_FX_MEET_TWO_CODE 26
-#define PE_FX_MEET_CYRILLIC 27
-#define PE_FX_MEET_ACCENT 28
-#define PE_FX_COUNT 29
-static const uint8_t PE_FX_TEXT[577] = { 79, 105, 44, 32, 99, 111, 109, 111, 32, 118, 111, 99, 101, 32, 101, 115, 116, 97, 63, 79, 105, 32, 99, 111, 109, 111, 32, 118, 111, 99, 101, 32, 101, 115, 116, 97, 79, 105, 44, 32, 99, 111, 109, 111, 32, 118, 111, 99, 195, 170, 32, 101, 115, 116, 195, 161, 63, 111, 105, 32, 99, 111, 109, 111, 32, 118, 111, 99, 195, 170, 32, 101, 115, 116, 195, 161, 66, 111, 109, 32, 100, 105, 97, 44, 32, 116, 117, 100, 111, 32, 98, 101, 109, 32, 99, 111, 109, 32, 118, 111, 99, 195, 170, 63, 98, 111, 109, 32, 100, 105, 97, 32, 116, 117, 100, 111, 32, 98, 101, 109, 79, 98, 114, 105, 103, 97, 100, 111, 32, 112, 101, 108, 97, 32, 114, 101, 117, 110, 105, 195, 163, 111, 32, 100, 101, 32, 104, 111, 106, 101, 46, 81, 117, 97, 108, 32, 195, 169, 32, 111, 32, 112, 114, 101, 195, 167, 111, 63, 208, 159, 209, 128, 208, 184, 208, 178, 208, 181, 209, 130, 44, 32, 208, 186, 208, 176, 208, 186, 32, 208, 180, 208, 181, 208, 187, 208, 176, 63, 208, 191, 209, 128, 208, 184, 208, 178, 208, 181, 209, 130, 32, 208, 186, 208, 176, 208, 186, 32, 208, 180, 208, 181, 208, 187, 208, 176, 115, 105, 109, 32, 115, 105, 109, 32, 115, 105, 109, 32, 110, 97, 111, 115, 105, 109, 32, 110, 97, 111, 32, 110, 97, 111, 83, 97, 108, 97, 32, 50, 48, 50, 54, 44, 32, 97, 110, 100, 97, 114, 32, 49, 48, 115, 97, 108, 97, 32, 50, 48, 50, 54, 32, 97, 110, 100, 97, 114, 32, 100, 101, 122, 46, 46, 46, 32, 33, 63, 32, 45, 45, 32, 40, 41, 77, 101, 101, 116, 32, 45, 32, 107, 102, 115, 45, 99, 103, 118, 99, 45, 113, 114, 107, 77, 101, 101, 116, 32, 226, 128, 147, 32, 75, 70, 83, 45, 67, 71, 86, 67, 45, 81, 82, 75, 32, 45, 32, 66, 114, 111, 119, 115, 101, 114, 79, 83, 107, 102, 115, 45, 99, 103, 118, 99, 45, 113, 114, 107, 104, 116, 116, 112, 115, 58, 47, 47, 109, 101, 101, 116, 46, 103, 111, 111, 103, 108, 101, 46, 99, 111, 109, 47, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 63, 97, 117, 116, 104, 117, 115, 101, 114, 61, 48, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 120, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 107, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 49, 97, 98, 45, 99, 100, 101, 102, 45, 103, 104, 105, 32, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 32, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 105, 106, 107, 77, 101, 101, 116, 58, 32, 120, 121, 122, 45, 65, 66, 67, 68, 45, 101, 102, 103, 32, 97, 110, 100, 32, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 120, 121, 122, 45, 97, 98, 99, 100, 45, 101, 102, 103, 208, 182, 97, 98, 99, 45, 100, 101, 102, 103, 45, 104, 105, 106, 208, 182, 97, 98, 99, 45, 100, 195, 169, 102, 103, 45, 104, 105, 106 };
-static const uint32_t PE_FX_OFFSETS[29] = { 0, 19, 36, 57, 76, 104, 120, 151, 168, 198, 226, 241, 252, 271, 290, 302, 302, 321, 354, 366, 413, 425, 438, 451, 464, 501, 536, 548, 564 };
-static const uint32_t PE_FX_LENGTHS[29] = { 19, 17, 21, 19, 28, 16, 31, 17, 30, 28, 15, 11, 19, 19, 12, 0, 19, 33, 12, 47, 12, 13, 13, 13, 37, 35, 12, 16, 13 };
-#define PE_SECRET_LENGTH 12
-#define PE_SECRET_GROUP 4
-#define PE_SECRET_DISPLAY_LEN 14
-#define PE_KDF_ITERATIONS 200000
 #define PE_SPACE 32
 #define PE_UNDERSCORE 95
 #define PE_SECRET_ALPHABET_LEN 31
 static const uint8_t PE_SECRET_ALPHABET[31] = { 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102, 103, 104, 106, 107, 109, 110, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122 };
-#define PE_FX2_TTS_CONTRACT 0
-#define PE_FX2_HEARD_TAIL 1
-#define PE_FX2_TTS_CONTRACT_PT 2
-#define PE_FX2_HEARD_TAIL_PT 3
-#define PE_FX2_REPLY 4
-#define PE_FX2_TTS_QUESTION 5
-#define PE_FX2_PHRASE_SEND 6
-#define PE_FX2_TTS_SEND 7
-#define PE_FX2_ORDER_SWAPPED 8
-#define PE_FX2_ORDER 9
-#define PE_FX2_SIM_THREE 10
-#define PE_FX2_SIM_ONE 11
-#define PE_FX2_NO_WORDS 12
-#define PE_FX2_EMPTY 13
-#define PE_FX2_SECRET_TYPED 14
-#define PE_FX2_SECRET 15
-#define PE_FX2_SECRET_DISPLAY 16
-#define PE_FX2_SECRET_ZERO 17
-#define PE_FX2_SECRET_UNDERSCORES 18
-#define PE_FX2_SECRET_UNDERSCORES_NORMALIZED 19
-#define PE_FX2_SECRET_UNDERSCORES_DISPLAY 20
-#define PE_FX2_SECRET_SHORT 21
-#define PE_FX2_SECRET_LONG 22
-#define PE_FX2_SECRET_WITH_I 23
-#define PE_FX2_SECRET_TABS 24
-#define PE_FX2_SECRET_ACCENT 25
-#define PE_FX2_SECRET_UPPER 26
-#define PE_FX2_COUNT 27
-static const uint8_t PE_FX2_TEXT[679] = { 69, 110, 116, 97, 111, 32, 102, 105, 99, 97, 32, 99, 111, 109, 98, 105, 110, 97, 100, 111, 32, 97, 115, 115, 105, 109, 58, 32, 101, 117, 32, 112, 114, 101, 112, 97, 114, 111, 32, 116, 117, 100, 111, 32, 104, 111, 106, 101, 32, 97, 32, 110, 111, 105, 116, 101, 32, 101, 32, 118, 111, 99, 101, 115, 32, 112, 111, 100, 101, 109, 32, 114, 101, 118, 105, 115, 97, 114, 32, 99, 111, 109, 32, 99, 97, 108, 109, 97, 32, 101, 44, 32, 115, 101, 32, 113, 117, 105, 115, 101, 114, 101, 109, 44, 32, 97, 115, 115, 105, 110, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 97, 32, 100, 101, 32, 109, 97, 110, 104, 97, 46, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 97, 32, 100, 101, 32, 109, 97, 110, 104, 97, 69, 110, 116, 195, 163, 111, 32, 102, 105, 99, 97, 32, 99, 111, 109, 98, 105, 110, 97, 100, 111, 32, 97, 115, 115, 105, 109, 58, 32, 101, 117, 32, 112, 114, 101, 112, 97, 114, 111, 32, 116, 117, 100, 111, 32, 104, 111, 106, 101, 32, 195, 160, 32, 110, 111, 105, 116, 101, 32, 101, 32, 118, 111, 99, 195, 170, 115, 32, 112, 111, 100, 101, 109, 32, 114, 101, 118, 105, 115, 97, 114, 32, 99, 111, 109, 32, 99, 97, 108, 109, 97, 32, 101, 44, 32, 115, 101, 32, 113, 117, 105, 115, 101, 114, 101, 109, 44, 32, 97, 115, 115, 105, 110, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 195, 163, 32, 100, 101, 32, 109, 97, 110, 104, 195, 163, 46, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 195, 163, 32, 100, 101, 32, 109, 97, 110, 104, 195, 163, 83, 105, 109, 44, 32, 112, 111, 100, 101, 109, 111, 115, 32, 99, 111, 109, 101, 99, 97, 114, 32, 97, 103, 111, 114, 97, 80, 111, 100, 101, 109, 111, 115, 32, 99, 111, 109, 101, 99, 97, 114, 32, 97, 103, 111, 114, 97, 63, 80, 111, 100, 101, 109, 111, 115, 32, 101, 110, 118, 105, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 97, 86, 111, 99, 101, 115, 32, 112, 111, 100, 101, 109, 32, 101, 110, 118, 105, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 104, 111, 106, 101, 63, 99, 111, 110, 116, 114, 97, 116, 111, 32, 111, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 115, 105, 109, 32, 115, 105, 109, 32, 115, 105, 109, 83, 105, 109, 46, 46, 46, 46, 32, 45, 45, 32, 63, 33, 65, 66, 67, 68, 32, 101, 102, 103, 104, 45, 74, 75, 77, 78, 97, 98, 99, 100, 101, 102, 103, 104, 106, 107, 109, 110, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 110, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 48, 32, 32, 50, 51, 52, 53, 95, 54, 55, 56, 57, 95, 87, 88, 89, 90, 32, 32, 50, 51, 52, 53, 54, 55, 56, 57, 119, 120, 121, 122, 50, 51, 52, 53, 45, 54, 55, 56, 57, 45, 119, 120, 121, 122, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 110, 112, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 105, 106, 107, 109, 97, 98, 99, 100, 9, 101, 102, 103, 104, 9, 106, 107, 109, 110, 97, 98, 99, 100, 45, 195, 169, 102, 103, 104, 45, 106, 107, 109, 110, 65, 66, 67, 68, 69, 70, 71, 72, 74, 75, 77, 78 };
-static const uint32_t PE_FX2_OFFSETS[27] = { 0, 140, 166, 311, 339, 365, 387, 419, 454, 464, 474, 485, 489, 498, 498, 512, 524, 538, 552, 570, 582, 596, 609, 624, 638, 652, 667 };
-static const uint32_t PE_FX2_LENGTHS[27] = { 140, 26, 145, 28, 26, 22, 32, 35, 10, 10, 11, 4, 9, 0, 14, 12, 14, 14, 18, 12, 14, 13, 15, 14, 14, 15, 12 };
-#define PE_MAX_SKEW_MS 30000
-#define PE_CLOSE_ROOM_FULL 4001
-#define PE_STABLE_MS 3000
-#define PE_VOICE_REFRESH_MS 5000
-#define PE_VOICE_STALE_MS 12000
-#define PE_PERMILLE 1000
-#define PE_CONTAIN_MIN_MILLI 800
-#define PE_CONTAIN_SURE_MILLI 900
-#define PE_OWN_OVERLAP_PERMILLE 600
+#define PE_FX_TTS_CONTRACT 0
+#define PE_FX_HEARD_TAIL 1
+#define PE_FX_TTS_CONTRACT_PT 2
+#define PE_FX_HEARD_TAIL_PT 3
+#define PE_FX_REPLY 4
+#define PE_FX_TTS_QUESTION 5
+#define PE_FX_PHRASE_SEND 6
+#define PE_FX_TTS_SEND 7
+#define PE_FX_ORDER_SWAPPED 8
+#define PE_FX_ORDER 9
+#define PE_FX_SIM_THREE 10
+#define PE_FX_SIM_ONE 11
+#define PE_FX_NO_WORDS 12
+#define PE_FX_EMPTY 13
+#define PE_FX_TTS_PRICE 14
+#define PE_FX_REPLY_PRICE 15
+#define PE_FX_REPLY_SURE 16
+#define PE_FX_RU_PRIVET 17
+#define PE_FX_RU_PRIVET_LOWER 18
+#define PE_FX_DIGITS 19
+#define PE_FX_HYPHENS 20
+#define PE_FX_ACCENTS 21
+#define PE_FX_SECRET_TYPED 22
+#define PE_FX_SECRET 23
+#define PE_FX_SECRET_DISPLAY 24
+#define PE_FX_SECRET_ZERO 25
+#define PE_FX_SECRET_UNDERSCORES 26
+#define PE_FX_SECRET_UNDERSCORES_NORMALIZED 27
+#define PE_FX_SECRET_UNDERSCORES_DISPLAY 28
+#define PE_FX_SECRET_SHORT 29
+#define PE_FX_SECRET_LONG 30
+#define PE_FX_SECRET_WITH_I 31
+#define PE_FX_SECRET_TABS 32
+#define PE_FX_SECRET_ACCENT 33
+#define PE_FX_SECRET_UPPER 34
+#define PE_FX_COUNT 35
+static const uint8_t PE_FX_TEXT[828] = { 69, 110, 116, 97, 111, 32, 102, 105, 99, 97, 32, 99, 111, 109, 98, 105, 110, 97, 100, 111, 32, 97, 115, 115, 105, 109, 58, 32, 101, 117, 32, 112, 114, 101, 112, 97, 114, 111, 32, 116, 117, 100, 111, 32, 104, 111, 106, 101, 32, 97, 32, 110, 111, 105, 116, 101, 32, 101, 32, 118, 111, 99, 101, 115, 32, 112, 111, 100, 101, 109, 32, 114, 101, 118, 105, 115, 97, 114, 32, 99, 111, 109, 32, 99, 97, 108, 109, 97, 32, 101, 44, 32, 115, 101, 32, 113, 117, 105, 115, 101, 114, 101, 109, 44, 32, 97, 115, 115, 105, 110, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 97, 32, 100, 101, 32, 109, 97, 110, 104, 97, 46, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 97, 32, 100, 101, 32, 109, 97, 110, 104, 97, 69, 110, 116, 195, 163, 111, 32, 102, 105, 99, 97, 32, 99, 111, 109, 98, 105, 110, 97, 100, 111, 32, 97, 115, 115, 105, 109, 58, 32, 101, 117, 32, 112, 114, 101, 112, 97, 114, 111, 32, 116, 117, 100, 111, 32, 104, 111, 106, 101, 32, 195, 160, 32, 110, 111, 105, 116, 101, 32, 101, 32, 118, 111, 99, 195, 170, 115, 32, 112, 111, 100, 101, 109, 32, 114, 101, 118, 105, 115, 97, 114, 32, 99, 111, 109, 32, 99, 97, 108, 109, 97, 32, 101, 44, 32, 115, 101, 32, 113, 117, 105, 115, 101, 114, 101, 109, 44, 32, 97, 115, 115, 105, 110, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 195, 163, 32, 100, 101, 32, 109, 97, 110, 104, 195, 163, 46, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 195, 163, 32, 100, 101, 32, 109, 97, 110, 104, 195, 163, 83, 105, 109, 44, 32, 112, 111, 100, 101, 109, 111, 115, 32, 99, 111, 109, 101, 99, 97, 114, 32, 97, 103, 111, 114, 97, 80, 111, 100, 101, 109, 111, 115, 32, 99, 111, 109, 101, 99, 97, 114, 32, 97, 103, 111, 114, 97, 63, 80, 111, 100, 101, 109, 111, 115, 32, 101, 110, 118, 105, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 97, 109, 97, 110, 104, 97, 86, 111, 99, 101, 115, 32, 112, 111, 100, 101, 109, 32, 101, 110, 118, 105, 97, 114, 32, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 32, 104, 111, 106, 101, 63, 99, 111, 110, 116, 114, 97, 116, 111, 32, 111, 111, 32, 99, 111, 110, 116, 114, 97, 116, 111, 115, 105, 109, 32, 115, 105, 109, 32, 115, 105, 109, 83, 105, 109, 46, 46, 46, 46, 32, 45, 45, 32, 63, 33, 79, 32, 112, 114, 101, 99, 111, 32, 101, 32, 100, 101, 122, 32, 109, 105, 108, 32, 114, 101, 97, 105, 115, 68, 101, 122, 32, 109, 105, 108, 63, 83, 105, 109, 44, 32, 99, 108, 97, 114, 111, 208, 159, 209, 128, 208, 184, 208, 178, 208, 181, 209, 130, 44, 32, 208, 186, 208, 176, 208, 186, 32, 208, 180, 208, 181, 208, 187, 208, 176, 63, 208, 191, 209, 128, 208, 184, 208, 178, 208, 181, 209, 130, 32, 208, 186, 208, 176, 208, 186, 32, 208, 180, 208, 181, 208, 187, 208, 176, 83, 97, 108, 97, 32, 50, 48, 50, 54, 44, 32, 97, 110, 100, 97, 114, 32, 49, 48, 113, 117, 105, 110, 116, 97, 45, 102, 101, 105, 114, 97, 44, 32, 100, 39, 97, 103, 117, 97, 65, 195, 167, 195, 163, 111, 32, 106, 195, 161, 33, 65, 66, 67, 68, 32, 101, 102, 103, 104, 45, 74, 75, 77, 78, 97, 98, 99, 100, 101, 102, 103, 104, 106, 107, 109, 110, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 110, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 48, 32, 32, 50, 51, 52, 53, 95, 54, 55, 56, 57, 95, 87, 88, 89, 90, 32, 32, 50, 51, 52, 53, 54, 55, 56, 57, 119, 120, 121, 122, 50, 51, 52, 53, 45, 54, 55, 56, 57, 45, 119, 120, 121, 122, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 106, 107, 109, 110, 112, 97, 98, 99, 100, 45, 101, 102, 103, 104, 45, 105, 106, 107, 109, 97, 98, 99, 100, 9, 101, 102, 103, 104, 9, 106, 107, 109, 110, 97, 98, 99, 100, 45, 195, 169, 102, 103, 104, 45, 106, 107, 109, 110, 65, 66, 67, 68, 69, 70, 71, 72, 74, 75, 77, 78 };
+static const uint32_t PE_FX_OFFSETS[35] = { 0, 140, 166, 311, 339, 365, 387, 419, 454, 464, 474, 485, 489, 498, 498, 521, 529, 539, 569, 597, 616, 636, 647, 661, 673, 687, 701, 719, 731, 745, 758, 773, 787, 801, 816 };
+static const uint32_t PE_FX_LENGTHS[35] = { 140, 26, 145, 28, 26, 22, 32, 35, 10, 10, 11, 4, 9, 0, 23, 8, 10, 30, 28, 19, 20, 11, 14, 12, 14, 14, 18, 12, 14, 13, 15, 14, 14, 15, 12 };
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
 int64_t pe_status(bool link_on, bool connected, int64_t peers, int64_t failures);
 int64_t pe_reconnect_delay_ms(int64_t attempt);
 bool pe_peer_alive(int64_t ms_since_hello);
+bool pe_accepts_new_peer(int64_t known_peers);
+bool pe_reconnects(int64_t close_code);
 bool pe_sends_mic(bool link_up, bool muted, bool headphones_like, bool key_held);
 bool pe_vad_sends(bool has_signal, int64_t ms_since_signal);
 int64_t pe_jitter_action(bool filling, double pending_ms, double queued_ms, bool output_running, double low_ms, int64_t low_count);
@@ -163,16 +136,8 @@ int64_t pe_text_len(int64_t len);
 uint8_t pe_fold(uint8_t c);
 bool pe_is_word_byte(uint8_t c);
 int64_t pe_words(uint8_t text[static 4096], int64_t len, int64_t starts[static 512], int64_t lens[static 512]);
+int64_t pe_word_count(uint8_t text[static 4096], int64_t len);
 bool pe_same_word(uint8_t a[static 4096], int64_t a_start, int64_t a_len, uint8_t b[static 4096], int64_t b_start, int64_t b_len);
-int64_t pe_word_similarity_milli(uint8_t a[static 4096], int64_t a_len, uint8_t b[static 4096], int64_t b_len);
-bool pe_is_peer_voice(int64_t kind, int64_t similarity_milli, int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t window_start_ms, int64_t window_end_ms);
-bool pe_is_letter(uint8_t c);
-bool pe_meet_code_matches(uint8_t text[static 4096], int64_t n, int64_t at);
-int64_t pe_meet_code_at(uint8_t text[static 4096], int64_t len);
-int64_t pe_meet_code(uint8_t text[static 4096], int64_t len, uint8_t out[static 12]);
-int64_t pe_fixture(int64_t index, uint8_t out[static 4096]);
-int64_t pe_fixture_similarity(int64_t a, int64_t b);
-bool pe_fixture_meet_code_is(int64_t text, int64_t code);
 bool pe_in_secret_alphabet(uint8_t c);
 int64_t pe_secret_alphabet(uint8_t out[static 64]);
 int64_t pe_secret_normalized(uint8_t text[static 4096], int64_t len, uint8_t out[static 12]);
@@ -180,16 +145,16 @@ int64_t pe_secret_display(uint8_t text[static 4096], int64_t len, uint8_t out[st
 bool pe_gap_over(int64_t hi, int64_t lo, int64_t limit);
 bool pe_frame_fresh(int64_t sent_ms, int64_t now_ms);
 bool pe_seq_newer(uint32_t seq, uint32_t last_seq, bool has_last);
-bool pe_accepts_new_peer(int64_t known_peers);
-bool pe_reconnects(int64_t close_code);
-int64_t pe_window_end_ms(int64_t end_ms, int64_t last_seen_ms, int64_t now_ms);
+int64_t pe_window_end_ms(int64_t end_ms, int64_t last_seen_ms, int64_t now_ms, bool refreshed);
 int64_t pe_containment_milli(uint8_t phrase[static 4096], int64_t phrase_len, uint8_t said[static 4096], int64_t said_len);
 bool pe_permille_at_least(int64_t part, int64_t whole, int64_t permille);
-bool pe_is_peer_voice_v2(int64_t kind, int64_t containment_milli, int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t window_start_ms, int64_t window_end_ms);
-int64_t pe_fixture2(int64_t index, uint8_t out[static 4096]);
-int64_t pe_fixture2_containment(int64_t phrase, int64_t said);
-int64_t pe_fixture2_similarity(int64_t a, int64_t b);
-bool pe_fixture2_secret_is(int64_t text, int64_t expected);
-bool pe_fixture2_display_is(int64_t text, int64_t expected);
+bool pe_mostly_in(int64_t p_start, int64_t duration, int64_t w_from, bool open, int64_t w_until);
+bool pe_meets(int64_t p_start, int64_t p_end, int64_t w_from, bool open, int64_t w_until);
+bool pe_is_peer_voice(int64_t kind, bool is_self, int64_t phrase_words, int64_t containment_milli, int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t window_start_ms, int64_t window_end_ms);
+int64_t pe_fixture(int64_t index, uint8_t out[static 4096]);
+int64_t pe_fixture_words(int64_t index);
+int64_t pe_fixture_containment(int64_t phrase, int64_t said);
+bool pe_fixture_secret_is(int64_t text, int64_t expected);
+bool pe_fixture_display_is(int64_t text, int64_t expected);
 /* Function bodies: see the full header. */
 #endif

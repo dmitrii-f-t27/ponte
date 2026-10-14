@@ -37,7 +37,7 @@ Every decision Ponte makes is written in [t27](https://github.com/gHashTag/t27),
 | `lane_rules.t27` | the mic gate and phrase pipeline state machines, push-to-talk, echo guard, speaking rate, replay |
 | `ui_rules.t27` | buttons, status lights, latency colours, setup wizard, overlay |
 | `transcript_rules.t27` | transcript file names, Markdown escaping |
-| `peer_rules.t27` | «Русские в звонке»: the secret code, frames and their freshness, link status and reconnects, presence, when your microphone goes to the other Russians, the jitter buffer, and which incoming phrase is another Ponte's voice |
+| `peer_rules.t27` | «Русские в звонке»: the secret code, frames and their freshness, link status and reconnects, presence, when your microphone goes to the other Russians, the jitter buffer, voice windows, and which recognized phrase is a Ponte's voice (another Ponte's, or this Ponte's own TTS echoed back), while a short reply that repeats a word of the TTS is translated |
 | `analysis_rules.t27` | the call analysis agent: providers and defaults, endpoint, when notes update, request chunks, error classes, retries and backoff, the report and its TXT file name |
 
 The generated C is committed in `Sources/PonteSpecs`, so building the app does not need `t27c`. To regenerate the C and run every spec's own tests:
