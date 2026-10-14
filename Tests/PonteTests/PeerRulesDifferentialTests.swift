@@ -384,3 +384,404 @@ private extension Array {
         return a
     }
 }
+
+// MARK: - Version 2 (owner 2026-10-13)
+// The version 2 rules against their oracle (the version 2 extension of PeerRulesLegacy), bit for bit: the secret code
+// as typed and pasted (case, separators, lookalikes, non-ASCII, texts past 4096 bytes); frame freshness and sequence
+// numbers over every edge of Int64 and UInt32; the room and the close codes; the voice window end around the stale
+// edge; containment over recognized pieces of TTS texts; the version 2 voice window over the whole time domain.
+
+extension PeerRulesDifferentialTests {
+
+    @Test func v2Constants() {
+        let log = DiffLog("peer v2 constants")
+        log.check(F.secretAlphabet, L.secretAlphabet, "secretAlphabet")
+        log.check(String(decoding: F.secretAlphabet, as: UTF8.self), "23456789abcdefghjkmnpqrstuvwxyz", "the alphabet asked for")
+        log.check([F.secretLength, F.secretGroup, F.kdfIterations, F.closeRoomFull, F.stableMs, F.voiceRefreshMs,
+                   F.containMinMilli, F.containSureMilli, F.ownOverlapPermille],
+                  [L.secretLength, L.secretGroup, L.kdfIterations, L.closeRoomFull, L.stableMs, L.voiceRefreshMs,
+                   L.containMinMilli, L.containSureMilli, L.ownOverlapPermille], "Int constants")
+        log.check([F.maxSkewMs, F.voiceStaleMs], [L.maxSkewMs, L.voiceStaleMs], "Int64 constants")
+        log.check(Int(PE_SECRET_DISPLAY_LEN), L.secretLength + (L.secretLength - 1) / L.secretGroup, "display length")
+        log.finish(minimumCases: 5)
+    }
+
+    /// secretNormalized, secretDisplay over typed and pasted codes, any bytes, and texts past 4096 bytes.
+    @Test func secretCode() {
+        let log = DiffLog("secretNormalized, secretDisplay")
+        var r = DiffRandom(seed: 2026)
+        for text in Self.fixtures2() + Self.fixtures() {
+            log.check(F.secretNormalized(utf8: text), L.secretNormalized(utf8: text), "fixture")
+            log.check(F.secretDisplay(utf8: text), L.secretDisplay(utf8: text), "fixture display")
+        }
+        var valid = 0
+        for k in 0..<40_000 {
+            let text = Self.typedSecret(&r)
+            let f = F.secretNormalized(text)
+            log.check(f, L.secretNormalized(text), "typed \(k): \(text.prefix(100))")
+            log.check(F.secretDisplay(text), L.secretDisplay(text), "display typed \(k): \(text.prefix(100))")
+            if let f {
+                valid += 1
+                log.check(F.secretDisplay(f), L.secretDisplay(f), "display \(f)")
+                // What is shown normalizes back to the code.
+                log.check(F.secretNormalized(F.secretDisplay(f)), f, "round trip \(f)")
+            }
+        }
+        for k in 0..<5000 {
+            let bytes = r.bytes(maxCount: r.pick([14, 40, 5000]))
+            log.check(F.secretNormalized(utf8: bytes), L.secretNormalized(utf8: bytes), "bytes \(k)")
+            log.check(F.secretDisplay(utf8: bytes), L.secretDisplay(utf8: bytes), "display bytes \(k)")
+            // Exactly the length of a code, mostly alphabet bytes.
+            let twelve = (0..<12).map { _ in r.int(0...9) == 0 ? r.pick(Self.nearSecretBytes) : r.pick(L.secretAlphabet) }
+            log.check(F.secretDisplay(utf8: twelve), L.secretDisplay(utf8: twelve), "display twelve \(k)")
+            log.check(F.secretNormalized(utf8: twelve), L.secretNormalized(utf8: twelve), "twelve \(k)")
+        }
+        // A code across the 4096-byte cut.
+        for at in 4070...4100 {
+            let bytes = [UInt8](repeating: 0x20, count: at) + Array("abcd-efgh-jkmn".utf8)
+            log.check(F.secretNormalized(utf8: bytes), L.secretNormalized(utf8: bytes), "code at \(at)")
+        }
+        print("secret codes: \(valid) of 40000 typed texts are codes")
+        #expect(valid > 8000 && valid < 32_000)
+        log.finish(minimumCases: 100_000)
+    }
+
+    /// frameFresh over every edge of Int64; seqNewer over every edge of UInt32.
+    @Test func freshness() {
+        let log = DiffLog("frameFresh, seqNewer")
+        let edges: [Int64] = [.min, .min + 1, .min + 29_999, .min + 30_000, .min + 30_001, -(1 << 62), -30_001, -30_000,
+                              -29_999, -1, 0, 1, 29_999, 30_000, 30_001, 1 << 62, .max - 30_001, .max - 30_000,
+                              .max - 29_999, .max - 1, .max]
+        for sent in edges {
+            for now in edges {
+                log.check(F.frameFresh(sentMs: sent, nowMs: now), L.frameFresh(sentMs: sent, nowMs: now), describe(sent, now))
+            }
+        }
+        let clock: Int64 = 1_760_000_000_000
+        for d in Int64(-40_000)...Int64(40_000) {
+            log.check(F.frameFresh(sentMs: 0, nowMs: d), L.frameFresh(sentMs: 0, nowMs: d), "d \(d)")
+            log.check(F.frameFresh(sentMs: clock, nowMs: clock + d), L.frameFresh(sentMs: clock, nowMs: clock + d), "clock d \(d)")
+        }
+        var r = DiffRandom(seed: 30_000)
+        for _ in 0..<20_000 {
+            let sent = Int64(bitPattern: r.next())
+            let now = r.bool() ? Int64(bitPattern: r.next()) : sent &+ Int64(r.int(-40_000...40_000))
+            log.check(F.frameFresh(sentMs: sent, nowMs: now), L.frameFresh(sentMs: sent, nowMs: now), describe(sent, now))
+        }
+        let seqEdges: [UInt32] = [0, 1, 2, 1000, .max / 2, .max / 2 + 1, .max - 1, .max]
+        for seq in seqEdges {
+            for last in seqEdges {
+                for has in [false, true] {
+                    log.check(F.seqNewer(seq: seq, lastSeq: last, hasLast: has), L.seqNewer(seq: seq, lastSeq: last, hasLast: has),
+                              describe(seq, last, has))
+                }
+            }
+        }
+        for _ in 0..<20_000 {
+            let last = UInt32(truncatingIfNeeded: r.next())
+            let seq = r.bool() ? UInt32(truncatingIfNeeded: r.next()) : last &+ UInt32(bitPattern: Int32(r.int(-3...3)))
+            for has in [false, true] {
+                log.check(F.seqNewer(seq: seq, lastSeq: last, hasLast: has), L.seqNewer(seq: seq, lastSeq: last, hasLast: has),
+                          describe(seq, last, has))
+            }
+        }
+        log.finish(minimumCases: 200_000)
+    }
+
+    /// acceptsNewPeer, reconnects.
+    @Test func room() {
+        let log = DiffLog("acceptsNewPeer, reconnects")
+        for n in Array(-2000...2000) + [Int.min, Int.min + 1, Int.max - 1, Int.max] {
+            log.check(F.acceptsNewPeer(knownPeers: n), L.acceptsNewPeer(knownPeers: n), "\(n)")
+        }
+        for code in Array(-1000...70_000) + [Int.min, Int.max] {
+            log.check(F.reconnects(afterCloseCode: code), L.reconnects(afterCloseCode: code), "\(code)")
+        }
+        var r = DiffRandom(seed: 4001)
+        for _ in 0..<20_000 {
+            let n = Int(bitPattern: UInt(r.next()))
+            log.check(F.acceptsNewPeer(knownPeers: n), L.acceptsNewPeer(knownPeers: n), "\(n)")
+            log.check(F.reconnects(afterCloseCode: n), L.reconnects(afterCloseCode: n), "\(n)")
+        }
+        log.finish(minimumCases: 100_000)
+    }
+
+    /// windowEndMs around the stale edge and over every edge of Int64.
+    @Test func voiceWindowEnd() {
+        let log = DiffLog("windowEndMs")
+        let edges: [Int64] = [.min, .min + 1, .min + 12_000, .min + 12_001, -12_001, -12_000, -1, 0, 1, 12_000, 12_001,
+                              .max - 12_001, .max - 12_000, .max]
+        for end in [Int64.min, -2, -1, 0, 1, 15_000, .max] {
+            for seen in edges {
+                for now in edges {
+                    log.check(F.windowEndMs(endMs: end, lastSeenMs: seen, nowMs: now),
+                              L.windowEndMs(endMs: end, lastSeenMs: seen, nowMs: now), describe(end, seen, now))
+                }
+            }
+        }
+        for d in Int64(-2000)...Int64(20_000) {
+            log.check(F.windowEndMs(endMs: -1, lastSeenMs: 1_000_000, nowMs: 1_000_000 + d),
+                      L.windowEndMs(endMs: -1, lastSeenMs: 1_000_000, nowMs: 1_000_000 + d), "d \(d)")
+        }
+        var r = DiffRandom(seed: 12_000)
+        for _ in 0..<40_000 {
+            let seen = r.bool() ? Int64(r.int(0...10_000_000)) : Int64(bitPattern: r.next())
+            let now = r.int(0...3) == 0 ? Int64(bitPattern: r.next()) : seen &+ Int64(r.int(-1000...30_000))
+            let end: Int64 = r.pick([-1, -1, -1, 0, Int64(r.int(-5...5)), seen &+ Int64(r.int(0...20_000)), Int64(bitPattern: r.next())])
+            log.check(F.windowEndMs(endMs: end, lastSeenMs: seen, nowMs: now),
+                      L.windowEndMs(endMs: end, lastSeenMs: seen, nowMs: now), describe(end, seen, now))
+        }
+        log.finish(minimumCases: 60_000)
+    }
+
+    /// containmentMilli over recognized pieces of TTS texts, any bytes, and texts past the buffers.
+    @Test func containment() {
+        let log = DiffLog("containmentMilli")
+        var r = DiffRandom(seed: 800)
+        let fixtures = Self.fixtures() + Self.fixtures2()
+        for a in fixtures {
+            for b in fixtures {
+                log.check(F.containmentMilli(utf8: a, b), L.containmentMilli(utf8: a, b), "fixtures")
+            }
+        }
+        var distribution = [Int](repeating: 0, count: 11)
+        for k in 0..<20_000 {
+            let said = Self.tokens(&r, count: k % 100 == 0 ? r.int(300...900) : r.int(0...30))
+            let phrase = Self.heard(from: said, &r)
+            let tp = Self.render(phrase, &r), ts = Self.render(said, &r)
+            let f = F.containmentMilli(phrase: tp, said: ts)
+            log.check(f, L.containmentMilli(phrase: tp, said: ts), "pair \(k): \(tp.prefix(200)) | \(ts.prefix(200))")
+            if (0...1000).contains(f) { distribution[f / 100] += 1 }
+        }
+        // Any bytes, the shared random pieces, and texts beyond 4096 bytes or 512 words.
+        for k in 0..<4000 {
+            let a = r.bytes(maxCount: k % 100 == 0 ? 5000 : r.pick([20, 200, 600]))
+            let b = k % 2 == 0 ? r.bytes(maxCount: 200) : a.shuffledDeterministically(&r)
+            log.check(F.containmentMilli(utf8: a, b), L.containmentMilli(utf8: a, b), "bytes \(k)")
+            log.check(F.containmentMilli(utf8: b, a), L.containmentMilli(utf8: b, a), "bytes reversed \(k)")
+            let sa = r.text(maxPieces: r.pick([10, 60, 400])), sb = r.text(maxPieces: 60)
+            log.check(F.containmentMilli(phrase: sa, said: sb), L.containmentMilli(phrase: sa, said: sb), "pieces \(k)")
+        }
+        let many = String(repeating: "sim ", count: 700), some = String(repeating: "SIM, ", count: 300)
+        log.check(F.containmentMilli(phrase: many, said: some), L.containmentMilli(phrase: many, said: some), "700 in 300 words")
+        log.check(F.containmentMilli(phrase: many, said: some), 1000 * 300 / 512, "the first 512 words of the phrase")
+        log.check(F.containmentMilli(phrase: some, said: many), 1000, "300 in 700 words")
+        let wide = String(repeating: "ж", count: 3000) + " fim"
+        log.check(F.containmentMilli(phrase: "fim", said: wide), L.containmentMilli(phrase: "fim", said: wide), "beyond 4096 bytes")
+        log.check(F.containmentMilli(phrase: "fim", said: wide), 0, "the word after 4096 bytes is not read")
+        print("containment deciles: \(distribution)")
+        // The random pairs cover the whole range, not only 0 and 1000.
+        #expect(distribution.filter { $0 > 100 }.count >= 8)
+        log.finish(minimumCases: 30_000)
+    }
+
+    /// isPeerVoiceV2 around every edge of a voice window, over the whole time domain (|t| < 2^62).
+    @Test func peerVoiceV2() {
+        let log = DiffLog("isPeerVoiceV2")
+        let limit: Int64 = (1 << 62) - 1
+        func clamp(_ x: Int64) -> Int64 { Swift.min(Swift.max(x, -limit), limit) }
+        // Every 7 ms of phrase start around the window [10000, 12000] (closed and open), with the phrase lengths at the
+        // edges of the 60% own-voice share and the containments at the edges of 800 and 900.
+        for windowEnd: Int64 in [12_000, -1] {
+            for start in stride(from: Int64(9_000), through: 14_500, by: 7) {
+                for length: Int64 in [0, 1, 2, 499, 500, 501, 1666, 1667, 3500] {
+                    for kind in [F.voiceTTS, F.voiceOwn] {
+                        for c in [799, 800, 899, 900] {
+                            log.check(F.isPeerVoiceV2(kind: kind, containmentMilli: c, phraseStartMs: start, phraseEndMs: start + length,
+                                                      windowStartMs: 10_000, windowEndMs: windowEnd),
+                                      L.isPeerVoiceV2(kind: kind, containmentMilli: c, phraseStartMs: start, phraseEndMs: start + length,
+                                                      windowStartMs: 10_000, windowEndMs: windowEnd),
+                                      describe(kind, c, start, length, windowEnd))
+                        }
+                    }
+                }
+            }
+        }
+        // Every millisecond around the end of the text window (12000 + 15000) for a sure and an unsure match.
+        for start in Int64(26_900)...Int64(27_100) {
+            for c in [899, 900] {
+                for length: Int64 in [0, 1000] {
+                    log.check(F.isPeerVoiceV2(kind: F.voiceTTS, containmentMilli: c, phraseStartMs: start, phraseEndMs: start + length,
+                                              windowStartMs: 10_000, windowEndMs: 12_000),
+                              L.isPeerVoiceV2(kind: F.voiceTTS, containmentMilli: c, phraseStartMs: start, phraseEndMs: start + length,
+                                              windowStartMs: 10_000, windowEndMs: 12_000), describe(c, start, length))
+                }
+            }
+        }
+        var r = DiffRandom(seed: 1_500)
+        let kinds = [Int.min, -1, 0, 1, 2, 3, Int.max]
+        let containments = [Int.min, -1, 0, 799, 800, 801, 899, 900, 901, 1000, Int.max]
+        for k in 0..<60_000 {
+            let windowStart = clamp(r.pick([0, 1, 300, 10_000, Int64(r.int(0...10_000_000)), Int64(r.int(-1_000_000...0)),
+                                            limit, -limit, limit - 1500, -limit + 300, r.int64(-limit...limit)]))
+            let windowEnd: Int64 = switch r.int(0...6) {
+            case 0: -1
+            case 1: Int64(r.int(-1_000_000 ... -1))
+            case 2: .min
+            case 3: 0
+            case 4: windowStart
+            default: clamp(windowStart + Int64(r.int(0...30_000)))
+            }
+            let last = Swift.max(windowEnd, windowStart)
+            let anchors: [Int64] = [windowStart - 300, windowStart, last + 1500, last + 15_000, windowEnd, windowStart - 20_000,
+                                    limit, -limit]
+            func near() -> Int64 { clamp(r.pick(anchors) &+ Int64(r.int(-2...2))) }
+            var phraseStart = r.bool() ? near() : clamp(windowStart &+ Int64(r.int(-20_000...40_000)))
+            var phraseEnd = r.int(0...3) == 0 ? near() : clamp(phraseStart &+ Int64(r.int(0...8000)))
+            if k % 10 == 0 { swap(&phraseStart, &phraseEnd) }
+            if k % 50 == 1 {
+                phraseStart = r.int64(-limit...limit)
+                phraseEnd = r.int64(-limit...limit)
+            }
+            let kind = k % 3 == 0 ? r.pick(kinds) : r.pick([F.voiceTTS, F.voiceOwn])
+            let c = r.bool() ? r.pick(containments) : r.int(0...1000)
+            log.check(F.isPeerVoiceV2(kind: kind, containmentMilli: c, phraseStartMs: phraseStart, phraseEndMs: phraseEnd,
+                                      windowStartMs: windowStart, windowEndMs: windowEnd),
+                      L.isPeerVoiceV2(kind: kind, containmentMilli: c, phraseStartMs: phraseStart, phraseEndMs: phraseEnd,
+                                      windowStartMs: windowStart, windowEndMs: windowEnd),
+                      describe(kind, c, phraseStart, phraseEnd, windowStart, windowEnd))
+        }
+        log.finish(minimumCases: 150_000)
+    }
+
+    // MARK: Hand cases from real calls (version 2)
+
+    @Test func handCasesV2() {
+        // The recognizer caught only the tail of a 25-word TTS: all of the tail is in what the peer said.
+        let tts = "Entao fica combinado assim: eu preparo tudo hoje a noite e voces podem revisar com calma e, se quiserem, "
+            + "assinar o contrato amanha de manha."
+        #expect(L.words(Array(tts.utf8)).count == 25)
+        let tail = F.containmentMilli(phrase: "o contrato amanha de manha", said: tts)
+        #expect(tail == 1000)
+        #expect(F.containmentMilli(phrase: tts, said: "o contrato amanha de manha") == 200)
+        #expect(F.containmentMilli(phrase: "o contrato amanhã de manhã",
+                                   said: "Então fica combinado assim: eu preparo tudo hoje à noite e vocês podem revisar com "
+                                       + "calma e, se quiserem, assinar o contrato amanhã de manhã.") == 1000)
+        #expect(F.isPeerVoiceV2(kind: F.voiceTTS, containmentMilli: tail, phraseStartMs: 16_000, phraseEndMs: 18_000,
+                                windowStartMs: 10_000, windowEndMs: 17_500))
+        // The old rule needed both texts alike: the tail alone is 333 alike (5 common of 25 + 5 words), below its 350.
+        #expect(F.wordSimilarityMilli("o contrato amanha de manha", tts) == 333)
+        // The Brazilian's quick reply repeats the TTS question: containment 750 keeps it (below 800) up to 1.5 s after
+        // the window, where the old rule took it for the peer's voice (857 alike).
+        let reply = F.containmentMilli(phrase: "Sim, podemos comecar agora", said: "Podemos comecar agora?")
+        #expect(reply == 750)
+        for after in stride(from: Int64(0), through: 1500, by: 100) {
+            #expect(!F.isPeerVoiceV2(kind: F.voiceTTS, containmentMilli: reply, phraseStartMs: 12_000 + after,
+                                     phraseEndMs: 13_300 + after, windowStartMs: 10_000, windowEndMs: 12_000))
+        }
+        let dice = F.wordSimilarityMilli("Sim, podemos comecar agora", "Podemos comecar agora?")
+        #expect(dice == 857)
+        #expect(F.isPeerVoice(kind: F.voiceTTS, similarityMilli: dice, phraseStartMs: 12_500, phraseEndMs: 13_800,
+                              windowStartMs: 10_000, windowEndMs: 12_000))
+        #expect(F.containmentMilli(phrase: "Podemos enviar o contrato amanha", said: "Voces podem enviar o contrato hoje?") == 600)
+        // The owner of the other Ponte speaking himself: window [10000, 12000], 60% of the phrase inside.
+        #expect(F.isPeerVoiceV2(kind: F.voiceOwn, containmentMilli: 0, phraseStartMs: 10_200, phraseEndMs: 12_400,
+                                windowStartMs: 10_000, windowEndMs: 12_000))
+        #expect(!F.isPeerVoiceV2(kind: F.voiceOwn, containmentMilli: 0, phraseStartMs: 12_500, phraseEndMs: 16_000,
+                                 windowStartMs: 10_000, windowEndMs: 12_000))
+        // Open windows: still playing, no end.
+        #expect(F.isPeerVoiceV2(kind: F.voiceOwn, containmentMilli: 0, phraseStartMs: 90_000, phraseEndMs: 91_000,
+                                windowStartMs: 10_000, windowEndMs: -1))
+        #expect(F.isPeerVoiceV2(kind: F.voiceTTS, containmentMilli: 800, phraseStartMs: 90_000, phraseEndMs: 91_000,
+                                windowStartMs: 10_000, windowEndMs: -1))
+        #expect(!F.isPeerVoiceV2(kind: F.voiceTTS, containmentMilli: 799, phraseStartMs: 90_000, phraseEndMs: 91_000,
+                                 windowStartMs: 10_000, windowEndMs: -1))
+        #expect(!F.isPeerVoiceV2(kind: 0, containmentMilli: 1000, phraseStartMs: 10_000, phraseEndMs: 11_000,
+                                 windowStartMs: 10_000, windowEndMs: -1))
+        // Stale windows: an END was lost and no START came for more than 12 s: the window ends at its last START.
+        #expect(F.windowEndMs(endMs: -1, lastSeenMs: 10_000, nowMs: 22_000) == -1)
+        #expect(F.windowEndMs(endMs: -1, lastSeenMs: 10_000, nowMs: 22_001) == 10_000)
+        #expect(F.windowEndMs(endMs: 15_000, lastSeenMs: 10_000, nowMs: 99_000) == 15_000)
+        let stale = F.windowEndMs(endMs: -1, lastSeenMs: 10_000, nowMs: 40_000)
+        #expect(stale == 10_000)
+        #expect(!F.isPeerVoiceV2(kind: F.voiceOwn, containmentMilli: 0, phraseStartMs: 30_000, phraseEndMs: 31_000,
+                                 windowStartMs: 10_000, windowEndMs: stale))
+        #expect(F.voiceStaleMs > 2 * Int64(F.voiceRefreshMs))
+        // Frames: the ±30 s edges and the Int64 extremes.
+        #expect(F.frameFresh(sentMs: 0, nowMs: 30_000) && F.frameFresh(sentMs: 0, nowMs: -30_000))
+        #expect(!F.frameFresh(sentMs: 0, nowMs: 30_001) && !F.frameFresh(sentMs: 0, nowMs: -30_001))
+        #expect(!F.frameFresh(sentMs: .min, nowMs: .max) && !F.frameFresh(sentMs: .max, nowMs: .min))
+        #expect(F.frameFresh(sentMs: .max, nowMs: .max) && F.frameFresh(sentMs: .min, nowMs: .min))
+        #expect(F.frameFresh(sentMs: .max - 30_000, nowMs: .max) && !F.frameFresh(sentMs: .max - 30_001, nowMs: .max))
+        #expect(F.frameFresh(sentMs: .min, nowMs: .min + 30_000) && !F.frameFresh(sentMs: .min, nowMs: .min + 30_001))
+        #expect(!F.frameFresh(sentMs: -1, nowMs: .max) && !F.frameFresh(sentMs: 0, nowMs: .min))
+        // Sequence numbers.
+        #expect(F.seqNewer(seq: 5, lastSeq: 4, hasLast: true))
+        #expect(!F.seqNewer(seq: 4, lastSeq: 4, hasLast: true))
+        #expect(!F.seqNewer(seq: 3, lastSeq: 4, hasLast: true))
+        #expect(F.seqNewer(seq: 0, lastSeq: .max, hasLast: false))
+        #expect(!F.seqNewer(seq: 0, lastSeq: .max, hasLast: true))
+        #expect(F.seqNewer(seq: .max, lastSeq: .max - 1, hasLast: true))
+        // The secret code.
+        #expect(F.secretNormalized("ABCD efgh-JKMN") == "abcdefghjkmn")
+        #expect(F.secretNormalized("abcd-efgh-jkm0") == nil)
+        #expect(F.secretNormalized("  abcd_efgh_jkmn ") == "abcdefghjkmn")
+        #expect(F.secretNormalized("abcd\tefgh\tjkmn") == nil)
+        #expect(F.secretNormalized("abcd-efgh-jkm") == nil)
+        #expect(F.secretNormalized("abcd-efgh-jkmnp") == nil)
+        #expect(F.secretDisplay("abcdefghjkmn") == "abcd-efgh-jkmn")
+        #expect(F.secretDisplay("abcd-efgh-jkmn") == "abcd-efgh-jkmn")
+        #expect(F.secretDisplay("ABCDEFGHJKMN") == "ABCDEFGHJKMN")
+        #expect(F.secretAlphabet == Array("23456789abcdefghjkmnpqrstuvwxyz".utf8))
+        #expect(F.secretLength == 12 && F.secretGroup == 4 && F.kdfIterations == 200_000)
+        // The room and the connection.
+        #expect((-1...7).map { F.acceptsNewPeer(knownPeers: $0) } == [false, true, true, true, true, true, false, false, false])
+        #expect(!F.reconnects(afterCloseCode: F.closeRoomFull) && F.reconnects(afterCloseCode: 1006) && F.reconnects(afterCloseCode: 1000))
+        #expect(F.closeRoomFull == 4001 && F.stableMs == 3000 && F.voiceRefreshMs == 5000 && F.voiceStaleMs == 12_000)
+        #expect(F.maxSkewMs == 30_000)
+        #expect(F.containMinMilli == 800 && F.containSureMilli == 900 && F.ownOverlapPermille == 600)
+    }
+
+    // MARK: Inputs (version 2)
+
+    /// The spec's version 2 test texts (pe_fixture2).
+    static func fixtures2() -> [[UInt8]] {
+        (0..<Int64(PE_FX2_COUNT)).map { index in
+            var out = [UInt8](repeating: 0, count: Int(PE_TEXT_MAX))
+            let n = Int(pe_fixture2(index, &out))
+            return Array(out[0..<n])
+        }
+    }
+
+    /// What this Ponte's recognizer may make of the peer's TTS (`said`): all of it or a piece of it (the tail, the
+    /// head, the middle), changed as a recognizer changes words; a word in front of it ("Sim, podemos..."); or the
+    /// Brazilian's own unrelated reply.
+    static func heard(from said: [String], _ r: inout DiffRandom) -> [String] {
+        var piece = said
+        if !said.isEmpty, r.bool() {
+            let first = r.int(0...(said.count - 1))
+            let last = r.int(first...(said.count - 1))
+            piece = Array(said[first...last])
+        }
+        switch r.int(0...5) {
+        case 0: return tokens(&r, count: r.int(0...12))
+        case 1: return [word(&r)] + piece
+        default: return variant(of: piece, &r)
+        }
+    }
+
+    static let secretSeparators = [" ", "-", "_", "  ", " - ", "--", "-", " "]
+    static let foreignSeparators = ["\t", "\n", "–", "—", ".", "·", "\u{00A0}", "/", ":"]
+    static let lookalikes: [Character] = ["0", "1", "i", "l", "o", "I", "L", "O", "é", "ж", "!", "ı"]
+    static let nearSecretBytes: [UInt8] = Array("01iloILOAZ -_\t".utf8) + [0x80, 0xC3, 0xA9, 0xFF, 0x00]
+
+    /// A secret code as someone types or pastes it: mostly 12 alphabet characters in either case with separators;
+    /// sometimes a lookalike (0 1 i l o), a foreign separator, a non-ASCII letter, a character too few or too many, or
+    /// a long run of spaces before it (past the 4096-byte cut).
+    static func typedSecret(_ r: inout DiffRandom) -> String {
+        let count = r.pick([12, 12, 12, 11, 13, r.int(0...20)])
+        var s = r.int(0...5) == 0 ? r.pick(secretSeparators) : ""
+        for i in 0..<count {
+            var c = Character(Unicode.Scalar(r.pick(L.secretAlphabet)))
+            if r.bool() { c = Character(c.uppercased()) }
+            if r.int(0...40) == 0 { c = r.pick(lookalikes) }
+            s.append(c)
+            if i + 1 < count, r.int(0...3) == 0 {
+                s += r.int(0...30) == 0 ? r.pick(foreignSeparators) : r.pick(secretSeparators)
+            }
+        }
+        if r.int(0...5) == 0 { s += r.pick(secretSeparators) }
+        if r.int(0...300) == 0 { s = String(repeating: " ", count: r.int(4070...4100)) + s }
+        return s
+    }
+}
