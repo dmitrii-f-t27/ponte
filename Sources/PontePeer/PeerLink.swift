@@ -62,6 +62,7 @@ public final class PeerLink: @unchecked Sendable {
     private var failures = 0
     private var seq: UInt32 = 0
     private var peers: [UInt64: Date] = [:]
+    /// The last frame number of every sender seen in this session (kept after he leaves: no replays).
     private var lastSeq: [UInt64: UInt32] = [:]
     /// Voices of this Ponte still playing into the call: kind → text (announced again on every tick).
     private var activeVoices: [Int: String] = [:]
@@ -247,8 +248,7 @@ public final class PeerLink: @unchecked Sendable {
         let gone = peers.filter { !PeerRules.peerAlive(msSinceHello: Int64(now.timeIntervalSince($0.value) * 1000)) }.keys
         for peer in gone {
             peers.removeValue(forKey: peer)
-            lastSeq.removeValue(forKey: peer)
-            onPeerGone?(peer)
+            onPeerGone?(peer)   // lastSeq stays for the whole session: his old frames cannot be replayed
         }
         reportStatus()
     }
@@ -289,7 +289,6 @@ public final class PeerLink: @unchecked Sendable {
         switch kind {
         case PeerRules.msgBye:
             if peers.removeValue(forKey: peer) != nil { onPeerGone?(peer) }
-            lastSeq.removeValue(forKey: peer)
             reportStatus()
             return
         default:
