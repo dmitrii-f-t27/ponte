@@ -207,6 +207,10 @@ final class CallAnalysisModel {
             settingsChanged()
             return true
         } catch {
+            // The old entry may be gone already (the save deletes it first): show what the Keychain holds now.
+            reloadKey()
+            invalidateProbe()
+            settingsChanged()
             keyMessage = error.localizedDescription
             let outcome = (error as? AnalysisKeychainError)?.outcome ?? AnalysisRules.saveFailed
             log.error("analysis key not saved for \(self.providerID, privacy: .public): outcome \(outcome, privacy: .public)")
@@ -224,6 +228,7 @@ final class CallAnalysisModel {
             keyMessage = "Ключ \(providerName) удалён из связки ключей."
             log.info("analysis key deleted for \(self.providerID, privacy: .public)")
         } catch {
+            reloadKey()
             keyMessage = error.localizedDescription
         }
     }
@@ -613,6 +618,11 @@ final class CallAnalysisModel {
     /// one) get AnalysisRules.quitWaitMs to arrive and are written to a file; the ones still out after it are
     /// abandoned, with a line in the log. A report the owner has not saved is written to a file
     /// (AnalysisRules.saveBeforeReset).
+    /// Work a quit must not lose (AnalysisRules.quitHasWork): an unsaved report or one still being written.
+    var quitHasWork: Bool {
+        AnalysisRules.quitHasWork(hasReport: report != nil, saved: report?.savedURL != nil, builds: builds.count)
+    }
+
     func finishForQuit() async {
         quitting = true
         tickTask?.cancel()

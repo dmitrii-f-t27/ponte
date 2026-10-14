@@ -705,7 +705,7 @@ enum AppRules {
     }
 
     /// Quitting during a call stops it first (and saves the transcript).
-    static func quitWaits(runState: Int32) -> Bool { ui_quit_waits(runState) }
+    static func quitWaits(runState: Int32, analysisWork: Bool) -> Bool { ui_quit_waits(runState, analysisWork) }
 
     // MARK: - The checklist «Перед звонком»
 

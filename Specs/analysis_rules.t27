@@ -917,6 +917,12 @@ pub fn an_save_before_reset(has_report: bool, saved: bool) -> bool {
     return has_report and saved == false;
 }
 
+; On quit: there is work left when a report is not saved yet or reports are still being written (the quit waits for
+; them even with no call running, ui_quit_waits).
+pub fn an_quit_has_work(has_report: bool, saved: bool, builds: i64) -> bool {
+    return an_save_before_reset(has_report, saved) or builds > 0;
+}
+
 ; On quit: how long to wait for the reports still being written (of this call or an earlier one) before they are
 ; abandoned; no wait without one.
 pub fn an_quit_wait_ms(builds: i64) -> i64 {
@@ -1415,6 +1421,11 @@ test an_report_rules {
     }
     assert bad == 0;
     assert an_quit_wait_ms(0) == 0;
+    assert an_quit_has_work(false, false, 0) == false;
+    assert an_quit_has_work(true, true, 0) == false;
+    assert an_quit_has_work(true, false, 0) == true;
+    assert an_quit_has_work(false, false, 1) == true;
+    assert an_quit_has_work(true, true, -1) == false;
     assert an_quit_wait_ms(-1) == 0;
     assert an_quit_wait_ms(1) == AN_QUIT_WAIT_MS;
     assert an_quit_wait_ms(3) == 10000;

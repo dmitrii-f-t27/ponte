@@ -316,6 +316,10 @@ public enum AnalysisRules {
 
     /// On quit: how long to wait for `builds` reports still being written.
     public static func quitWaitMs(builds: Int) -> Int { Int(an_quit_wait_ms(Int64(builds))) }
+    /// On quit: a report not saved yet, or reports still being written (the quit waits even with no call running).
+    public static func quitHasWork(hasReport: Bool, saved: Bool, builds: Int) -> Bool {
+        an_quit_has_work(hasReport, saved, Int64(builds))
+    }
 
     public static func reportButtonEnabled(lines: Int, hasReport: Bool, busy: Bool) -> Bool {
         an_report_button_enabled(Int64(lines), hasReport, busy)

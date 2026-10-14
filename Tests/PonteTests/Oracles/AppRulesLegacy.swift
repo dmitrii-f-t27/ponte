@@ -918,7 +918,7 @@ extension AppRulesLegacy {
     static let SOURCE_SYSTEM_KEY = "system"
     static let SOURCE_APP_PREFIX = "app:"
     /// PonteAppDelegate.applicationShouldTerminate: `model.isRunning`.
-    static func quitWaits(runState: Int32) -> Bool { runState == RUN_RUNNING }
+    static func quitWaits(runState: Int32, analysisWork: Bool) -> Bool { runState == RUN_RUNNING || analysisWork }
 
     // MARK: - The checklist «Перед звонком» (2026-10-13; written for ui_rules.t27, mirrored here)
 

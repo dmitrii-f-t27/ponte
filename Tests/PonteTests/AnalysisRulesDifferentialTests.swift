@@ -402,7 +402,7 @@ private typealias L = AnalysisRulesLegacy
     }
 
     @Test func reportRules() {
-        let log = DiffLog("reportOnStop, reportOnOpen, buildCheck, reportButtonEnabled, saveBeforeReset, quitWaitMs, durationMinutes")
+        let log = DiffLog("reportOnStop, reportOnOpen, buildCheck, reportButtonEnabled, saveBeforeReset, quitWaitMs, quitHasWork, durationMinutes")
         let bools = [false, true]
         let counts = Array(-3...12) + [Int.min, Int.max, 1000]
         for a in bools {
@@ -429,6 +429,12 @@ private typealias L = AnalysisRulesLegacy
         }
         for builds in Array(-5...20) + [Int.min, Int.max] {
             log.check(F.quitWaitMs(builds: builds), L.quitWaitMs(builds: builds), "\(builds)")
+            for a in bools {
+                for b in bools {
+                    log.check(F.quitHasWork(hasReport: a, saved: b, builds: builds), L.quitHasWork(hasReport: a, saved: b, builds: builds),
+                              describe(a, b, builds))
+                }
+            }
         }
         var r = DiffRandom(seed: 60_000)
         var times = Array(-5...5) + [29_999, 30_000, 89_999, 90_000, 149_999, 150_000, Int.min, Int.max - 30_000]

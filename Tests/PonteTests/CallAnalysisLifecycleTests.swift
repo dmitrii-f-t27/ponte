@@ -552,6 +552,29 @@ private func isReport(_ user: String) -> Bool { user.hasPrefix("Сведения
         #expect(model.keyMessage?.contains("«ponte-analysis-zai»") == true)
         #expect(model.keyMessage?.contains("«Связка ключей»") == true)
     }
+
+    /// A save that removed the old item and then failed: the settings no longer claim a key.
+    @Test func aFailedSaveShowsWhatTheKeychainHolds() throws {
+        final class LosingStore: AnalysisKeyStore, @unchecked Sendable {
+            private let lock = NSLock()
+            private var key: AnalysisStoredKey? = AnalysisStoredKey(key: "test-key-old", baseURL: "https://api.z.ai/api/paas/v4")
+            func stored(for provider: Int) -> AnalysisStoredKey? { lock.withLock { key } }
+            func save(_ key: String, baseURL: String, for provider: Int) throws {
+                lock.withLock { self.key = nil }
+                throw AnalysisKeychainError(outcome: AnalysisRules.saveFailed, status: errSecInteractionNotAllowed, service: "ponte-analysis-zai")
+            }
+            func delete(for provider: Int) throws { lock.withLock { key = nil } }
+        }
+        let suite = "ponte-analysis-lose-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = CallAnalysisModel(defaults: defaults, keyStore: LosingStore(), testMode: false)
+        model.loadKeyIfNeeded()
+        #expect(model.hasKey)
+        #expect(!model.saveKey("test-key-new"))
+        #expect(!model.hasKey)
+        #expect(model.keyMessage?.contains("Связка ключей не сохранила") == true)
+    }
 }
 
 // MARK: - Cut replies

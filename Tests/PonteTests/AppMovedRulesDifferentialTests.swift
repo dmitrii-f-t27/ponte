@@ -137,7 +137,9 @@ private typealias L = AppRulesLegacy
         for tick: Int64 in -100...20_000 { log.check(F.pollRefreshesCatalogs(tick: tick), L.pollRefreshesCatalogs(tick: tick), "\(tick)") }
         for run: Int32 in -1...5 {
             log.check(F.transcriptHasEnd(runState: run), L.transcriptHasEnd(runState: run), "\(run)")
-            log.check(F.quitWaits(runState: run), L.quitWaits(runState: run), "\(run)")
+            for work in bools {
+                log.check(F.quitWaits(runState: run, analysisWork: work), L.quitWaits(runState: run, analysisWork: work), describe(run, work))
+            }
             for ever in bools {
                 for started: Int32 in -1...3 {
                     for failed: Int32 in -1...3 {

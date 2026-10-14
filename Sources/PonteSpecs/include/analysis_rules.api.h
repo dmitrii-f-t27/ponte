@@ -283,6 +283,7 @@ int64_t an_report_on_open(bool enabled, bool busy, bool has_report, int64_t repo
 int64_t an_build_check(bool enabled, bool busy, bool configured, int64_t lines);
 bool an_report_button_enabled(int64_t lines, bool has_report, bool busy);
 bool an_save_before_reset(bool has_report, bool saved);
+bool an_quit_has_work(bool has_report, bool saved, int64_t builds);
 int64_t an_quit_wait_ms(int64_t builds);
 int64_t an_duration_minutes(int64_t ms);
 int64_t an_append_digits(uint8_t out[static 256], int64_t at, int32_t value, int64_t width);

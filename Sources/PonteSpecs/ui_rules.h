@@ -255,7 +255,7 @@ bool ui_equals_row(uint8_t text[static 64], int64_t len, int64_t row);
 bool ui_is_yes(uint8_t text[static 64], int64_t len);
 int64_t ui_source_key_app_prefix(uint8_t text[static 4096], int64_t len);
 int64_t ui_row_bytes(int64_t row, uint8_t out[static 64]);
-bool ui_quit_waits(int32_t run_state);
+bool ui_quit_waits(int32_t run_state, bool analysis_work);
 int32_t ui_listener_mark(int32_t listen_status);
 int32_t ui_checklist_mark(int32_t item, int32_t listen_status, bool headphones_like, int32_t mic_source);
 int32_t ui_mic_source(bool has_setting, bool found, bool has_auto);
@@ -836,8 +836,8 @@ int64_t ui_row_bytes(int64_t row, uint8_t out[static 64]) {
     return n;
 }
 
-bool ui_quit_waits(int32_t run_state) {
-    return (run_state == UI_RUN_RUNNING);
+bool ui_quit_waits(int32_t run_state, bool analysis_work) {
+    return ((run_state == UI_RUN_RUNNING) || analysis_work);
 }
 
 int32_t ui_listener_mark(int32_t listen_status) {
@@ -1217,8 +1217,10 @@ void test_ui_moved_rules(void) {
     assert((ui_source_key_app_prefix(key, 3) == -1));
     key[3] = 59;
     assert((ui_source_key_app_prefix(key, 5) == -1));
-    assert((ui_quit_waits(UI_RUN_RUNNING) == true));
-    assert((ui_quit_waits(UI_RUN_STOPPING) == false));
+    assert((ui_quit_waits(UI_RUN_RUNNING, false) == true));
+    assert((ui_quit_waits(UI_RUN_STOPPING, false) == false));
+    assert((ui_quit_waits(UI_RUN_IDLE, false) == false));
+    assert((ui_quit_waits(UI_RUN_IDLE, true) == true));
     assert((UI_DEFAULT_TRANSLATOR == UI_TR_APPLE));
 }
 

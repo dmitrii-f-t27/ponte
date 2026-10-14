@@ -249,7 +249,7 @@ bool ui_equals_row(uint8_t text[static 64], int64_t len, int64_t row);
 bool ui_is_yes(uint8_t text[static 64], int64_t len);
 int64_t ui_source_key_app_prefix(uint8_t text[static 4096], int64_t len);
 int64_t ui_row_bytes(int64_t row, uint8_t out[static 64]);
-bool ui_quit_waits(int32_t run_state);
+bool ui_quit_waits(int32_t run_state, bool analysis_work);
 int32_t ui_listener_mark(int32_t listen_status);
 int32_t ui_checklist_mark(int32_t item, int32_t listen_status, bool headphones_like, int32_t mic_source);
 int32_t ui_mic_source(bool has_setting, bool found, bool has_auto);

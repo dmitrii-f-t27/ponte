@@ -303,6 +303,7 @@ enum AnalysisRulesLegacy {
     static func reportButtonEnabled(lines: Int, hasReport: Bool, busy: Bool) -> Bool { lines >= 1 || hasReport || busy }
 
     static func saveBeforeReset(hasReport: Bool, saved: Bool) -> Bool { hasReport && !saved }
+    static func quitHasWork(hasReport: Bool, saved: Bool, builds: Int) -> Bool { (hasReport && !saved) || builds >= 1 }
 
     static func durationMinutes(ms: Int) -> Int { ms > 0 ? (ms + 30_000) / 60_000 : 0 }
 
