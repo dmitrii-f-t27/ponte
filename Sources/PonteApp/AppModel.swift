@@ -191,6 +191,8 @@ final class AppModel {
     @ObservationIgnored let appCatalog = RunningAudioAppCatalog()
     @ObservationIgnored private let memory = ConversationMemory()
     @ObservationIgnored private let echoGuard = EchoGuard()
+    /// The outgoing lane hears a live microphone (not a test file): the echo guard applies only then.
+    @ObservationIgnored private var echoMicIsLive = true
     @ObservationIgnored private var incomingLane: TranslationLane?
     @ObservationIgnored private var outgoingLane: TranslationLane?
     @ObservationIgnored private let ptt = PushToTalkMonitor()
@@ -581,8 +583,11 @@ final class AppModel {
         if auto != autoMicDevice { autoMicDevice = auto }
         // While a call runs, the echo guard follows the output the owner hears now (headphones dropped, «Звук»).
         if isRunning {
-            echoGuard.setOutput(speakerOutput: AppRules.echoGuardApplies(speakerOutput: warning, micIsLive: true),
-                                sealed: outputSealed)
+            let sealed = outputSealed
+            echoGuard.setOutput(speakerOutput: AppRules.echoGuardApplies(
+                                    speakerOutput: AppRules.echoOutput(speakerOutput: warning, outputSealed: sealed),
+                                    micIsLive: echoMicIsLive),
+                                sealed: sealed)
         }
     }
 
@@ -962,9 +967,12 @@ final class AppModel {
         translatorInUse = translator.name
         let synth = SystemSpeechSynth(voiceIdentifiers: voiceMap)
         liveSynth = synth
-        let echoOutput = AppRules.echoGuardApplies(speakerOutput: speakerWarning, micIsLive: micIsLive)
+        echoMicIsLive = micIsLive
+        let sealed = outputSealed
+        let echoOutput = AppRules.echoGuardApplies(speakerOutput: AppRules.echoOutput(speakerOutput: speakerWarning, outputSealed: sealed),
+                                                   micIsLive: micIsLive)
         echoGuard.configure(speakerOutput: echoOutput)
-        echoGuard.setOutput(speakerOutput: echoOutput, sealed: outputSealed)
+        echoGuard.setOutput(speakerOutput: echoOutput, sealed: sealed)
         let callOutput: AudioPlayer?
         switch AppRules.callOutput(hasSink: launch.outgoingSink != nil, hasBlackHole: blackHoleDevice != nil) {
         case AppRules.OUT_SINK: callOutput = launch.outgoingSink.map { WAVFileSink(url: $0) }
@@ -1123,6 +1131,10 @@ final class AppModel {
     func prepareToQuit() async {
         analysis.quitting = true   // Stop starts no report (AnalysisRules.reportOnStop): the app is about to exit
         await stop()
+        if peerOn {
+            setPeer(on: false)   // the goodbye goes out on the link queue; give it a moment before the app exits
+            try? await Task.sleep(for: .milliseconds(300))
+        }
         await analysis.finishForQuit()   // an unsaved report to a file; one being written gets a short wait
     }
 
@@ -1232,6 +1244,8 @@ final class AppModel {
     private(set) var peerCount = 0
     /// Connections the relay counts in the room, this one included (-1: unknown).
     private(set) var peerMembers = -1
+    /// Someone in the room never announced himself (PeerRules.unknownListener).
+    private(set) var peerListener = false
     /// The room was full: the link tries again until a seat is free.
     private(set) var peerRoomFull = false
     /// Another Russian's voice is playing in the owner's ears now.
@@ -1290,6 +1304,12 @@ final class AppModel {
                     self.updatePeerMic()
                 }
             }
+            link.onListener = { [weak self, weak link] listener in
+                MainActor.assumeIsolated {
+                    guard let self, let link, self.peerLink === link else { return }
+                    self.peerListener = listener
+                }
+            }
             link.onRoomFull = { [weak self, weak link] full in
                 MainActor.assumeIsolated {
                     guard let self, let link, self.peerLink === link else { return }
@@ -1307,6 +1327,7 @@ final class AppModel {
             peerOn = true
             peerRoomFull = false
             peerMembers = -1
+            peerListener = false
             link.start()
             PonteDiagnostics.log("peer link on")
         } else {
@@ -1318,6 +1339,7 @@ final class AppModel {
             peerStatus = PeerRules.statusOff
             peerCount = 0
             peerMembers = -1
+            peerListener = false
             PonteDiagnostics.log("peer link off")
         }
         attachPeer()

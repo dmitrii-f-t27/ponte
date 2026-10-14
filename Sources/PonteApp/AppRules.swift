@@ -486,6 +486,8 @@ enum AppRules {
     static func outputSealed(echoRiskNone: Bool, micIsOutputHeadset: Bool) -> Bool {
         ln_output_sealed(echoRiskNone, micIsOutputHeadset)
     }
+    /// The microphone may hear Ponte's Russian voice: a loudspeaker or any output that is not sealed.
+    static func echoOutput(speakerOutput: Bool, outputSealed: Bool) -> Bool { ln_echo_output(speakerOutput, outputSealed) }
     /// Another Russian's voice just played and the mic may hear it: nothing from the mic goes into the call.
     static func peerAudioBlocksCall(outputSealed: Bool, msSincePeerAudio: Int64) -> Bool {
         ln_peer_audio_blocks_call(outputSealed, msSincePeerAudio)
@@ -705,7 +707,7 @@ enum AppRules {
     }
 
     /// Quitting during a call stops it first (and saves the transcript).
-    static func quitWaits(runState: Int32, analysisWork: Bool) -> Bool { ui_quit_waits(runState, analysisWork) }
+    static func quitWaits(runState: Int32, analysisWork: Bool, peerOn: Bool) -> Bool { ui_quit_waits(runState, analysisWork, peerOn) }
 
     // MARK: - The checklist «Перед звонком»
 

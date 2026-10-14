@@ -370,6 +370,13 @@ pub fn ln_output_sealed(echo_risk_none: bool, mic_is_output_headset: bool) -> bo
     return echo_risk_none or mic_is_output_headset;
 }
 
+; The microphone may hear Ponte's own Russian voice: a loudspeaker, or any output that is not sealed (a Bluetooth or
+; USB speaker, headphones with a microphone other than their own). The echo guard (ln_echo_guard_applies) treats it as
+; a speaker output, so the Russian voice never reaches the call or the other Russians (review 2026-10-14).
+pub fn ln_echo_output(speaker_output: bool, output_sealed: bool) -> bool {
+    return speaker_output or output_sealed == false;
+}
+
 pub fn ln_peer_audio_blocks_call(output_sealed: bool, ms_since_peer_audio: i64) -> bool {
     if (output_sealed) { return false; }
     return ms_since_peer_audio >= 0 and ms_since_peer_audio < LN_ECHO_TAIL_MS;
@@ -808,6 +815,10 @@ test ln_peer_audio_guard {
     assert ln_output_sealed(true, false) == true;
     assert ln_output_sealed(false, true) == true;
     assert ln_output_sealed(false, false) == false;
+    assert ln_echo_output(true, false) == true;
+    assert ln_echo_output(true, true) == true;
+    assert ln_echo_output(false, false) == true;
+    assert ln_echo_output(false, true) == false;
     assert ln_peer_audio_blocks_call(false, 0) == true;
     assert ln_peer_audio_blocks_call(false, 699) == true;
     assert ln_peer_audio_blocks_call(false, 700) == false;

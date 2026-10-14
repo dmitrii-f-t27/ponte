@@ -670,9 +670,10 @@ pub fn ui_row_bytes(row: i64, out: [64]u8) -> i64 {
 }
 
 ; Quitting during a call stops it first (and saves the transcript); quitting with call analysis work left (an unsaved
-; report, a report being written: an_quit_has_work) waits for it too.
-pub fn ui_quit_waits(run_state: i32, analysis_work: bool) -> bool {
-    return run_state == UI_RUN_RUNNING or analysis_work;
+; report, a report being written: an_quit_has_work) waits for it too, and so does quitting with the Russians' link on
+; (its goodbye goes out, so the other Russians do not wait for a timeout).
+pub fn ui_quit_waits(run_state: i32, analysis_work: bool, peer_on: bool) -> bool {
+    return run_state == UI_RUN_RUNNING or analysis_work or peer_on;
 }
 
 ; --- The checklist "before the call" (owner 2026-10-13) ----------------------------------------------------------
@@ -1081,10 +1082,11 @@ test ui_moved_rules {
     assert ui_source_key_app_prefix(key, 3) == -1;
     key[3] = 59;
     assert ui_source_key_app_prefix(key, 5) == -1;
-    assert ui_quit_waits(UI_RUN_RUNNING, false) == true;
-    assert ui_quit_waits(UI_RUN_STOPPING, false) == false;
-    assert ui_quit_waits(UI_RUN_IDLE, false) == false;
-    assert ui_quit_waits(UI_RUN_IDLE, true) == true;
+    assert ui_quit_waits(UI_RUN_RUNNING, false, false) == true;
+    assert ui_quit_waits(UI_RUN_STOPPING, false, false) == false;
+    assert ui_quit_waits(UI_RUN_IDLE, false, false) == false;
+    assert ui_quit_waits(UI_RUN_IDLE, true, false) == true;
+    assert ui_quit_waits(UI_RUN_IDLE, false, true) == true;
     assert UI_DEFAULT_TRANSLATOR == UI_TR_APPLE;
 }
 

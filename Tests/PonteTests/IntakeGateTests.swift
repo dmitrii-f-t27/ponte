@@ -59,12 +59,13 @@ import Testing
         echo.notePeerAudio(at: clock.now)
         for _ in 0..<20 { intake.handle(loud()) }
         #expect(player.streamed == 0)               // nothing into the call
-        #expect(toPeers.all.count == 20)            // the owner's own mic still goes to the other Russians
+        #expect(toPeers.all.isEmpty)                // and no echo of him back to the Russians
 
         // 0.7 s after his last frame the mic belongs to the owner again.
         clock.now = clock.now.addingTimeInterval(0.8)
         for _ in 0..<10 { intake.handle(loud()) }
         #expect(player.streamed > 0)
+        #expect(toPeers.all.count == 10)
     }
 
     @Test func aSealedHeadsetKeepsTheCallOpen() {

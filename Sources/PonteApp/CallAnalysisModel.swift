@@ -614,15 +614,15 @@ final class CallAnalysisModel {
         if count > 0 { log.info("analysis: \(count, privacy: .public) requests stopped (\(tag, privacy: .public))") }
     }
 
-    /// The app quits (AppModel.prepareToQuit, after Stop). Reports still being written (of this call or an earlier
-    /// one) get AnalysisRules.quitWaitMs to arrive and are written to a file; the ones still out after it are
-    /// abandoned, with a line in the log. A report the owner has not saved is written to a file
-    /// (AnalysisRules.saveBeforeReset).
     /// Work a quit must not lose (AnalysisRules.quitHasWork): an unsaved report or one still being written.
     var quitHasWork: Bool {
         AnalysisRules.quitHasWork(hasReport: report != nil, saved: report?.savedURL != nil, builds: builds.count)
     }
 
+    /// The app quits (AppModel.prepareToQuit, after Stop). Reports still being written (of this call or an earlier
+    /// one) get AnalysisRules.quitWaitMs to arrive and are written to a file; the ones still out after it are
+    /// abandoned, with a line in the log. A report the owner has not saved is written to a file
+    /// (AnalysisRules.saveBeforeReset).
     func finishForQuit() async {
         quitting = true
         tickTask?.cancel()

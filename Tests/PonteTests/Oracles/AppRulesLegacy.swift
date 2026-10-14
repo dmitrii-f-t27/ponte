@@ -704,6 +704,8 @@ extension AppRulesLegacy {
     }
     static let PHRASE_FALLBACK_MS: Int64 = 3_000
     static func outputSealed(echoRiskNone: Bool, micIsOutputHeadset: Bool) -> Bool { echoRiskNone || micIsOutputHeadset }
+    /// Before the review the echo guard looked only at `speakerWarning` (dv_needs_headphones).
+    static func echoOutput(speakerOutput: Bool, outputSealed: Bool) -> Bool { speakerOutput || !outputSealed }
     static func peerAudioBlocksCall(outputSealed: Bool, msSincePeerAudio: Int64) -> Bool {
         !outputSealed && msSincePeerAudio >= 0 && msSincePeerAudio < 700
     }
@@ -918,7 +920,7 @@ extension AppRulesLegacy {
     static let SOURCE_SYSTEM_KEY = "system"
     static let SOURCE_APP_PREFIX = "app:"
     /// PonteAppDelegate.applicationShouldTerminate: `model.isRunning`.
-    static func quitWaits(runState: Int32, analysisWork: Bool) -> Bool { runState == RUN_RUNNING || analysisWork }
+    static func quitWaits(runState: Int32, analysisWork: Bool, peerOn: Bool) -> Bool { runState == RUN_RUNNING || analysisWork || peerOn }
 
     // MARK: - The checklist «Перед звонком» (2026-10-13; written for ui_rules.t27, mirrored here)
 

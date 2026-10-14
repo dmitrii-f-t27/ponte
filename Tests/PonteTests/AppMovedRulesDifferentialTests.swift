@@ -138,7 +138,10 @@ private typealias L = AppRulesLegacy
         for run: Int32 in -1...5 {
             log.check(F.transcriptHasEnd(runState: run), L.transcriptHasEnd(runState: run), "\(run)")
             for work in bools {
-                log.check(F.quitWaits(runState: run, analysisWork: work), L.quitWaits(runState: run, analysisWork: work), describe(run, work))
+                for peer in bools {
+                    log.check(F.quitWaits(runState: run, analysisWork: work, peerOn: peer),
+                              L.quitWaits(runState: run, analysisWork: work, peerOn: peer), describe(run, work, peer))
+                }
             }
             for ever in bools {
                 for started: Int32 in -1...3 {
@@ -286,6 +289,7 @@ private typealias L = AppRulesLegacy
         let log = DiffLog("outputSealed, peerAudioBlocksCall")
         for a in [false, true] { for b in [false, true] {
             log.check(F.outputSealed(echoRiskNone: a, micIsOutputHeadset: b), L.outputSealed(echoRiskNone: a, micIsOutputHeadset: b), "\(a) \(b)")
+            log.check(F.echoOutput(speakerOutput: a, outputSealed: b), L.echoOutput(speakerOutput: a, outputSealed: b), "echo \(a) \(b)")
         } }
         var r = DiffRandom(seed: 1414)
         for _ in 0..<20_000 {

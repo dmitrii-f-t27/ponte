@@ -47,7 +47,7 @@ struct PeerPanel: View {
 
             Label(statusText, systemImage: statusIcon)
                 .foregroundStyle(statusColor)
-            if model.peerOn, model.peerMembers > model.peerCount + 1 {
+            if model.peerOn, model.peerListener {
                 Label("В комнате есть участник, который не назвался: возможно, кто-то подслушивает. Отключитесь и создайте новый код.",
                       systemImage: "exclamationmark.shield.fill")
                     .font(.callout)

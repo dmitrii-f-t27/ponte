@@ -91,6 +91,12 @@ enum PeerRulesLegacy {
 
     static func acceptsNewPeer(knownPeers: Int) -> Bool { (0..<(maxPeers - 1)).contains(knownPeers) }
 
+    static let unknownListenerMs = 6000
+    /// AppModel/PeerPanel before the review: `members > peerCount + 1`, now held for 6 s.
+    static func unknownListener(members: Int, peers: Int, msSinceMismatch: Int64) -> Bool {
+        members >= 0 && peers >= 0 && Int128(members) - Int128(peers) > 1 && msSinceMismatch >= Int64(unknownListenerMs)
+    }
+
     static func roomFull(closeCode code: Int) -> Bool { code == closeRoomFull }
 
     static func retryDelayMs(closeCode code: Int, attempt: Int) -> Int {

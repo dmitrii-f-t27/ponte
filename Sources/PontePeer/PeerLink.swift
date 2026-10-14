@@ -38,6 +38,9 @@ public final class PeerLink: @unchecked Sendable {
     /// counts in the room (this one included; -1 until it says): on the main queue. More connections than Pontes
     /// means someone listens without announcing himself.
     public var onStatus: ((Int, Int, Int) -> Void)?
+    /// True: someone in the room never announced himself (PeerRules.unknownListener); false when that is over. On the
+    /// main queue.
+    public var onListener: ((Bool) -> Void)?
     /// True: the room already has PeerRules.maxPeers members; the link tries again every PeerRules.roomFullRetryMs.
     /// False: a seat was free after all and the link joined. On the main queue.
     public var onRoomFull: ((Bool) -> Void)?
@@ -71,10 +74,15 @@ public final class PeerLink: @unchecked Sendable {
     private var activeVoices: [Int: String] = [:]
     private var helloTimer: DispatchSourceTimer?
     private var lastStatus: (Int, Int, Int) = (-1, -1, -1)
+    /// Since when the relay has counted more connections than the known peers plus this Ponte.
+    private var mismatchSince: Date?
+    private var listenerShown = false
     /// Connections in the room as the relay counts them (-1: not told yet).
     private var members = -1
     /// Audio frames handed to the socket and not yet sent (backpressure on a slow uplink).
     private var audioInFlight = 0
+    /// Bumped when a socket drops: completions of the old socket's sends no longer count down the new one's frames.
+    private var audioGeneration = 0
     // Microphone → 16 kHz frames.
     private var converter: PCM.Converter?
     private var pendingSamples: [Int16] = []
@@ -174,7 +182,11 @@ public final class PeerLink: @unchecked Sendable {
                 // A slow uplink: drop live audio rather than let it pile up (late voice is useless).
                 guard PeerRules.audioSends(inFlight: audioInFlight) else { continue }
                 audioInFlight += 1
-                send(kind: PeerRules.msgAudio, payload: payload) { [weak self] in self?.audioInFlight -= 1 }
+                let generation = audioGeneration
+                send(kind: PeerRules.msgAudio, payload: payload) { [weak self] in
+                    guard let self, self.audioGeneration == generation else { return }
+                    self.audioInFlight -= 1
+                }
             }
         }
     }
@@ -270,6 +282,7 @@ public final class PeerLink: @unchecked Sendable {
         self.task = nil
         members = -1
         audioInFlight = 0
+        audioGeneration &+= 1
         for peer in peers.keys { onPeerGone?(peer) }
         peers.removeAll()
         if PeerRules.roomFull(closeCode: closeCode) {
@@ -350,7 +363,10 @@ public final class PeerLink: @unchecked Sendable {
             reportStatus()
             return
         default:
+            let isNew = peers[peer] == nil
             peers[peer] = now
+            // A Ponte that just joined learns of this one at once, not at its next tick.
+            if isNew { send(kind: PeerRules.msgHello, payload: Data()) }
             reportStatus()
         }
         switch kind {
@@ -378,6 +394,19 @@ public final class PeerLink: @unchecked Sendable {
     }
 
     private func reportStatus() {
+        let now = Date()
+        if PeerRules.unknownListener(members: members, peers: peers.count, msSinceMismatch: .max) {
+            if mismatchSince == nil { mismatchSince = now }
+        } else {
+            mismatchSince = nil
+        }
+        let since = mismatchSince.map { Int64(now.timeIntervalSince($0) * 1000) } ?? -1
+        let listener = PeerRules.unknownListener(members: members, peers: peers.count, msSinceMismatch: since)
+        if listener != listenerShown {
+            listenerShown = listener
+            let handler = onListener
+            DispatchQueue.main.async { handler?(listener) }
+        }
         let status = PeerRules.status(linkOn: running, connected: connected, peers: peers.count, failures: failures)
         let current = (status, peers.count, members)
         guard current != lastStatus else { return }

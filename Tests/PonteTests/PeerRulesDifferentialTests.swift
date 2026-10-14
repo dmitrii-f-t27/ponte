@@ -91,6 +91,16 @@ private typealias L = PeerRulesLegacy
     @Test func room() {
         let log = DiffLog("acceptsNewPeer, roomFull, retryDelayMs")
         log.check(F.roomFullRetryMs, L.roomFullRetryMs, "roomFullRetryMs")
+        log.check(F.unknownListenerMs, L.unknownListenerMs, "unknownListenerMs")
+        let counts = Array(-3...10) + [Int.min, Int.max, Int.max - 1]
+        for members in counts {
+            for peers in counts {
+                for ms: Int64 in [.min, -1, 0, 5999, 6000, 6001, 60_000, .max] {
+                    log.check(F.unknownListener(members: members, peers: peers, msSinceMismatch: ms),
+                              L.unknownListener(members: members, peers: peers, msSinceMismatch: ms), "listener \(members) \(peers) \(ms)")
+                }
+            }
+        }
         for n in Array(-2000...2000) + [Int.min, Int.min + 1, Int.max - 1, Int.max] {
             log.check(F.acceptsNewPeer(knownPeers: n), L.acceptsNewPeer(knownPeers: n), "\(n)")
         }

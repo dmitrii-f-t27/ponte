@@ -126,7 +126,7 @@ final class EchoGuard: @unchecked Sendable {
     /// «Русские в звонке»: another Russian's voice just played (on speakers the mic would hear it, like the Russian voice).
     func notePeerAudio(at now: Date) { lock.withLock { lastPeerAt = now } }
 
-    /// Ponte's Russian voice on speakers: the mic goes nowhere (not into the call, not to the other Russians).
+    /// Ponte's Russian voice where the mic may hear it (ln_echo_output): the mic goes nowhere.
     func blocksMic(at now: Date) -> Bool {
         lock.withLock {
             AppRules.echoGuardBlocksMic(speakerOutput: speakerOutput, incomingSpeaking: speaking,
@@ -134,8 +134,8 @@ final class EchoGuard: @unchecked Sendable {
         }
     }
 
-    /// Nothing from the mic may go into the call now: Ponte's Russian voice on speakers, or another Russian's voice
-    /// on an output that is not sealed (lane_rules: ln_peer_audio_blocks_call).
+    /// Nothing from the mic may go into the call or to the other Russians now: Ponte's Russian voice where the mic may
+    /// hear it, or another Russian's voice on an output that is not sealed (lane_rules: ln_peer_audio_blocks_call).
     func blocksCall(at now: Date) -> Bool {
         let peer = lock.withLock {
             AppRules.peerAudioBlocksCall(outputSealed: outputSealed,
@@ -775,12 +775,13 @@ final class AudioIntake: @unchecked Sendable {
             hasVoiceFloor = true
             return (self.segment, self.echoGuard, self.relay, self.peerSink, relayGeneration, voice)
         }
-        // A Russian voice the mic may hear never goes into the call (Ponte's on speakers, another Russian's on an
-        // output that is not sealed); Ponte's own Russian voice on speakers does not go to the other Russians either.
+        // A Russian voice the mic may hear (Ponte's own, or another Russian's, on an output that is not sealed) goes
+        // nowhere: not into the call, and not back to the other Russians as an echo of themselves.
         let callBlocks = echo?.blocksCall(at: now) ?? false
-        let peerBlocks = echo?.blocksMic(at: now) ?? false
-        if !callBlocks { relay?.push(buffer) }
-        if !peerBlocks { peer?(buffer, voice) }
+        if !callBlocks {
+            relay?.push(buffer)
+            peer?(buffer, voice)
+        }
         if relay != nil {
             let change: (Bool, Date)? = lock.withLock {
                 guard generation == relayGeneration, self.relay === relay else { return nil }   // the relay changed meanwhile

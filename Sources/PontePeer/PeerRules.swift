@@ -75,6 +75,13 @@ public enum PeerRules {
     /// A new peer is accepted while 0 to `maxPeers` - 2 peers are known.
     public static func acceptsNewPeer(knownPeers: Int) -> Bool { pe_accepts_new_peer(Int64(knownPeers)) }
 
+    /// The relay has counted more connections than the known peers plus this Ponte for `unknownListenerMs`:
+    /// someone in the room never announced himself.
+    public static let unknownListenerMs = Int(PE_UNKNOWN_LISTENER_MS)
+    public static func unknownListener(members: Int, peers: Int, msSinceMismatch: Int64) -> Bool {
+        pe_unknown_listener(Int64(members), Int64(peers), msSinceMismatch)
+    }
+
     /// The close code of a full room.
     public static let closeRoomFull = Int(PE_CLOSE_ROOM_FULL)
     /// After a full room the link tries again this much later (the relay drops a slept Mac's socket within 20 s).

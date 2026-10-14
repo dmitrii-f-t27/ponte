@@ -271,6 +271,16 @@ pub fn pe_peer_alive(ms_since_hello: i64) -> bool {
     return ms_since_hello >= 0 and ms_since_hello < PE_PEER_TIMEOUT_MS;
 }
 
+; A connection in the room never announced itself (someone may listen): the relay counts more connections than the
+; peers this Ponte knows plus itself, and has for at least PE_UNKNOWN_LISTENER_MS (ms_since_mismatch). A Ponte that
+; joins says HELLO at once and the others answer at once, so the short difference while someone joins or leaves is
+; not one. Negative counts are never one.
+pub const PE_UNKNOWN_LISTENER_MS : i64 = 6000;
+pub fn pe_unknown_listener(members: i64, peers: i64, ms_since_mismatch: i64) -> bool {
+    if (members < 0 or peers < 0) { return false; }
+    return members - peers > 1 and ms_since_mismatch >= PE_UNKNOWN_LISTENER_MS;
+}
+
 ; A new peer is accepted while this Ponte knows 0 to PE_MAX_PEERS - 2 peers (fewer than PE_MAX_PEERS - 1).
 pub fn pe_accepts_new_peer(known_peers: i64) -> bool {
     return known_peers >= 0 and known_peers < PE_MAX_PEERS - 1;
@@ -1056,6 +1066,13 @@ test pe_freshness_rules {
 
 test pe_room_rules {
     assert pe_accepts_new_peer(-1) == false;
+    assert pe_unknown_listener(3, 1, 6000) == true;
+    assert pe_unknown_listener(3, 1, 5999) == false;
+    assert pe_unknown_listener(2, 1, 60000) == false;
+    assert pe_unknown_listener(2, 0, 6000) == true;
+    assert pe_unknown_listener(-1, 0, 60000) == false;
+    assert pe_unknown_listener(5, -1, 60000) == false;
+    assert pe_unknown_listener(9223372036854775807, 0, 9223372036854775807) == true;
     assert pe_accepts_new_peer(0) == true;
     assert pe_accepts_new_peer(4) == true;
     assert pe_accepts_new_peer(5) == false;

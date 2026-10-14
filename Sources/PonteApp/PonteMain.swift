@@ -56,10 +56,12 @@ final class PonteAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    /// Stops both lanes first so the transcript of a running call is saved; an unsaved call report goes to a file.
+    /// Stops both lanes first so the transcript of a running call is saved; an unsaved call report goes to a file and
+    /// the other Russians get a goodbye.
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model, AppRules.quitWaits(runState: model.runState.code, analysisWork: model.analysis.quitHasWork) else {
+        guard let model, AppRules.quitWaits(runState: model.runState.code, analysisWork: model.analysis.quitHasWork,
+                                            peerOn: model.peerOn) else {
             return .terminateNow
         }
         Task { @MainActor in

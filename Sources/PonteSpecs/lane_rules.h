@@ -150,6 +150,7 @@ int32_t ln_context_overflow(int32_t count);
 bool ln_ptt_key_down(int32_t key, uint64_t flags);
 int32_t ln_ptt_scope(bool running, int32_t mode, bool accessibility_granted);
 bool ln_output_sealed(bool echo_risk_none, bool mic_is_output_headset);
+bool ln_echo_output(bool speaker_output, bool output_sealed);
 bool ln_peer_audio_blocks_call(bool output_sealed, int64_t ms_since_peer_audio);
 bool ln_own_talk_drops(int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t talk_start_ms, int64_t talk_end_ms);
 int64_t ln_millis(double seconds);
@@ -414,6 +415,10 @@ int32_t ln_ptt_scope(bool running, int32_t mode, bool accessibility_granted) {
 
 bool ln_output_sealed(bool echo_risk_none, bool mic_is_output_headset) {
     return (echo_risk_none || mic_is_output_headset);
+}
+
+bool ln_echo_output(bool speaker_output, bool output_sealed) {
+    return (speaker_output || (output_sealed == false));
 }
 
 bool ln_peer_audio_blocks_call(bool output_sealed, int64_t ms_since_peer_audio) {
@@ -878,6 +883,10 @@ void test_ln_peer_audio_guard(void) {
     assert((ln_output_sealed(true, false) == true));
     assert((ln_output_sealed(false, true) == true));
     assert((ln_output_sealed(false, false) == false));
+    assert((ln_echo_output(true, false) == true));
+    assert((ln_echo_output(true, true) == true));
+    assert((ln_echo_output(false, false) == true));
+    assert((ln_echo_output(false, true) == false));
     assert((ln_peer_audio_blocks_call(false, 0) == true));
     assert((ln_peer_audio_blocks_call(false, 699) == true));
     assert((ln_peer_audio_blocks_call(false, 700) == false));
