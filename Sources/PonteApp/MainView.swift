@@ -28,6 +28,7 @@ struct MainView: View {
         .background(Color(nsColor: .textBackgroundColor))
         .animation(.easeOut(duration: 0.2), value: model.banner)
         .toolbar { MainToolbar() }
+        .callAnalysis()
         .navigationTitle("Ponte")
         .navigationSubtitle(model.ownVoice ? OwnVoiceBar.notice
                             : model.isRunning ? "Идёт перевод · \(model.activeSourceName ?? "")" : "PT-BR ⇄ RU")

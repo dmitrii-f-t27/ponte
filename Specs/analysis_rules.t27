@@ -1,0 +1,1090 @@
+// SPDX-License-Identifier: MIT
+; Specs/analysis_rules.t27 -- Ponte: the call analysis agent (running notes during a call, the report after it)
+; The owner pastes the API key of an OpenAI-compatible chat service (Z.ai GLM, DeepSeek or his own). During a
+; call an agent keeps running notes from the transcript (both directions, original and translation, who
+; spoke); after the call it writes a report of the important data, saved as plain text. This spec decides:
+; the providers and their defaults (byte tables), the request endpoint and limits, whether a base URL can be
+; used, when the analysis is on, when the notes are updated, which lines are ready, how many lines go into
+; one request, how an error is classified, retried and backed off, when the report is built or shown, and
+; the report file name. Swift (PonteSpeech/AnalysisRules.swift) only marshals; the prompts, the JSON, the
+; Keychain, URLSession and the views stay in Swift. The test oracle is AnalysisRulesLegacy
+; (Tests/PonteTests/Oracles), a separate plain-Swift implementation of the same rules.
+; Times are integer milliseconds, sizes UTF-8 bytes. ASCII only.
+; Generated C: Sources/PonteSpecs/analysis_rules.h (Specs/generate.sh).
+
+module PonteAnalysisRules;
+
+; --- Providers (rows of the AN_ROW table, in this order) -------------------------------------------------
+pub const AN_PROVIDER_ZAI : i64 = 0;
+pub const AN_PROVIDER_DEEPSEEK : i64 = 1;
+; An OpenAI-compatible service the owner names (base URL and model typed in the settings).
+pub const AN_PROVIDER_CUSTOM : i64 = 2;
+pub const AN_PROVIDER_COUNT : i64 = 3;
+pub const AN_DEFAULT_PROVIDER : i64 = 0;
+; The analysis is on by default once a key is saved (1 = on).
+pub const AN_DEFAULT_ON : i64 = 1;
+
+; --- When the notes are updated ---------------------------------------------------------------------------
+; At most one notes update per interval, and only with at least this many new lines...
+pub const AN_INTERVAL_MS : i64 = 120000;
+pub const AN_MIN_NEW_LINES : i64 = 4;
+; ...unless this many lines have piled up (a fast talk), which keeps each request small.
+pub const AN_FORCE_NEW_LINES : i64 = 60;
+; How often the agent looks at the transcript.
+pub const AN_TICK_MS : i64 = 5000;
+; A line without a translation (and without a translation error) is ready after this long.
+pub const AN_LINE_SETTLE_MS : i64 = 20000;
+
+; --- Request limits ------------------------------------------------------------------------------------------
+; One request (system prompt + notes + transcript lines) is at most this many bytes; a longer transcript is
+; summarized chunk by chunk into the notes first.
+pub const AN_MAX_REQUEST_BYTES : i64 = 40000;
+; One transcript line (original + translation) is cut to this many bytes.
+pub const AN_MAX_LINE_BYTES : i64 = 4000;
+; The notes the service returns are cut to this many bytes; the prompt asks for at most AN_NOTES_CHARS characters.
+pub const AN_MAX_NOTES_BYTES : i64 = 24000;
+pub const AN_NOTES_CHARS : i64 = 6000;
+; The chunk planner reads at most this many line sizes at once.
+pub const AN_LIST_MAX : i64 = 256;
+; The URLRequest timeout: slow free models (GLM flash) take about a minute on a long request.
+pub const AN_REQUEST_TIMEOUT_MS : i64 = 90000;
+; The check button of the settings sends a tiny request with a shorter timeout.
+pub const AN_PROBE_TIMEOUT_MS : i64 = 30000;
+pub const AN_MAX_TOKENS : i64 = 4096;
+; deepseek-chat answers at most 8192 tokens.
+pub const AN_REPORT_MAX_TOKENS : i64 = 8000;
+pub const AN_PROBE_MAX_TOKENS : i64 = 16;
+; Temperature x 1000: low, the task is extraction.
+pub const AN_TEMPERATURE_MILLI : i64 = 200;
+; Out-buffers: table rows, IDs, Keychain services and file names; URLs.
+pub const AN_TEXT_OUT_MAX : i64 = 256;
+pub const AN_URL_MAX : i64 = 2048;
+
+; --- Errors -----------------------------------------------------------------------------------------------------
+; What failed (Swift reads the URLSession error or the reply into these).
+pub const AN_KIND_HTTP : i64 = 0;
+pub const AN_KIND_TIMEOUT : i64 = 1;
+pub const AN_KIND_NETWORK : i64 = 2;
+; A 2xx reply without text in choices[0].message.content.
+pub const AN_KIND_EMPTY : i64 = 3;
+; A 2xx reply that is not chat-completions JSON.
+pub const AN_KIND_BAD_REPLY : i64 = 4;
+pub const AN_KIND_NO_KEY : i64 = 5;
+pub const AN_KIND_BAD_URL : i64 = 6;
+; Error classes.
+pub const AN_ERR_NONE : i64 = 0;
+pub const AN_ERR_NETWORK : i64 = 1;
+pub const AN_ERR_TIMEOUT : i64 = 2;
+; 401, 403: the key.
+pub const AN_ERR_AUTH : i64 = 3;
+; 402: no money on the account (DeepSeek "Insufficient Balance").
+pub const AN_ERR_PAYMENT : i64 = 4;
+pub const AN_ERR_RATE_LIMIT : i64 = 5;
+pub const AN_ERR_SERVER : i64 = 6;
+; 404: a wrong base URL or model.
+pub const AN_ERR_NOT_FOUND : i64 = 7;
+; Other 4xx: the request.
+pub const AN_ERR_REJECTED : i64 = 8;
+pub const AN_ERR_EMPTY : i64 = 9;
+pub const AN_ERR_BAD_REPLY : i64 = 10;
+pub const AN_ERR_NO_KEY : i64 = 11;
+pub const AN_ERR_BAD_URL : i64 = 12;
+pub const AN_ERR_OTHER : i64 = 13;
+; HTTP statuses an_http_class tells apart (0 = no response).
+pub const AN_HTTP_NO_RESPONSE : i64 = 0;
+pub const AN_HTTP_OK_FIRST : i64 = 200;
+pub const AN_HTTP_OK_END : i64 = 300;
+pub const AN_HTTP_CLIENT_ERROR : i64 = 400;
+pub const AN_HTTP_UNAUTHORIZED : i64 = 401;
+pub const AN_HTTP_PAYMENT_REQUIRED : i64 = 402;
+pub const AN_HTTP_FORBIDDEN : i64 = 403;
+pub const AN_HTTP_NOT_FOUND : i64 = 404;
+pub const AN_HTTP_REQUEST_TIMEOUT : i64 = 408;
+pub const AN_HTTP_TOO_MANY_REQUESTS : i64 = 429;
+pub const AN_HTTP_SERVER_ERROR : i64 = 500;
+pub const AN_HTTP_STATUS_END : i64 = 600;
+
+; --- Retries and backoff ------------------------------------------------------------------------------------------
+; Attempts per request of the report (the first and two retries).
+pub const AN_MAX_ATTEMPTS : i64 = 3;
+pub const AN_RETRY_GIVE_UP : i64 = 0;
+pub const AN_RETRY_AGAIN : i64 = 1;
+; The wait after the n-th failure in a row: base, doubled each time, at most the maximum.
+pub const AN_RETRY_BASE_MS : i64 = 15000;
+pub const AN_RETRY_MAX_MS : i64 = 300000;
+; The background notes stop after this many failures in a row (the report still tries).
+pub const AN_MAX_BACKGROUND_FAILURES : i64 = 6;
+pub const AN_BG_RETRY : i64 = 0;
+pub const AN_BG_STOP : i64 = 1;
+
+; --- Base URL check and configuration --------------------------------------------------------------------------------
+pub const AN_URL_OK : i64 = 0;
+pub const AN_URL_EMPTY : i64 = 1;
+pub const AN_URL_NO_SCHEME : i64 = 2;
+pub const AN_URL_NO_HOST : i64 = 3;
+pub const AN_URL_SPACE : i64 = 4;
+pub const AN_URL_TOO_LONG : i64 = 5;
+pub const AN_CFG_OK : i64 = 0;
+pub const AN_CFG_NO_KEY : i64 = 1;
+pub const AN_CFG_BAD_URL : i64 = 2;
+pub const AN_CFG_NO_MODEL : i64 = 3;
+; A pasted API key (trimmed by Swift) goes into an HTTP header: printable ASCII only, at most AN_KEY_MAX bytes.
+pub const AN_KEY_MAX : i64 = 1024;
+pub const AN_KEY_OK : i64 = 0;
+pub const AN_KEY_EMPTY : i64 = 1;
+pub const AN_KEY_BAD_CHAR : i64 = 2;
+pub const AN_KEY_TOO_LONG : i64 = 3;
+pub const AN_TILDE : u8 = 126;
+
+; --- The report ------------------------------------------------------------------------------------------------------
+; What the report button of the toolbar does: show what there is, build (or rebuild) the report, or explain why not.
+pub const AN_OPEN_SHOW : i64 = 0;
+pub const AN_OPEN_BUILD : i64 = 1;
+pub const AN_OPEN_EXPLAIN : i64 = 2;
+; Whether the refresh button of the report can build it now, and why not.
+pub const AN_CHECK_OK : i64 = 0;
+pub const AN_CHECK_BUSY : i64 = 1;
+pub const AN_CHECK_NOT_SET : i64 = 2;
+pub const AN_CHECK_NO_LINES : i64 = 3;
+
+; --- Lines ---------------------------------------------------------------------------------------------------------
+; Direction codes (incoming: the other side in pt-BR; outgoing: the owner in ru) and who spoke.
+pub const AN_DIR_INCOMING : i64 = 0;
+pub const AN_DIR_OUTGOING : i64 = 1;
+; The other side (Swift writes it as "Sobesednik" in Russian).
+pub const AN_SPEAKER_THEM : i64 = 0;
+; The owner ("Ya").
+pub const AN_SPEAKER_ME : i64 = 1;
+pub const AN_MS_PER_MINUTE : i64 = 60000;
+
+; --- Report file name ------------------------------------------------------------------------------------------------
+pub const AN_FIRST_ATTEMPT : i32 = 1;
+; Attempt 2 and later add "-N", so an existing file is never overwritten.
+pub const AN_FIRST_NUMBERED_ATTEMPT : i32 = 2;
+pub const AN_DIGIT_0 : u8 = 48;
+pub const AN_DASH : u8 = 45;
+pub const AN_SLASH : u8 = 47;
+pub const AN_SPACE : u8 = 32;
+pub const AN_DEL : u8 = 127;
+pub const AN_UPPER_A : u8 = 65;
+pub const AN_UPPER_Z : u8 = 90;
+pub const AN_CASE_OFFSET : u8 = 32;
+
+; >>> generated by Specs/tables/analysis_tables.py -- edit the lists there, not here
+; Rows: provider IDs, default base URLs and models (AN_PROVIDER_* order), then words
+pub const AN_ROW_FIRST_ID : i64 = 0;
+pub const AN_ROW_FIRST_BASE : i64 = 3;
+pub const AN_ROW_FIRST_MODEL : i64 = 6;
+; zai
+pub const AN_ROW_ID_0 : i64 = 0;
+; deepseek
+pub const AN_ROW_ID_1 : i64 = 1;
+; custom
+pub const AN_ROW_ID_2 : i64 = 2;
+; https://api.z.ai/api/paas/v4
+pub const AN_ROW_BASE_0 : i64 = 3;
+; https://api.deepseek.com
+pub const AN_ROW_BASE_1 : i64 = 4;
+; (empty)
+pub const AN_ROW_BASE_2 : i64 = 5;
+; glm-4.5-flash
+pub const AN_ROW_MODEL_0 : i64 = 6;
+; deepseek-chat
+pub const AN_ROW_MODEL_1 : i64 = 7;
+; (empty)
+pub const AN_ROW_MODEL_2 : i64 = 8;
+; /chat/completions
+pub const AN_ROW_PATH : i64 = 9;
+; ponte-analysis-
+pub const AN_ROW_KEYCHAIN_PREFIX : i64 = 10;
+; Bearer 
+pub const AN_ROW_BEARER : i64 = 11;
+; https://
+pub const AN_ROW_HTTPS : i64 = 12;
+; http://
+pub const AN_ROW_HTTP : i64 = 13;
+; Ponte-report-
+pub const AN_ROW_REPORT_PREFIX : i64 = 14;
+; .txt
+pub const AN_ROW_REPORT_SUFFIX : i64 = 15;
+pub const AN_ROW_COUNT : i64 = 16;
+pub const AN_ROW_TEXT : [166]u8 = [122, 97, 105, 100, 101, 101, 112, 115, 101, 101, 107, 99, 117, 115, 116, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 103, 108, 109, 45, 52, 46, 53, 45, 102, 108, 97, 115, 104, 100, 101, 101, 112, 115, 101, 101, 107, 45, 99, 104, 97, 116, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 66, 101, 97, 114, 101, 114, 32, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 58, 47, 47, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 46, 116, 120, 116];
+pub const AN_ROW_OFFSETS : [16]u32 = [0, 3, 11, 17, 45, 69, 69, 82, 95, 95, 112, 127, 134, 142, 149, 162];
+pub const AN_ROW_LENGTHS : [16]u32 = [3, 8, 6, 28, 24, 0, 13, 13, 0, 17, 15, 7, 8, 7, 13, 4];
+; Texts for the tests
+; https://api.z.ai/api/paas/v4
+pub const AN_FX_ZAI_BASE : i64 = 0;
+; https://api.z.ai/api/paas/v4//
+pub const AN_FX_ZAI_SLASH : i64 = 1;
+; https://api.z.ai/api/paas/v4/chat/completions
+pub const AN_FX_ZAI_ENDPOINT : i64 = 2;
+; https://api.z.ai/api/paas/v4/chat/completions/
+pub const AN_FX_ZAI_ENDPOINT_SLASH : i64 = 3;
+; https://api.deepseek.com/chat/completions
+pub const AN_FX_DEEPSEEK_ENDPOINT : i64 = 4;
+; http://localhost:11434/v1
+pub const AN_FX_LOCAL : i64 = 5;
+; http://localhost:11434/v1/chat/completions
+pub const AN_FX_LOCAL_ENDPOINT : i64 = 6;
+; HTTPS://API.DEEPSEEK.COM
+pub const AN_FX_UPPER : i64 = 7;
+; ftp://example.com
+pub const AN_FX_FTP : i64 = 8;
+; https://
+pub const AN_FX_SCHEME_ONLY : i64 = 9;
+; https:///
+pub const AN_FX_SCHEME_SLASH : i64 = 10;
+; https://api.z.ai/a b
+pub const AN_FX_SPACE : i64 = 11;
+; api.z.ai/api/paas/v4
+pub const AN_FX_NO_SCHEME : i64 = 12;
+; (empty)
+pub const AN_FX_EMPTY : i64 = 13;
+; /
+pub const AN_FX_SLASH : i64 = 14;
+; ponte-analysis-zai
+pub const AN_FX_KEY_ZAI : i64 = 15;
+; ponte-analysis-custom
+pub const AN_FX_KEY_CUSTOM : i64 = 16;
+; Ponte-report-2026-10-13-1405.txt
+pub const AN_FX_REPORT_1405 : i64 = 17;
+; Ponte-report-2026-01-02-2359-2.txt
+pub const AN_FX_REPORT_2359_2 : i64 = 18;
+; Ponte-report-2027-12-31-0000-12.txt
+pub const AN_FX_REPORT_0000_12 : i64 = 19;
+; https://\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444/v1
+pub const AN_FX_CYRILLIC : i64 = 20;
+pub const AN_FX_COUNT : i64 = 21;
+pub const AN_FX_TEXT : [524]u8 = [104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 72, 84, 84, 80, 83, 58, 47, 47, 65, 80, 73, 46, 68, 69, 69, 80, 83, 69, 69, 75, 46, 67, 79, 77, 102, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 32, 98, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 122, 97, 105, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 99, 117, 115, 116, 111, 109, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 49, 48, 45, 49, 51, 45, 49, 52, 48, 53, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 48, 49, 45, 48, 50, 45, 50, 51, 53, 57, 45, 50, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 55, 45, 49, 50, 45, 51, 49, 45, 48, 48, 48, 48, 45, 49, 50, 46, 116, 120, 116, 104, 116, 116, 112, 115, 58, 47, 47, 208, 191, 209, 128, 208, 184, 208, 188, 208, 181, 209, 128, 46, 209, 128, 209, 132, 47, 118, 49];
+pub const AN_FX_OFFSETS : [21]u32 = [0, 28, 58, 103, 149, 190, 215, 257, 281, 298, 306, 315, 335, 355, 355, 356, 374, 395, 427, 461, 496];
+pub const AN_FX_LENGTHS : [21]u32 = [28, 30, 45, 46, 41, 25, 42, 24, 17, 8, 9, 20, 20, 0, 1, 18, 21, 32, 34, 35, 28];
+; <<< generated
+
+; --- Providers --------------------------------------------------------------------------------------------------------
+; A stored provider code; anything unknown is the default (Z.ai).
+pub fn an_provider_code(stored: i64) -> i64 {
+    if (stored >= AN_PROVIDER_ZAI and stored < AN_PROVIDER_COUNT) { return stored; }
+    return AN_DEFAULT_PROVIDER;
+}
+
+; Copies table row `row` to out and returns its length (0 for an unknown row).
+pub fn an_row_bytes(row: i64, out: [256]u8) -> i64 {
+    if (row < 0 or row >= AN_ROW_COUNT) { return 0; }
+    var off: i64 = AN_ROW_OFFSETS[row];
+    var n: i64 = AN_ROW_LENGTHS[row];
+    var i: i64 = 0;
+    while (i < n and i < AN_TEXT_OUT_MAX) {
+        out[i] = AN_ROW_TEXT[off + i];
+        i = i + 1;
+    }
+    return i;
+}
+
+; The provider's ID ("zai", "deepseek", "custom"): it names the Keychain item and the stored settings.
+pub fn an_provider_id(provider: i64, out: [256]u8) -> i64 {
+    return an_row_bytes(AN_ROW_FIRST_ID + an_provider_code(provider), out);
+}
+
+; The base URL the settings start from (empty for the custom provider).
+pub fn an_default_base_url(provider: i64, out: [256]u8) -> i64 {
+    return an_row_bytes(AN_ROW_FIRST_BASE + an_provider_code(provider), out);
+}
+
+; The model the settings start from (empty for the custom provider).
+pub fn an_default_model(provider: i64, out: [256]u8) -> i64 {
+    return an_row_bytes(AN_ROW_FIRST_MODEL + an_provider_code(provider), out);
+}
+
+; The Keychain service of the provider's key: "ponte-analysis-" + ID.
+pub fn an_keychain_service(provider: i64, out: [256]u8) -> i64 {
+    var n: i64 = an_row_bytes(AN_ROW_KEYCHAIN_PREFIX, out);
+    var row: i64 = AN_ROW_FIRST_ID + an_provider_code(provider);
+    var off: i64 = AN_ROW_OFFSETS[row];
+    var len: i64 = AN_ROW_LENGTHS[row];
+    var i: i64 = 0;
+    while (i < len) {
+        out[n + i] = AN_ROW_TEXT[off + i];
+        i = i + 1;
+    }
+    return n + len;
+}
+
+; Z.ai's GLM models think before they answer unless asked not to; the notes and the report need no thinking,
+; and without it a free flash model answers several times faster. Only Z.ai gets the switch.
+pub fn an_thinking_off(provider: i64) -> bool {
+    return an_provider_code(provider) == AN_PROVIDER_ZAI;
+}
+
+; --- Base URL and endpoint ----------------------------------------------------------------------------------------------
+; ASCII lowercase of one byte.
+pub fn an_lower(byte: u8) -> u8 {
+    if (byte >= AN_UPPER_A and byte <= AN_UPPER_Z) { return cast_u8(byte + AN_CASE_OFFSET); }
+    return byte;
+}
+
+; Does the text start with table row `row` (ASCII case folded)?
+pub fn an_starts_with_row(text: [2048]u8, len: i64, row: i64) -> bool {
+    var off: i64 = AN_ROW_OFFSETS[row];
+    var n: i64 = AN_ROW_LENGTHS[row];
+    if (len < n) { return false; }
+    var i: i64 = 0;
+    while (i < n) {
+        if (an_lower(text[i]) != AN_ROW_TEXT[off + i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+; The length of the scheme the text starts with ("https://" or "http://", any case); 0 for neither.
+pub fn an_scheme_length(text: [2048]u8, len: i64) -> i64 {
+    var n: i64 = 0;
+    if (an_starts_with_row(text, len, AN_ROW_HTTPS)) {
+        n = AN_ROW_LENGTHS[AN_ROW_HTTPS];
+    } else if (an_starts_with_row(text, len, AN_ROW_HTTP)) {
+        n = AN_ROW_LENGTHS[AN_ROW_HTTP];
+    }
+    return n;
+}
+
+; Whether a base URL (trimmed by Swift) can be used, in this order: empty; too long for the endpoint buffer;
+; a space, a control byte or DEL anywhere; no https:// or http:// scheme; nothing but slashes after the scheme.
+pub fn an_base_url_check(text: [2048]u8, len: i64) -> i64 {
+    if (len <= 0) { return AN_URL_EMPTY; }
+    var path: i64 = AN_ROW_LENGTHS[AN_ROW_PATH];
+    if (len > AN_URL_MAX - path) { return AN_URL_TOO_LONG; }
+    var i: i64 = 0;
+    while (i < len) {
+        if (text[i] <= AN_SPACE or text[i] == AN_DEL) { return AN_URL_SPACE; }
+        i = i + 1;
+    }
+    var scheme: i64 = an_scheme_length(text, len);
+    if (scheme == 0) { return AN_URL_NO_SCHEME; }
+    var k: i64 = scheme;
+    while (k < len) {
+        if (text[k] != AN_SLASH) { return AN_URL_OK; }
+        k = k + 1;
+    }
+    return AN_URL_NO_HOST;
+}
+
+; The chat-completions endpoint: the base without its trailing slashes, then "/chat/completions" unless the
+; base already ends with it. A base longer than AN_URL_MAX minus the path is read up to that length.
+pub fn an_endpoint(base: [2048]u8, len: i64, out: [2048]u8) -> i64 {
+    var path_off: i64 = AN_ROW_OFFSETS[AN_ROW_PATH];
+    var path_len: i64 = AN_ROW_LENGTHS[AN_ROW_PATH];
+    var n: i64 = len;
+    if (n < 0) { n = 0; }
+    if (n > AN_URL_MAX - path_len) { n = AN_URL_MAX - path_len; }
+    var trimming: bool = true;
+    while (trimming) {
+        if (n > 0) {
+            if (base[n - 1] == AN_SLASH) {
+                n = n - 1;
+            } else {
+                trimming = false;
+            }
+        } else {
+            trimming = false;
+        }
+    }
+    var i: i64 = 0;
+    while (i < n) {
+        out[i] = base[i];
+        i = i + 1;
+    }
+    var has_path: bool = false;
+    if (n >= path_len) {
+        has_path = true;
+        var k: i64 = 0;
+        while (k < path_len) {
+            if (base[n - path_len + k] != AN_ROW_TEXT[path_off + k]) { has_path = false; }
+            k = k + 1;
+        }
+    }
+    if (has_path) { return n; }
+    var j: i64 = 0;
+    while (j < path_len) {
+        out[n + j] = AN_ROW_TEXT[path_off + j];
+        j = j + 1;
+    }
+    return n + path_len;
+}
+
+; Whether the analysis can run with these settings, in this order: no key; a base URL that cannot be used
+; (an_base_url_check); no model.
+pub fn an_config_check(key_bytes: i64, url_check: i64, model_bytes: i64) -> i64 {
+    if (key_bytes <= 0) { return AN_CFG_NO_KEY; }
+    if (url_check != AN_URL_OK) { return AN_CFG_BAD_URL; }
+    if (model_bytes <= 0) { return AN_CFG_NO_MODEL; }
+    return AN_CFG_OK;
+}
+
+; A pasted key, in this order: empty; longer than AN_KEY_MAX; a byte that is not printable ASCII (a space, a
+; control byte, DEL or any UTF-8) anywhere. A header must never carry a line break.
+pub fn an_key_check(text: [2048]u8, len: i64) -> i64 {
+    if (len <= 0) { return AN_KEY_EMPTY; }
+    if (len > AN_KEY_MAX) { return AN_KEY_TOO_LONG; }
+    var i: i64 = 0;
+    while (i < len) {
+        if (text[i] <= AN_SPACE or text[i] > AN_TILDE) { return AN_KEY_BAD_CHAR; }
+        i = i + 1;
+    }
+    return AN_KEY_OK;
+}
+
+; The toggle "analyse the call": never without a key, and never in the test mode of the launch arguments (a test
+; transcript is not sent anywhere); else the owner's choice, on by default.
+pub fn an_analysis_on(has_stored: bool, stored: bool, has_key: bool, test_mode: bool) -> bool {
+    if (has_key == false or test_mode) { return false; }
+    if (has_stored) { return stored; }
+    return AN_DEFAULT_ON == 1;
+}
+
+; --- Lines ------------------------------------------------------------------------------------------------------------
+; Who spoke a line: the owner for outgoing, the other side otherwise.
+pub fn an_speaker(direction: i64) -> i64 {
+    if (direction == AN_DIR_OUTGOING) { return AN_SPEAKER_ME; }
+    return AN_SPEAKER_THEM;
+}
+
+; A line goes into the notes once its translation (or its translation error) is in, or after AN_LINE_SETTLE_MS.
+pub fn an_line_ready(has_translation: bool, has_error: bool, ms_since_line: i64) -> bool {
+    return has_translation or has_error or ms_since_line >= AN_LINE_SETTLE_MS;
+}
+
+; A character of `char_bytes` bytes still fits after `bytes` bytes under `limit` (cutting a line or the notes
+; at a character boundary).
+pub fn an_fits(bytes: i64, char_bytes: i64, limit: i64) -> bool {
+    return bytes + char_bytes <= limit;
+}
+
+; --- When the notes are updated -----------------------------------------------------------------------------------------
+; While a call runs with the analysis on and set up, no request in flight, the background notes not stopped
+; and no backoff wait left: update when AN_FORCE_NEW_LINES lines are ready, or when AN_MIN_NEW_LINES are and
+; AN_INTERVAL_MS has passed since the last update (or the start of the call).
+pub fn an_should_update(running: bool, enabled: bool, configured: bool, busy: bool, stopped: bool, new_lines: i64, ms_since_last: i64, ms_until_retry: i64) -> bool {
+    if (running == false or enabled == false or configured == false) { return false; }
+    if (busy or stopped) { return false; }
+    if (ms_until_retry > 0) { return false; }
+    if (new_lines >= AN_FORCE_NEW_LINES) { return true; }
+    return new_lines >= AN_MIN_NEW_LINES and ms_since_last >= AN_INTERVAL_MS;
+}
+
+; How many of the pending lines (their sizes in bytes, oldest first; at most AN_LIST_MAX are read) go into one
+; request that already holds `used_bytes` (system prompt, template, notes): from the oldest, while the total
+; stays within AN_MAX_REQUEST_BYTES; at least one line, so a long line still makes progress (Swift cuts every
+; line to AN_MAX_LINE_BYTES). 0 for no lines.
+pub fn an_chunk_take(sizes: [256]i64, count: i64, used_bytes: i64) -> i64 {
+    var n: i64 = count;
+    if (n > AN_LIST_MAX) { n = AN_LIST_MAX; }
+    if (n <= 0) { return 0; }
+    var budget: i64 = AN_MAX_REQUEST_BYTES - used_bytes;
+    var total: i64 = 0;
+    var taken: i64 = 0;
+    var i: i64 = 0;
+    while (i < n) {
+        if (total + sizes[i] <= budget) {
+            total = total + sizes[i];
+            taken = taken + 1;
+            i = i + 1;
+        } else {
+            i = n;
+        }
+    }
+    if (taken == 0) { return 1; }
+    return taken;
+}
+
+; The report request takes all remaining lines at once when they fit; else a chunk goes into the notes first.
+pub fn an_fits_one_request(used_bytes: i64, remaining_bytes: i64) -> bool {
+    return used_bytes + remaining_bytes <= AN_MAX_REQUEST_BYTES;
+}
+
+; --- Errors, retries and backoff ------------------------------------------------------------------------------------------
+; The class of an HTTP status (0 = no response).
+pub fn an_http_class(status: i64) -> i64 {
+    if (status >= AN_HTTP_OK_FIRST and status < AN_HTTP_OK_END) { return AN_ERR_NONE; }
+    if (status == AN_HTTP_NO_RESPONSE) { return AN_ERR_NETWORK; }
+    if (status == AN_HTTP_UNAUTHORIZED or status == AN_HTTP_FORBIDDEN) { return AN_ERR_AUTH; }
+    if (status == AN_HTTP_PAYMENT_REQUIRED) { return AN_ERR_PAYMENT; }
+    if (status == AN_HTTP_NOT_FOUND) { return AN_ERR_NOT_FOUND; }
+    if (status == AN_HTTP_REQUEST_TIMEOUT) { return AN_ERR_TIMEOUT; }
+    if (status == AN_HTTP_TOO_MANY_REQUESTS) { return AN_ERR_RATE_LIMIT; }
+    if (status >= AN_HTTP_SERVER_ERROR and status < AN_HTTP_STATUS_END) { return AN_ERR_SERVER; }
+    if (status >= AN_HTTP_CLIENT_ERROR and status < AN_HTTP_SERVER_ERROR) { return AN_ERR_REJECTED; }
+    return AN_ERR_OTHER;
+}
+
+; The class of a failure: an HTTP reply by its status, the other kinds one to one.
+pub fn an_error_class(kind: i64, status: i64) -> i64 {
+    if (kind == AN_KIND_HTTP) { return an_http_class(status); }
+    if (kind == AN_KIND_TIMEOUT) { return AN_ERR_TIMEOUT; }
+    if (kind == AN_KIND_NETWORK) { return AN_ERR_NETWORK; }
+    if (kind == AN_KIND_EMPTY) { return AN_ERR_EMPTY; }
+    if (kind == AN_KIND_BAD_REPLY) { return AN_ERR_BAD_REPLY; }
+    if (kind == AN_KIND_NO_KEY) { return AN_ERR_NO_KEY; }
+    if (kind == AN_KIND_BAD_URL) { return AN_ERR_BAD_URL; }
+    return AN_ERR_OTHER;
+}
+
+; Errors that may pass by themselves: network, timeout, rate limit, server, an empty answer.
+pub fn an_is_transient(err: i64) -> bool {
+    return err == AN_ERR_NETWORK or err == AN_ERR_TIMEOUT or err == AN_ERR_RATE_LIMIT or err == AN_ERR_SERVER or err == AN_ERR_EMPTY;
+}
+
+; After a failed attempt (0-based) of a report request: try again only a transient error, within AN_MAX_ATTEMPTS.
+pub fn an_retry_action(err: i64, attempt: i64) -> i64 {
+    if (an_is_transient(err) and attempt + 1 < AN_MAX_ATTEMPTS) { return AN_RETRY_AGAIN; }
+    return AN_RETRY_GIVE_UP;
+}
+
+; The wait after `failures` failures in a row: AN_RETRY_BASE_MS, doubled for each further failure, at most
+; AN_RETRY_MAX_MS; 0 without failures.
+pub fn an_retry_delay_ms(failures: i64) -> i64 {
+    if (failures <= 0) { return 0; }
+    var d: i64 = AN_RETRY_BASE_MS;
+    var i: i64 = 1;
+    while (i < failures and d < AN_RETRY_MAX_MS) {
+        d = d * 2;
+        i = i + 1;
+    }
+    if (d > AN_RETRY_MAX_MS) { return AN_RETRY_MAX_MS; }
+    return d;
+}
+
+; After a failed notes update (`failures` in a row, this one included): stop the background notes on an error
+; that will not pass by itself (the key, the money, the URL) or after AN_MAX_BACKGROUND_FAILURES; else retry
+; after an_retry_delay_ms. The report at the end still tries.
+pub fn an_background_after_error(err: i64, failures: i64) -> i64 {
+    if (an_is_transient(err) == false) { return AN_BG_STOP; }
+    if (failures >= AN_MAX_BACKGROUND_FAILURES) { return AN_BG_STOP; }
+    return AN_BG_RETRY;
+}
+
+; The check button says OK when the service answered 2xx: the key and the URL work even if a tiny answer came back empty.
+pub fn an_probe_ok(err: i64) -> bool {
+    return err == AN_ERR_NONE or err == AN_ERR_EMPTY;
+}
+
+; --- The report ---------------------------------------------------------------------------------------------------------
+; On Stop: the report is built when the analysis is on and set up and the call has a line.
+pub fn an_report_on_stop(enabled: bool, configured: bool, lines: i64) -> bool {
+    return enabled and configured and lines >= 1;
+}
+
+; The report button: show the work in progress, or the report when it already covers every line; without lines
+; or settings show what there is, or explain why there is nothing; else build it.
+pub fn an_report_on_open(busy: bool, has_report: bool, report_lines: i64, lines: i64, configured: bool) -> i64 {
+    if (busy) { return AN_OPEN_SHOW; }
+    if (has_report and report_lines == lines) { return AN_OPEN_SHOW; }
+    if (lines <= 0 or configured == false) {
+        if (has_report) { return AN_OPEN_SHOW; }
+        return AN_OPEN_EXPLAIN;
+    }
+    return AN_OPEN_BUILD;
+}
+
+; The refresh button: whether the report can be built now, and why not.
+pub fn an_build_check(busy: bool, configured: bool, lines: i64) -> i64 {
+    if (busy) { return AN_CHECK_BUSY; }
+    if (configured == false) { return AN_CHECK_NOT_SET; }
+    if (lines <= 0) { return AN_CHECK_NO_LINES; }
+    return AN_CHECK_OK;
+}
+
+; The report button of the toolbar works once there is something to show.
+pub fn an_report_button_enabled(lines: i64, has_report: bool, busy: bool) -> bool {
+    return lines > 0 or has_report or busy;
+}
+
+; A report the owner has not saved is written to a file before a new call replaces it (a report still being
+; written when the next call starts is written to a file when it is done).
+pub fn an_save_before_reset(has_report: bool, saved: bool) -> bool {
+    return has_report and saved == false;
+}
+
+; The call's length in whole minutes, rounded half up; 0 for none.
+pub fn an_duration_minutes(ms: i64) -> i64 {
+    if (ms <= 0) { return 0; }
+    return (ms + AN_MS_PER_MINUTE / 2) / AN_MS_PER_MINUTE;
+}
+
+; --- Report file name -----------------------------------------------------------------------------------------------------
+; max(0, value) in decimal, padded with zeros to `width`, written at `at`; returns the position after it.
+pub fn an_append_digits(out: [256]u8, at: i64, value: i32, width: i64) -> i64 {
+    var v: i64 = value;
+    if (v < 0) { v = 0; }
+    var count: i64 = 1;
+    var rest: i64 = v / 10;
+    while (rest > 0) {
+        count = count + 1;
+        rest = rest / 10;
+    }
+    var pos: i64 = at;
+    var pad: i64 = count;
+    while (pad < width) {
+        out[pos] = AN_DIGIT_0;
+        pos = pos + 1;
+        pad = pad + 1;
+    }
+    var k: i64 = count;
+    var w: i64 = v;
+    while (k > 0) {
+        out[pos + k - 1] = cast_u8(AN_DIGIT_0 + w % 10);
+        w = w / 10;
+        k = k - 1;
+    }
+    return pos + count;
+}
+
+; "Ponte-report-YYYY-MM-DD-HHmm.txt", with "-N" before ".txt" for attempt N >= 2. Writes to out and returns
+; the length.
+pub fn an_report_file_name(year: i32, month: i32, day: i32, hour: i32, minute: i32, attempt: i32, out: [256]u8) -> i64 {
+    var pos: i64 = an_row_bytes(AN_ROW_REPORT_PREFIX, out);
+    pos = an_append_digits(out, pos, year, 4);
+    out[pos] = AN_DASH;
+    pos = an_append_digits(out, pos + 1, month, 2);
+    out[pos] = AN_DASH;
+    pos = an_append_digits(out, pos + 1, day, 2);
+    out[pos] = AN_DASH;
+    pos = an_append_digits(out, pos + 1, hour, 2);
+    pos = an_append_digits(out, pos, minute, 2);
+    if (attempt >= AN_FIRST_NUMBERED_ATTEMPT) {
+        out[pos] = AN_DASH;
+        pos = an_append_digits(out, pos + 1, attempt, 1);
+    }
+    var off: i64 = AN_ROW_OFFSETS[AN_ROW_REPORT_SUFFIX];
+    var n: i64 = AN_ROW_LENGTHS[AN_ROW_REPORT_SUFFIX];
+    var i: i64 = 0;
+    while (i < n) {
+        out[pos + i] = AN_ROW_TEXT[off + i];
+        i = i + 1;
+    }
+    return pos + n;
+}
+
+; --- Texts for the tests --------------------------------------------------------------------------------------------------
+; Copies text fixture `index` to out and returns its length (0 for an unknown index).
+pub fn an_fixture(index: i64, out: [2048]u8) -> i64 {
+    if (index < 0 or index >= AN_FX_COUNT) { return 0; }
+    var off: i64 = AN_FX_OFFSETS[index];
+    var len: i64 = AN_FX_LENGTHS[index];
+    var k: i64 = 0;
+    while (k < len and k < AN_URL_MAX) {
+        out[k] = AN_FX_TEXT[off + k];
+        k = k + 1;
+    }
+    return k;
+}
+
+; Do the first len bytes of buf equal fixture `index`?
+pub fn an_fixture_matches(index: i64, buf: [2048]u8, len: i64) -> bool {
+    if (index < 0 or index >= AN_FX_COUNT) { return false; }
+    var off: i64 = AN_FX_OFFSETS[index];
+    var n: i64 = AN_FX_LENGTHS[index];
+    if (n != len) { return false; }
+    var k: i64 = 0;
+    while (k < n) {
+        if (buf[k] != AN_FX_TEXT[off + k]) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+; The same for a short buffer (names).
+pub fn an_fixture_matches_name(index: i64, buf: [256]u8, len: i64) -> bool {
+    if (index < 0 or index >= AN_FX_COUNT) { return false; }
+    var off: i64 = AN_FX_OFFSETS[index];
+    var n: i64 = AN_FX_LENGTHS[index];
+    if (n != len or n > AN_TEXT_OUT_MAX) { return false; }
+    var k: i64 = 0;
+    while (k < n) {
+        if (buf[k] != AN_FX_TEXT[off + k]) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+test an_provider_tables {
+    var out: [256]u8 = [0; 256];
+    assert an_provider_code(AN_PROVIDER_ZAI) == AN_PROVIDER_ZAI;
+    assert an_provider_code(AN_PROVIDER_DEEPSEEK) == AN_PROVIDER_DEEPSEEK;
+    assert an_provider_code(AN_PROVIDER_CUSTOM) == AN_PROVIDER_CUSTOM;
+    assert an_provider_code(-1) == AN_PROVIDER_ZAI;
+    assert an_provider_code(3) == AN_PROVIDER_ZAI;
+    // IDs: zai, deepseek, custom.
+    assert an_provider_id(AN_PROVIDER_ZAI, out) == 3;
+    assert out[0] == 122;
+    assert an_provider_id(AN_PROVIDER_DEEPSEEK, out) == 8;
+    assert out[0] == 100;
+    assert an_provider_id(AN_PROVIDER_CUSTOM, out) == 6;
+    assert out[0] == 99;
+    // Defaults: https://api.z.ai/api/paas/v4 + glm-4.5-flash; https://api.deepseek.com + deepseek-chat; custom empty.
+    assert an_default_base_url(AN_PROVIDER_ZAI, out) == 28;
+    assert out[8] == 97;
+    assert out[27] == 52;
+    assert an_default_model(AN_PROVIDER_ZAI, out) == 13;
+    assert out[0] == 103;
+    assert out[12] == 104;
+    assert an_default_base_url(AN_PROVIDER_DEEPSEEK, out) == 24;
+    assert out[23] == 109;
+    assert an_default_model(AN_PROVIDER_DEEPSEEK, out) == 13;
+    assert out[0] == 100;
+    assert an_default_base_url(AN_PROVIDER_CUSTOM, out) == 0;
+    assert an_default_model(AN_PROVIDER_CUSTOM, out) == 0;
+    // Keychain services.
+    assert an_fixture_matches_name(AN_FX_KEY_ZAI, out, an_keychain_service(AN_PROVIDER_ZAI, out)) == true;
+    assert an_fixture_matches_name(AN_FX_KEY_CUSTOM, out, an_keychain_service(AN_PROVIDER_CUSTOM, out)) == true;
+    assert an_fixture_matches_name(AN_FX_KEY_ZAI, out, an_keychain_service(77, out)) == true;
+    // Every stored code: a known provider, a service of prefix + ID, thinking off only for Z.ai.
+    var p: i64 = -3;
+    var bad: u32 = 0;
+    while (p < 6) {
+        var code: i64 = an_provider_code(p);
+        if (code < 0 or code >= AN_PROVIDER_COUNT) { bad = bad + 1; }
+        var id_len: i64 = an_provider_id(p, out);
+        if (an_keychain_service(p, out) != 15 + id_len) { bad = bad + 1; }
+        if (an_thinking_off(p) != (code == AN_PROVIDER_ZAI)) { bad = bad + 1; }
+        p = p + 1;
+    }
+    assert bad == 0;
+    // Words.
+    assert an_row_bytes(AN_ROW_PATH, out) == 17;
+    assert out[0] == 47;
+    assert an_row_bytes(AN_ROW_BEARER, out) == 7;
+    assert out[6] == 32;
+    assert an_row_bytes(-1, out) == 0;
+    assert an_row_bytes(AN_ROW_COUNT, out) == 0;
+}
+
+test an_url_rules {
+    var url: [2048]u8 = [0; 2048];
+    var out: [2048]u8 = [0; 2048];
+    var n: i64 = an_fixture(AN_FX_ZAI_BASE, url);
+    assert an_base_url_check(url, n) == AN_URL_OK;
+    assert an_fixture_matches(AN_FX_ZAI_ENDPOINT, out, an_endpoint(url, n, out)) == true;
+    n = an_fixture(AN_FX_ZAI_SLASH, url);
+    assert an_base_url_check(url, n) == AN_URL_OK;
+    assert an_fixture_matches(AN_FX_ZAI_ENDPOINT, out, an_endpoint(url, n, out)) == true;
+    n = an_fixture(AN_FX_ZAI_ENDPOINT, url);
+    assert an_fixture_matches(AN_FX_ZAI_ENDPOINT, out, an_endpoint(url, n, out)) == true;
+    n = an_fixture(AN_FX_ZAI_ENDPOINT_SLASH, url);
+    assert an_fixture_matches(AN_FX_ZAI_ENDPOINT, out, an_endpoint(url, n, out)) == true;
+    n = an_fixture(AN_FX_LOCAL, url);
+    assert an_base_url_check(url, n) == AN_URL_OK;
+    assert an_fixture_matches(AN_FX_LOCAL_ENDPOINT, out, an_endpoint(url, n, out)) == true;
+    n = an_fixture(AN_FX_UPPER, url);
+    assert an_base_url_check(url, n) == AN_URL_OK;
+    n = an_fixture(AN_FX_CYRILLIC, url);
+    assert an_base_url_check(url, n) == AN_URL_OK;
+    n = an_fixture(AN_FX_FTP, url);
+    assert an_base_url_check(url, n) == AN_URL_NO_SCHEME;
+    n = an_fixture(AN_FX_NO_SCHEME, url);
+    assert an_base_url_check(url, n) == AN_URL_NO_SCHEME;
+    n = an_fixture(AN_FX_SCHEME_ONLY, url);
+    assert an_base_url_check(url, n) == AN_URL_NO_HOST;
+    n = an_fixture(AN_FX_SCHEME_SLASH, url);
+    assert an_base_url_check(url, n) == AN_URL_NO_HOST;
+    n = an_fixture(AN_FX_SPACE, url);
+    assert an_base_url_check(url, n) == AN_URL_SPACE;
+    n = an_fixture(AN_FX_EMPTY, url);
+    assert n == 0;
+    assert an_base_url_check(url, n) == AN_URL_EMPTY;
+    // An empty base or a lone slash gives the bare path.
+    assert an_endpoint(url, 0, out) == 17;
+    n = an_fixture(AN_FX_SLASH, url);
+    assert an_endpoint(url, n, out) == 17;
+    assert out[0] == 47;
+    // The DeepSeek default.
+    var name: [256]u8 = [0; 256];
+    var m: i64 = an_default_base_url(AN_PROVIDER_DEEPSEEK, name);
+    var i: i64 = 0;
+    while (i < m) {
+        url[i] = name[i];
+        i = i + 1;
+    }
+    assert an_fixture_matches(AN_FX_DEEPSEEK_ENDPOINT, out, an_endpoint(url, m, out)) == true;
+    // Too long for the endpoint buffer; a long base is read up to AN_URL_MAX minus the path.
+    assert an_base_url_check(url, 2048) == AN_URL_TOO_LONG;
+    assert an_base_url_check(url, 2032) == AN_URL_TOO_LONG;
+    i = 0;
+    while (i < 2048) {
+        url[i] = 97;
+        i = i + 1;
+    }
+    assert an_endpoint(url, 5000, out) == 2048;
+    assert out[2030] == 97;
+    assert out[2031] == 47;
+    // Every single byte after "https://x": controls, space and DEL refuse, everything else passes.
+    n = an_fixture(AN_FX_ZAI_BASE, url);
+    var b: u32 = 0;
+    var bad: u32 = 0;
+    while (b < 256) {
+        url[n] = cast_u8(b);
+        var r: i64 = an_base_url_check(url, n + 1);
+        if (b <= 32 or b == 127) {
+            if (r != AN_URL_SPACE) { bad = bad + 1; }
+        } else {
+            if (r != AN_URL_OK) { bad = bad + 1; }
+        }
+        b = b + 1;
+    }
+    assert bad == 0;
+    // Configuration.
+    assert an_config_check(0, AN_URL_OK, 5) == AN_CFG_NO_KEY;
+    assert an_config_check(10, AN_URL_EMPTY, 5) == AN_CFG_BAD_URL;
+    assert an_config_check(10, AN_URL_OK, 0) == AN_CFG_NO_MODEL;
+    assert an_config_check(10, AN_URL_OK, 5) == AN_CFG_OK;
+    assert an_config_check(-1, AN_URL_NO_HOST, 0) == AN_CFG_NO_KEY;
+    assert an_analysis_on(false, false, true, false) == true;
+    assert an_analysis_on(true, false, true, false) == false;
+    assert an_analysis_on(true, true, true, false) == true;
+    assert an_analysis_on(false, false, false, false) == false;
+    assert an_analysis_on(true, true, false, false) == false;
+    assert an_analysis_on(false, false, true, true) == false;
+    assert an_analysis_on(true, true, true, true) == false;
+    assert an_lower(65) == 97;
+    assert an_lower(90) == 122;
+    assert an_lower(91) == 91;
+    assert an_lower(200) == 200;
+    // Keys: every single byte; empty; too long.
+    var key: [2048]u8 = [0; 2048];
+    assert an_key_check(key, 0) == AN_KEY_EMPTY;
+    var c: u32 = 0;
+    var bad_keys: u32 = 0;
+    while (c < 256) {
+        key[0] = 115;
+        key[1] = 107;
+        key[2] = cast_u8(c);
+        var kc: i64 = an_key_check(key, 3);
+        if (c > 32 and c < 127) {
+            if (kc != AN_KEY_OK) { bad_keys = bad_keys + 1; }
+        } else {
+            if (kc != AN_KEY_BAD_CHAR) { bad_keys = bad_keys + 1; }
+        }
+        c = c + 1;
+    }
+    assert bad_keys == 0;
+    i = 0;
+    while (i < 1025) {
+        key[i] = 65;
+        i = i + 1;
+    }
+    assert an_key_check(key, 1024) == AN_KEY_OK;
+    assert an_key_check(key, 1025) == AN_KEY_TOO_LONG;
+}
+
+test an_update_rules {
+    // Every flag set, around every threshold.
+    var bad: u32 = 0;
+    var flags: i64 = 0;
+    while (flags < 32) {
+        var running: bool = (flags & 1) == 1;
+        var enabled: bool = (flags & 2) == 2;
+        var configured: bool = (flags & 4) == 4;
+        var busy: bool = (flags & 8) == 8;
+        var stopped: bool = (flags & 16) == 16;
+        var lines: i64 = 0;
+        while (lines < 70) {
+            var since: i64 = 119990;
+            while (since < 120010) {
+                var wait: i64 = -1;
+                while (wait < 2) {
+                    var r: bool = an_should_update(running, enabled, configured, busy, stopped, lines, since, wait);
+                    var gate: bool = running and enabled and configured and busy == false and stopped == false and wait <= 0;
+                    var due: bool = lines >= 60 or (lines >= 4 and since >= 120000);
+                    if (r != (gate and due)) { bad = bad + 1; }
+                    wait = wait + 1;
+                }
+                since = since + 5;
+            }
+            lines = lines + 1;
+        }
+        flags = flags + 1;
+    }
+    assert bad == 0;
+    assert an_should_update(true, true, true, false, false, 4, 120000, 0) == true;
+    assert an_should_update(true, true, true, false, false, 3, 999999, 0) == false;
+    assert an_should_update(true, true, true, false, false, 60, 0, 0) == true;
+    assert an_should_update(true, true, true, false, false, 60, 0, 1) == false;
+    assert an_should_update(false, true, true, false, false, 60, 999999, 0) == false;
+    // Ready lines.
+    assert an_line_ready(true, false, 0) == true;
+    assert an_line_ready(false, true, 0) == true;
+    assert an_line_ready(false, false, 19999) == false;
+    assert an_line_ready(false, false, 20000) == true;
+    assert an_speaker(AN_DIR_INCOMING) == AN_SPEAKER_THEM;
+    assert an_speaker(AN_DIR_OUTGOING) == AN_SPEAKER_ME;
+    assert an_speaker(7) == AN_SPEAKER_THEM;
+    assert an_fits(3998, 2, 4000) == true;
+    assert an_fits(3999, 2, 4000) == false;
+}
+
+test an_chunk_rules {
+    var sizes: [256]i64 = [0; 256];
+    var i: i64 = 0;
+    while (i < 256) {
+        sizes[i] = 1000;
+        i = i + 1;
+    }
+    assert an_chunk_take(sizes, 0, 0) == 0;
+    assert an_chunk_take(sizes, -5, 0) == 0;
+    assert an_chunk_take(sizes, 100, 0) == 40;
+    assert an_chunk_take(sizes, 100, 1000) == 39;
+    assert an_chunk_take(sizes, 100, 1001) == 38;
+    assert an_chunk_take(sizes, 30, 0) == 30;
+    // Nothing fits: one line all the same.
+    assert an_chunk_take(sizes, 100, 39500) == 1;
+    assert an_chunk_take(sizes, 100, 90000) == 1;
+    // At most AN_LIST_MAX sizes are read.
+    i = 0;
+    while (i < 256) {
+        sizes[i] = 10;
+        i = i + 1;
+    }
+    assert an_chunk_take(sizes, 300, 0) == 256;
+    // Stops at the first line that does not fit.
+    sizes[0] = 30000;
+    sizes[1] = 20000;
+    sizes[2] = 10;
+    assert an_chunk_take(sizes, 3, 0) == 1;
+    // Never more than the budget, unless one line alone, over a grid.
+    var a: i64 = 0;
+    var bad: u32 = 0;
+    while (a <= 40000) {
+        var used: i64 = 0;
+        while (used <= 42000) {
+            sizes[0] = a;
+            sizes[1] = 40000 - a;
+            sizes[2] = 7;
+            sizes[3] = a / 2;
+            var t: i64 = an_chunk_take(sizes, 4, used);
+            var sum: i64 = 0;
+            var k: i64 = 0;
+            while (k < t) {
+                sum = sum + sizes[k];
+                k = k + 1;
+            }
+            if (t < 1 or t > 4) { bad = bad + 1; }
+            if (t > 1 and used + sum > 40000) { bad = bad + 1; }
+            if (t < 4 and used + sum + sizes[t] <= 40000) { bad = bad + 1; }
+            used = used + 3000;
+        }
+        a = a + 2500;
+    }
+    assert bad == 0;
+    assert an_fits_one_request(30000, 10000) == true;
+    assert an_fits_one_request(30000, 10001) == false;
+}
+
+test an_error_rules {
+    assert an_http_class(200) == AN_ERR_NONE;
+    assert an_http_class(299) == AN_ERR_NONE;
+    assert an_http_class(0) == AN_ERR_NETWORK;
+    assert an_http_class(401) == AN_ERR_AUTH;
+    assert an_http_class(403) == AN_ERR_AUTH;
+    assert an_http_class(402) == AN_ERR_PAYMENT;
+    assert an_http_class(404) == AN_ERR_NOT_FOUND;
+    assert an_http_class(408) == AN_ERR_TIMEOUT;
+    assert an_http_class(429) == AN_ERR_RATE_LIMIT;
+    assert an_http_class(500) == AN_ERR_SERVER;
+    assert an_http_class(503) == AN_ERR_SERVER;
+    assert an_http_class(599) == AN_ERR_SERVER;
+    assert an_http_class(400) == AN_ERR_REJECTED;
+    assert an_http_class(422) == AN_ERR_REJECTED;
+    assert an_http_class(600) == AN_ERR_OTHER;
+    assert an_http_class(301) == AN_ERR_OTHER;
+    assert an_http_class(-1) == AN_ERR_OTHER;
+    assert an_error_class(AN_KIND_HTTP, 429) == AN_ERR_RATE_LIMIT;
+    assert an_error_class(AN_KIND_TIMEOUT, 200) == AN_ERR_TIMEOUT;
+    assert an_error_class(AN_KIND_NETWORK, 0) == AN_ERR_NETWORK;
+    assert an_error_class(AN_KIND_EMPTY, 200) == AN_ERR_EMPTY;
+    assert an_error_class(AN_KIND_BAD_REPLY, 200) == AN_ERR_BAD_REPLY;
+    assert an_error_class(AN_KIND_NO_KEY, 0) == AN_ERR_NO_KEY;
+    assert an_error_class(AN_KIND_BAD_URL, 0) == AN_ERR_BAD_URL;
+    assert an_error_class(99, 200) == AN_ERR_OTHER;
+    // Every status class: exactly the 2xx are no error; transient ones retry, the others give up.
+    var s: i64 = -2;
+    var none: i64 = 0;
+    var bad: u32 = 0;
+    while (s < 700) {
+        var c: i64 = an_http_class(s);
+        if (c == AN_ERR_NONE) { none = none + 1; }
+        if (an_retry_action(c, 0) == AN_RETRY_AGAIN and an_is_transient(c) == false) { bad = bad + 1; }
+        if (an_background_after_error(c, 1) == AN_BG_RETRY and an_is_transient(c) == false) { bad = bad + 1; }
+        s = s + 1;
+    }
+    assert none == 100;
+    assert bad == 0;
+    assert an_is_transient(AN_ERR_AUTH) == false;
+    assert an_is_transient(AN_ERR_EMPTY) == true;
+    assert an_retry_action(AN_ERR_SERVER, 0) == AN_RETRY_AGAIN;
+    assert an_retry_action(AN_ERR_SERVER, 1) == AN_RETRY_AGAIN;
+    assert an_retry_action(AN_ERR_SERVER, 2) == AN_RETRY_GIVE_UP;
+    assert an_retry_action(AN_ERR_AUTH, 0) == AN_RETRY_GIVE_UP;
+    assert an_retry_delay_ms(-5) == 0;
+    assert an_retry_delay_ms(0) == 0;
+    assert an_retry_delay_ms(1) == 15000;
+    assert an_retry_delay_ms(2) == 30000;
+    assert an_retry_delay_ms(3) == 60000;
+    assert an_retry_delay_ms(4) == 120000;
+    assert an_retry_delay_ms(5) == 240000;
+    assert an_retry_delay_ms(6) == 300000;
+    assert an_retry_delay_ms(1000000) == 300000;
+    assert an_background_after_error(AN_ERR_TIMEOUT, 5) == AN_BG_RETRY;
+    assert an_background_after_error(AN_ERR_TIMEOUT, 6) == AN_BG_STOP;
+    assert an_background_after_error(AN_ERR_PAYMENT, 1) == AN_BG_STOP;
+    assert an_probe_ok(AN_ERR_NONE) == true;
+    assert an_probe_ok(AN_ERR_EMPTY) == true;
+    assert an_probe_ok(AN_ERR_AUTH) == false;
+}
+
+test an_report_rules {
+    assert an_report_on_stop(true, true, 1) == true;
+    assert an_report_on_stop(true, true, 0) == false;
+    assert an_report_on_stop(false, true, 5) == false;
+    assert an_report_on_stop(true, false, 5) == false;
+    assert an_report_on_open(true, false, 0, 0, false) == AN_OPEN_SHOW;
+    assert an_report_on_open(false, true, 10, 10, true) == AN_OPEN_SHOW;
+    assert an_report_on_open(false, true, 10, 12, true) == AN_OPEN_BUILD;
+    assert an_report_on_open(false, false, 0, 12, true) == AN_OPEN_BUILD;
+    assert an_report_on_open(false, false, 0, 0, true) == AN_OPEN_EXPLAIN;
+    assert an_report_on_open(false, false, 0, 12, false) == AN_OPEN_EXPLAIN;
+    assert an_report_on_open(false, true, 10, 12, false) == AN_OPEN_SHOW;
+    assert an_build_check(true, false, 0) == AN_CHECK_BUSY;
+    assert an_build_check(false, false, 5) == AN_CHECK_NOT_SET;
+    assert an_build_check(false, true, 0) == AN_CHECK_NO_LINES;
+    assert an_build_check(false, true, 5) == AN_CHECK_OK;
+    assert an_report_button_enabled(0, false, false) == false;
+    assert an_report_button_enabled(1, false, false) == true;
+    assert an_report_button_enabled(0, true, false) == true;
+    assert an_report_button_enabled(0, false, true) == true;
+    assert an_save_before_reset(true, false) == true;
+    assert an_save_before_reset(true, true) == false;
+    assert an_save_before_reset(false, false) == false;
+    assert an_duration_minutes(-1) == 0;
+    assert an_duration_minutes(0) == 0;
+    assert an_duration_minutes(29999) == 0;
+    assert an_duration_minutes(30000) == 1;
+    assert an_duration_minutes(89999) == 1;
+    assert an_duration_minutes(90000) == 2;
+    // Constants the Swift side and the prompts rely on.
+    assert AN_INTERVAL_MS == 120000;
+    assert AN_REQUEST_TIMEOUT_MS == 90000;
+    assert AN_TEMPERATURE_MILLI == 200;
+    assert AN_MAX_LINE_BYTES < AN_MAX_REQUEST_BYTES;
+    assert AN_MAX_NOTES_BYTES < AN_MAX_REQUEST_BYTES;
+}
+
+test an_file_names {
+    var out: [256]u8 = [0; 256];
+    assert an_fixture_matches_name(AN_FX_REPORT_1405, out, an_report_file_name(2026, 10, 13, 14, 5, 1, out)) == true;
+    assert an_fixture_matches_name(AN_FX_REPORT_1405, out, an_report_file_name(2026, 10, 13, 14, 5, 0, out)) == true;
+    assert an_fixture_matches_name(AN_FX_REPORT_2359_2, out, an_report_file_name(2026, 1, 2, 23, 59, 2, out)) == true;
+    assert an_fixture_matches_name(AN_FX_REPORT_0000_12, out, an_report_file_name(2027, 12, 31, 0, 0, 12, out)) == true;
+    // Negative values read as 0; wide values are not cut.
+    assert an_report_file_name(-5, 1, 2, 3, 4, 1, out) == 32;
+    assert out[13] == 48;
+    assert an_report_file_name(12345, 1, 2, 3, 4, 1, out) == 33;
+    assert an_report_file_name(2147483647, 2147483647, 2147483647, 2147483647, 2147483647, 2147483647, out) == 81;
+}
