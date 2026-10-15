@@ -2,6 +2,7 @@
 #pragma once
 #include "analysis_rules.api.h"
 #include "audio_rules.api.h"
+#include "camera_rules.api.h"
 #include "context_rules.api.h"
 #include "device_rules.api.h"
 #include "lane_rules.api.h"

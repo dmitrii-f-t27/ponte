@@ -4,6 +4,7 @@
 #pragma clang diagnostic ignored "-Wparentheses-equality"
 #include "analysis_rules.h"
 #include "audio_rules.h"
+#include "camera_rules.h"
 #include "context_rules.h"
 #include "device_rules.h"
 #include "lane_rules.h"

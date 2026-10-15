@@ -1,0 +1,564 @@
+// SPDX-License-Identifier: MIT
+; Specs/camera_rules.t27 -- Ponte: the owner's camera picture in Google Meet (owner's request 2026-10-15)
+; The built-in camera gives programs no exposure, focus or white balance, and macOS video effects (Portrait,
+; Studio Light) belong to each program separately, so Ponte cannot change what Meet gets from the camera. The
+; Ponte Camera extension for BrowserOS (camera/extension) wraps the camera track Meet asks for and draws every
+; frame through a small shader; Ponte's panel "Kamera" sets the picture over a local WebSocket. This spec
+; decides: the settings, their ranges, defaults and presets; the colour transform as a 3x4 affine matrix plus
+; a shadow lift, and the same transform for one pixel (the oracle the shader is tested against); the part of
+; the frame shown (zoom, pan, mirror) in texture coordinates; when a frame is processed at all; and the link
+; (its port, the only origin it accepts, keepalive, message limit, the panel's status).
+; The extension runs this same C, built to WebAssembly by camera/build-wasm.sh, so the numbers the shader gets
+; are the numbers the tests check. Settings are integers (sliders), the transform is f32. ASCII only.
+; Facade: PonteApp/CameraRules.swift. Oracle: Tests/PonteTests/Oracles/CameraRulesLegacy.swift.
+; Generated C: Sources/PonteSpecs/camera_rules.h (Specs/generate.sh).
+
+module PonteCameraRules;
+
+; --- Settings (SET_*) ---------------------------------------------------------------------------------------------
+; Light: brightness and contrast -100...100, shadows 0...100. Colour: warmth and saturation -100...100.
+; Frame: zoom 100...300 (percent), pan x and y -100...100 (share of the room the zoom leaves), mirror 0 or 1.
+pub const CM_SET_BRIGHTNESS : i64 = 0;
+pub const CM_SET_CONTRAST : i64 = 1;
+pub const CM_SET_SHADOWS : i64 = 2;
+pub const CM_SET_WARMTH : i64 = 3;
+pub const CM_SET_SATURATION : i64 = 4;
+pub const CM_SET_ZOOM : i64 = 5;
+pub const CM_SET_PAN_X : i64 = 6;
+pub const CM_SET_PAN_Y : i64 = 7;
+pub const CM_SET_MIRROR : i64 = 8;
+pub const CM_SET_COUNT : i64 = 9;
+
+pub const CM_ZOOM_MIN : i64 = 100;
+pub const CM_ZOOM_MAX : i64 = 300;
+
+; --- Presets (PRESET_*): they set light and colour and keep the frame ------------------------------------------
+pub const CM_PRESET_NORMAL : i64 = 0;
+; A warmer, slightly brighter face under cold office light.
+pub const CM_PRESET_WARM : i64 = 1;
+; A dark room or a window behind: brighter, shadows lifted, a little less contrast.
+pub const CM_PRESET_DARK_ROOM : i64 = 2;
+; A flat, grey picture: more contrast and colour.
+pub const CM_PRESET_VIVID : i64 = 3;
+pub const CM_PRESET_COUNT : i64 = 4;
+
+; --- The colour transform -----------------------------------------------------------------------------------------
+; Applied in this order to RGB in 0...1: warmth gains (red up and blue down by CM_WARMTH_GAIN_MAX at +100),
+; saturation around Rec. 709 luma (factor 1 + saturation/100), contrast around mid grey (factor 1 + contrast/100 *
+; CM_CONTRAST_SPAN), brightness (+ brightness/100 * CM_BRIGHTNESS_SHIFT_MAX); clamp to 0...1; the shadow lift
+; v + k * v * (1 - v)^2 with k = shadows/100 * CM_SHADOW_LIFT_MAX (keeps black and white, lifts the dark and middle
+; tones most near v = 1/3, and stays rising for k < 3); clamp to 0...1.
+pub const CM_WARMTH_GAIN_MAX : f32 = 0.12;
+pub const CM_CONTRAST_SPAN : f32 = 0.5;
+pub const CM_BRIGHTNESS_SHIFT_MAX : f32 = 0.2;
+pub const CM_SHADOW_LIFT_MAX : f32 = 1.2;
+pub const CM_LUMA_R : f32 = 0.2126;
+pub const CM_LUMA_G : f32 = 0.7152;
+pub const CM_LUMA_B : f32 = 0.0722;
+; cm_color_params writes the 3x3 matrix row by row (0...8), the offsets (9...11) and k (12).
+pub const CM_PARAMS_COUNT : i64 = 13;
+
+; --- The link: Ponte (server) <-> the extension's service worker --------------------------------------------------
+; ws://127.0.0.1:CM_LINK_PORT, only from the extension's own origin (CM_ROW_EXTENSION_ORIGIN).
+pub const CM_LINK_PORT : i64 = 47839;
+pub const CM_LINK_VERSION : i64 = 1;
+; Ponte sends the settings again this often: Chromium lets an extension's service worker sleep after 30 s without
+; an event, and a message keeps it and its socket alive.
+pub const CM_LINK_PING_MS : i64 = 20000;
+; A larger message, or a handshake longer than this, closes the connection.
+pub const CM_LINK_MESSAGE_MAX : i64 = 4096;
+; Connections at once: the extension opens one; a second extension window opens another.
+pub const CM_LINK_CLIENTS_MAX : i64 = 4;
+; The panel's status (LINK_*).
+pub const CM_LINK_OFF : i64 = 0;
+; The port is taken (another Ponte?) or the listener failed.
+pub const CM_LINK_FAILED : i64 = 1;
+; Ponte listens; the extension has not connected (not installed, or BrowserOS is closed).
+pub const CM_LINK_NO_EXTENSION : i64 = 2;
+; The extension is connected; no Meet page uses the camera.
+pub const CM_LINK_WAITING : i64 = 3;
+; A Meet page sends the processed picture.
+pub const CM_LINK_ACTIVE : i64 = 4;
+
+; >>> generated by Specs/tables/camera_tables.py -- edit the list there, not here
+; Texts
+; chrome-extension://jinldckdcbeojhpahpkagmacfdapfnln
+pub const CM_ROW_EXTENSION_ORIGIN : i64 = 0;
+; chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+pub const CM_ROW_OTHER_EXTENSION : i64 = 1;
+; https://meet.google.com
+pub const CM_ROW_MEET_PAGE : i64 = 2;
+; chrome-extension://jinldckdcbeojhpahpkagmacfdapfnln/
+pub const CM_ROW_ORIGIN_SLASH : i64 = 3;
+; chrome-extension://JINLDCKDCBEOJHPAHPKAGMACFDAPFNLN
+pub const CM_ROW_ORIGIN_UPPER : i64 = 4;
+pub const CM_ROW_COUNT : i64 = 5;
+pub const CM_ROW_TEXT : [228]u8 = [99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 106, 105, 110, 108, 100, 99, 107, 100, 99, 98, 101, 111, 106, 104, 112, 97, 104, 112, 107, 97, 103, 109, 97, 99, 102, 100, 97, 112, 102, 110, 108, 110, 99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 104, 116, 116, 112, 115, 58, 47, 47, 109, 101, 101, 116, 46, 103, 111, 111, 103, 108, 101, 46, 99, 111, 109, 99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 106, 105, 110, 108, 100, 99, 107, 100, 99, 98, 101, 111, 106, 104, 112, 97, 104, 112, 107, 97, 103, 109, 97, 99, 102, 100, 97, 112, 102, 110, 108, 110, 47, 99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 74, 73, 78, 76, 68, 67, 75, 68, 67, 66, 69, 79, 74, 72, 80, 65, 72, 80, 75, 65, 71, 77, 65, 67, 70, 68, 65, 80, 70, 78, 76, 78];
+pub const CM_ROW_OFFSETS : [5]u32 = [0, 51, 102, 125, 177];
+pub const CM_ROW_LENGTHS : [5]u32 = [51, 51, 23, 52, 51];
+; <<< generated
+
+; --- Settings -------------------------------------------------------------------------------------------------------
+; The lowest value of a setting (an unknown kind: 0).
+pub fn cm_setting_min(kind: i64) -> i64 {
+    if (kind == CM_SET_BRIGHTNESS or kind == CM_SET_CONTRAST or kind == CM_SET_WARMTH or kind == CM_SET_SATURATION) {
+        return 0 - 100;
+    }
+    if (kind == CM_SET_PAN_X or kind == CM_SET_PAN_Y) { return 0 - 100; }
+    if (kind == CM_SET_ZOOM) { return CM_ZOOM_MIN; }
+    return 0;
+}
+
+; The highest value of a setting (an unknown kind: 0).
+pub fn cm_setting_max(kind: i64) -> i64 {
+    if (kind == CM_SET_ZOOM) { return CM_ZOOM_MAX; }
+    if (kind == CM_SET_MIRROR) { return 1; }
+    if (kind >= 0 and kind < CM_SET_COUNT) { return 100; }
+    return 0;
+}
+
+; The value a setting starts with and "Sbrosit'" returns to: none of them changes the picture.
+pub fn cm_setting_default(kind: i64) -> i64 {
+    if (kind == CM_SET_ZOOM) { return CM_ZOOM_MIN; }
+    return 0;
+}
+
+; A value from the panel, from storage or from the link, held to the setting's range.
+pub fn cm_clamp_setting(kind: i64, value: i64) -> i64 {
+    var lo: i64 = cm_setting_min(kind);
+    var hi: i64 = cm_setting_max(kind);
+    if (value < lo) { return lo; }
+    if (value > hi) { return hi; }
+    return value;
+}
+
+; Whether a preset sets this setting (light and colour) or keeps it (the frame).
+pub fn cm_preset_sets(kind: i64) -> bool {
+    return kind >= CM_SET_BRIGHTNESS and kind <= CM_SET_SATURATION;
+}
+
+; The value a preset gives a setting it sets (an unknown preset or kind: the default).
+pub fn cm_preset_value(preset: i64, kind: i64) -> i64 {
+    if (cm_preset_sets(kind) == false) { return cm_setting_default(kind); }
+    if (preset == CM_PRESET_WARM) {
+        if (kind == CM_SET_BRIGHTNESS) { return 5; }
+        if (kind == CM_SET_SHADOWS) { return 15; }
+        if (kind == CM_SET_WARMTH) { return 30; }
+        return 0;
+    }
+    if (preset == CM_PRESET_DARK_ROOM) {
+        if (kind == CM_SET_BRIGHTNESS) { return 20; }
+        if (kind == CM_SET_CONTRAST) { return 0 - 10; }
+        if (kind == CM_SET_SHADOWS) { return 50; }
+        if (kind == CM_SET_SATURATION) { return 10; }
+        return 0;
+    }
+    if (preset == CM_PRESET_VIVID) {
+        if (kind == CM_SET_CONTRAST) { return 20; }
+        if (kind == CM_SET_SATURATION) { return 25; }
+        if (kind == CM_SET_SHADOWS) { return 10; }
+        return 0;
+    }
+    return 0;
+}
+
+; --- Colour ---------------------------------------------------------------------------------------------------------
+; The light and colour settings leave the picture as it is.
+pub fn cm_color_identity(brightness: i64, contrast: i64, shadows: i64, warmth: i64, saturation: i64) -> bool {
+    return cm_clamp_setting(CM_SET_BRIGHTNESS, brightness) == 0 and cm_clamp_setting(CM_SET_CONTRAST, contrast) == 0
+        and cm_clamp_setting(CM_SET_SHADOWS, shadows) == 0 and cm_clamp_setting(CM_SET_WARMTH, warmth) == 0
+        and cm_clamp_setting(CM_SET_SATURATION, saturation) == 0;
+}
+
+; A setting's share of its full scale: value/100 after clamping, as f32. All arithmetic here is f32: every
+; decimal is first held in an f32 variable (a bare decimal in C is a double and would widen the expression).
+pub fn cm_unit(kind: i64, value: i64) -> f32 {
+    var v: f32 = cm_clamp_setting(kind, value);
+    var hundred: f32 = 100.0;
+    return v / hundred;
+}
+
+; The colour transform's parameters (see the header): out[0...8] the matrix row by row, out[9...11] the offsets,
+; out[12] the shadow lift k. Returns CM_PARAMS_COUNT.
+pub fn cm_color_params(brightness: i64, contrast: i64, shadows: i64, warmth: i64, saturation: i64, out: [16]f32) -> i64 {
+    var one: f32 = 1.0;
+    var half: f32 = 0.5;
+    var gain_max: f32 = CM_WARMTH_GAIN_MAX;
+    var span: f32 = CM_CONTRAST_SPAN;
+    var shift_max: f32 = CM_BRIGHTNESS_SHIFT_MAX;
+    var lift_max: f32 = CM_SHADOW_LIFT_MAX;
+    var luma_r: f32 = CM_LUMA_R;
+    var luma_g: f32 = CM_LUMA_G;
+    var luma_b: f32 = CM_LUMA_B;
+    var w: f32 = cm_unit(CM_SET_WARMTH, warmth) * gain_max;
+    var gain_r: f32 = one + w;
+    var gain_b: f32 = one - w;
+    var s: f32 = one + cm_unit(CM_SET_SATURATION, saturation);
+    var f: f32 = one + cm_unit(CM_SET_CONTRAST, contrast) * span;
+    var shift: f32 = cm_unit(CM_SET_BRIGHTNESS, brightness) * shift_max;
+    var rest: f32 = one - s;
+    var lr: f32 = rest * luma_r;
+    var lg: f32 = rest * luma_g;
+    var lb: f32 = rest * luma_b;
+    // Row i, column j: f * (S[i][j]) * W[j], with S = rest * luma + s on the diagonal and W = (gain_r, 1, gain_b).
+    out[0] = f * (lr + s) * gain_r;
+    out[1] = f * lg;
+    out[2] = f * lb * gain_b;
+    out[3] = f * lr * gain_r;
+    out[4] = f * (lg + s);
+    out[5] = f * lb * gain_b;
+    out[6] = f * lr * gain_r;
+    out[7] = f * lg;
+    out[8] = f * (lb + s) * gain_b;
+    var offset: f32 = half * (one - f) + shift;
+    out[9] = offset;
+    out[10] = offset;
+    out[11] = offset;
+    out[12] = cm_unit(CM_SET_SHADOWS, shadows) * lift_max;
+    return CM_PARAMS_COUNT;
+}
+
+; Clamp to 0...1 (NaN to 0).
+pub fn cm_clamp01(x: f32) -> f32 {
+    var zero: f32 = 0.0;
+    var one: f32 = 1.0;
+    if (x > zero) {
+        if (x < one) { return x; }
+        return one;
+    }
+    return zero;
+}
+
+; The shadow lift of one clamped channel.
+pub fn cm_lift(v: f32, k: f32) -> f32 {
+    var one: f32 = 1.0;
+    var d: f32 = one - v;
+    return cm_clamp01(v + k * v * d * d);
+}
+
+; One pixel (r, g, b in 0...1) through the transform of cm_color_params: out[0...2] the result (out[3] is 0). The
+; shader in camera/extension/page.js computes the same, in the same order. Returns 3.
+pub fn cm_apply_pixel(brightness: i64, contrast: i64, shadows: i64, warmth: i64, saturation: i64, r: f32, g: f32, b: f32, out: [4]f32) -> i64 {
+    var p: [16]f32 = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    var n: i64 = cm_color_params(brightness, contrast, shadows, warmth, saturation, p);
+    var k: f32 = p[12];
+    var vr: f32 = cm_clamp01(p[0] * r + p[1] * g + p[2] * b + p[9]);
+    var vg: f32 = cm_clamp01(p[3] * r + p[4] * g + p[5] * b + p[10]);
+    var vb: f32 = cm_clamp01(p[6] * r + p[7] * g + p[8] * b + p[11]);
+    var zero: f32 = 0.0;
+    out[0] = cm_lift(vr, k);
+    out[1] = cm_lift(vg, k);
+    out[2] = cm_lift(vb, k);
+    out[3] = zero;
+    return n - 10;
+}
+
+; --- Frame ----------------------------------------------------------------------------------------------------------
+; The frame settings leave the picture as it is (at zoom 100 a pan has no room to move).
+pub fn cm_frame_identity(zoom: i64, pan_x: i64, pan_y: i64, mirror: i64) -> bool {
+    return cm_clamp_setting(CM_SET_ZOOM, zoom) == CM_ZOOM_MIN and cm_clamp_setting(CM_SET_MIRROR, mirror) == 0;
+}
+
+; An edge of the part shown, held to 0...limit.
+pub fn cm_clamp_edge(x: f32, limit: f32) -> f32 {
+    var zero: f32 = 0.0;
+    if (x > zero) {
+        if (x < limit) { return x; }
+        return limit;
+    }
+    return zero;
+}
+
+; The part of the picture shown, in texture coordinates from the top left (0...1): out[0] u0, out[1] v0, out[2] du,
+; out[3] dv, so the output's (x, y) in 0...1 samples (u0 + x * du, v0 + y * dv). The width is 100/zoom; a pan moves
+; the centre within the room left, +100 to the right or the bottom edge; a mirror starts at the right edge with a
+; negative du. Returns 4.
+pub fn cm_crop(zoom: i64, pan_x: i64, pan_y: i64, mirror: i64, out: [4]f32) -> i64 {
+    var one: f32 = 1.0;
+    var half: f32 = 0.5;
+    var hundred: f32 = 100.0;
+    var z: f32 = cm_clamp_setting(CM_SET_ZOOM, zoom);
+    var size: f32 = hundred / z;
+    var room: f32 = (one - size) * half;
+    var cx: f32 = half + cm_unit(CM_SET_PAN_X, pan_x) * room;
+    var cy: f32 = half + cm_unit(CM_SET_PAN_Y, pan_y) * room;
+    // Rounding may put an edge a hair outside the picture: the part is held inside it.
+    var left: f32 = cm_clamp_edge(cx - size * half, one - size);
+    var top: f32 = cm_clamp_edge(cy - size * half, one - size);
+    var u0: f32 = left;
+    var du: f32 = size;
+    if (cm_clamp_setting(CM_SET_MIRROR, mirror) == 1) {
+        u0 = left + size;
+        du = 0.0 - size;
+    }
+    out[0] = u0;
+    out[1] = top;
+    out[2] = du;
+    out[3] = size;
+    return 4;
+}
+
+; Whether frames are drawn through the shader: the camera link is on and some setting changes the picture.
+; Otherwise each frame passes as it came.
+pub fn cm_needs_processing(on: bool, color_identity: bool, frame_identity: bool) -> bool {
+    return on and (color_identity == false or frame_identity == false);
+}
+
+; --- The link -------------------------------------------------------------------------------------------------------
+; A row of the table, copied to out: its length (0 for an unknown row).
+pub fn cm_row(row: i64, out: [256]u8) -> i64 {
+    if (row < 0 or row >= CM_ROW_COUNT) { return 0; }
+    var off: i64 = CM_ROW_OFFSETS[row];
+    var len: i64 = CM_ROW_LENGTHS[row];
+    var k: i64 = 0;
+    while (k < len) {
+        out[k] = CM_ROW_TEXT[off + k];
+        k = k + 1;
+    }
+    return len;
+}
+
+; The Origin header of a WebSocket handshake (len bytes of text; a negative or larger length reads as none) is the
+; extension's own, byte for byte: nothing else may set or read the camera.
+pub fn cm_origin_allowed(text: [256]u8, len: i64) -> bool {
+    var off: i64 = CM_ROW_OFFSETS[CM_ROW_EXTENSION_ORIGIN];
+    var want: i64 = CM_ROW_LENGTHS[CM_ROW_EXTENSION_ORIGIN];
+    if (len != want) { return false; }
+    var k: i64 = 0;
+    while (k < want) {
+        if (text[k] != CM_ROW_TEXT[off + k]) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+; A new connection is taken while fewer than CM_LINK_CLIENTS_MAX are open.
+pub fn cm_link_accepts(open_clients: i64) -> bool {
+    return open_clients >= 0 and open_clients < CM_LINK_CLIENTS_MAX;
+}
+
+; The panel's status: the listener, the connected extensions, and the Meet pages they report with a camera
+; through the extension.
+pub fn cm_link_status(listening: bool, failed: bool, clients: i64, active_cameras: i64) -> i64 {
+    if (failed) { return CM_LINK_FAILED; }
+    if (listening == false) { return CM_LINK_OFF; }
+    if (clients <= 0) { return CM_LINK_NO_EXTENSION; }
+    if (active_cameras <= 0) { return CM_LINK_WAITING; }
+    return CM_LINK_ACTIVE;
+}
+
+; --- Tests ----------------------------------------------------------------------------------------------------------
+test cm_setting_rules {
+    assert cm_setting_min(CM_SET_BRIGHTNESS) == 0 - 100;
+    assert cm_setting_max(CM_SET_BRIGHTNESS) == 100;
+    assert cm_setting_min(CM_SET_SHADOWS) == 0;
+    assert cm_setting_max(CM_SET_SHADOWS) == 100;
+    assert cm_setting_min(CM_SET_ZOOM) == 100;
+    assert cm_setting_max(CM_SET_ZOOM) == 300;
+    assert cm_setting_min(CM_SET_PAN_Y) == 0 - 100;
+    assert cm_setting_max(CM_SET_MIRROR) == 1;
+    assert cm_setting_min(CM_SET_COUNT) == 0;
+    assert cm_setting_max(CM_SET_COUNT) == 0;
+    assert cm_setting_max(0 - 1) == 0;
+    assert cm_setting_default(CM_SET_ZOOM) == 100;
+    assert cm_setting_default(CM_SET_WARMTH) == 0;
+    assert cm_clamp_setting(CM_SET_ZOOM, 50) == 100;
+    assert cm_clamp_setting(CM_SET_ZOOM, 1000) == 300;
+    assert cm_clamp_setting(CM_SET_MIRROR, 7) == 1;
+    assert cm_clamp_setting(CM_SET_BRIGHTNESS, 0 - 9223372036854775807) == 0 - 100;
+    assert cm_clamp_setting(CM_SET_BRIGHTNESS, 9223372036854775807) == 100;
+    assert cm_clamp_setting(99, 5) == 0;
+    // Every default is in range, and every kind's range is not empty.
+    var k: i64 = 0;
+    while (k < CM_SET_COUNT) {
+        assert cm_setting_min(k) < cm_setting_max(k);
+        assert cm_clamp_setting(k, cm_setting_default(k)) == cm_setting_default(k);
+        k = k + 1;
+    }
+    // Presets set light and colour within range and keep the frame.
+    var p: i64 = 0;
+    while (p < CM_PRESET_COUNT) {
+        var j: i64 = 0;
+        while (j < CM_SET_COUNT) {
+            assert cm_clamp_setting(j, cm_preset_value(p, j)) == cm_preset_value(p, j);
+            if (cm_preset_sets(j) == false) { assert cm_preset_value(p, j) == cm_setting_default(j); }
+            j = j + 1;
+        }
+        p = p + 1;
+    }
+    assert cm_preset_sets(CM_SET_SATURATION) == true;
+    assert cm_preset_sets(CM_SET_ZOOM) == false;
+    assert cm_preset_value(CM_PRESET_WARM, CM_SET_WARMTH) == 30;
+    assert cm_preset_value(CM_PRESET_DARK_ROOM, CM_SET_SHADOWS) == 50;
+    assert cm_preset_value(CM_PRESET_NORMAL, CM_SET_BRIGHTNESS) == 0;
+    assert cm_preset_value(99, CM_SET_BRIGHTNESS) == 0;
+}
+
+test cm_color_rules {
+    var p: [16]f32 = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    // The defaults are the identity, exactly.
+    assert cm_color_params(0, 0, 0, 0, 0, p) == CM_PARAMS_COUNT;
+    assert p[0] == 1.0;
+    assert p[1] == 0.0;
+    assert p[2] == 0.0;
+    assert p[4] == 1.0;
+    assert p[8] == 1.0;
+    assert p[9] == 0.0;
+    assert p[12] == 0.0;
+    assert cm_color_identity(0, 0, 0, 0, 0) == true;
+    assert cm_color_identity(0, 0, 1, 0, 0) == false;
+    assert cm_color_identity(0, 0, 0 - 5, 0, 0) == true;
+    // Brightness +100 shifts by 0.2; contrast +100 is a factor 1.5 around 0.5.
+    assert cm_color_params(100, 0, 0, 0, 0, p) == CM_PARAMS_COUNT;
+    assert p[9] > 0.199;
+    assert p[9] < 0.201;
+    assert cm_color_params(0, 100, 0, 0, 0, p) == CM_PARAMS_COUNT;
+    assert p[0] == 1.5;
+    assert p[9] == 0.0 - 0.25;
+    // Saturation -100 is grey: every row is the luma weights.
+    var luma_r: f32 = CM_LUMA_R;
+    var luma_g: f32 = CM_LUMA_G;
+    var luma_b: f32 = CM_LUMA_B;
+    assert cm_color_params(0, 0, 0, 0, 0 - 100, p) == CM_PARAMS_COUNT;
+    assert p[0] == luma_r;
+    assert p[3] == luma_r;
+    assert p[4] == luma_g;
+    assert p[8] == luma_b;
+    // Warmth +100: red up 12 %, blue down 12 %.
+    assert cm_color_params(0, 0, 0, 100, 0, p) == CM_PARAMS_COUNT;
+    assert p[0] > 1.119;
+    assert p[0] < 1.121;
+    assert p[8] > 0.879;
+    assert p[8] < 0.881;
+    assert p[4] == 1.0;
+    // Out-of-range settings act as their limits.
+    var lift_max: f32 = CM_SHADOW_LIFT_MAX;
+    assert cm_color_params(0, 0, 500, 0, 0, p) == CM_PARAMS_COUNT;
+    assert p[12] == lift_max;
+    var q: [4]f32 = [0.0, 0.0, 0.0, 0.0];
+    // The identity keeps a pixel; black and white stay with any shadow lift.
+    assert cm_apply_pixel(0, 0, 0, 0, 0, 0.25, 0.5, 0.75, q) == 3;
+    assert q[0] == 0.25;
+    assert q[1] == 0.5;
+    assert q[2] == 0.75;
+    assert cm_apply_pixel(0, 0, 100, 0, 0, 0.0, 1.0, 0.0, q) == 3;
+    assert q[0] == 0.0;
+    assert q[1] == 1.0;
+    // The lift raises a dark grey: 1/3 + 1.2 * 1/3 * 4/9 = 0.5111.
+    assert cm_apply_pixel(0, 0, 100, 0, 0, 0.33333334, 0.33333334, 0.33333334, q) == 3;
+    assert q[0] > 0.511;
+    assert q[0] < 0.5112;
+    // Clamped: a bright pixel brightened stays 1, a dark one darkened stays 0.
+    assert cm_apply_pixel(100, 100, 0, 0, 0, 0.95, 0.95, 0.95, q) == 3;
+    assert q[0] == 1.0;
+    assert cm_apply_pixel(0 - 100, 100, 0, 0, 0, 0.05, 0.05, 0.05, q) == 3;
+    assert q[2] == 0.0;
+    // The lift keeps the order of tones for every shadow setting (it rises while k < 3).
+    var s: i64 = 0;
+    while (s <= 100) {
+        var x: i64 = 0;
+        var last: f32 = 0.0 - 1.0;
+        while (x <= 64) {
+            var v: f32 = x;
+            v = v / 64.0;
+            assert cm_apply_pixel(0, 0, s, 0, 0, v, v, v, q) == 3;
+            assert q[0] >= last;
+            last = q[0];
+            x = x + 1;
+        }
+        s = s + 25;
+    }
+    assert cm_clamp01(0.0 - 0.5) == 0.0;
+    assert cm_clamp01(1.5) == 1.0;
+    assert cm_clamp01(0.5) == 0.5;
+}
+
+test cm_frame_rules {
+    var c: [4]f32 = [0.0, 0.0, 0.0, 0.0];
+    // The whole picture.
+    assert cm_crop(100, 0, 0, 0, c) == 4;
+    assert c[0] == 0.0;
+    assert c[1] == 0.0;
+    assert c[2] == 1.0;
+    assert c[3] == 1.0;
+    // A pan at zoom 100 has no room.
+    assert cm_crop(100, 100, 0 - 100, 0, c) == 4;
+    assert c[0] == 0.0;
+    assert c[1] == 0.0;
+    assert cm_frame_identity(100, 50, 50, 0) == true;
+    assert cm_frame_identity(101, 0, 0, 0) == false;
+    assert cm_frame_identity(100, 0, 0, 1) == false;
+    assert cm_frame_identity(20, 0, 0, 0) == true;
+    // Zoom 200: half the picture, centred.
+    assert cm_crop(200, 0, 0, 0, c) == 4;
+    assert c[0] == 0.25;
+    assert c[1] == 0.25;
+    assert c[2] == 0.5;
+    assert c[3] == 0.5;
+    // Pan to the right and bottom edges.
+    assert cm_crop(200, 100, 100, 0, c) == 4;
+    assert c[0] == 0.5;
+    assert c[1] == 0.5;
+    assert cm_crop(200, 0 - 100, 0 - 100, 0, c) == 4;
+    assert c[0] == 0.0;
+    assert c[1] == 0.0;
+    // A mirror starts at the right edge of the same part and runs left.
+    assert cm_crop(200, 0, 0, 1, c) == 4;
+    assert c[0] == 0.75;
+    assert c[2] == 0.0 - 0.5;
+    assert cm_crop(100, 0, 0, 1, c) == 4;
+    assert c[0] == 1.0;
+    assert c[2] == 0.0 - 1.0;
+    // Out of range: the limits.
+    assert cm_crop(900, 500, 0, 3, c) == 4;
+    assert c[3] > 0.3333;
+    assert c[3] < 0.3334;
+    // The part shown never leaves the picture.
+    var z: i64 = 100;
+    while (z <= 300) {
+        var px: i64 = 0 - 100;
+        while (px <= 100) {
+            assert cm_crop(z, px, px, 0, c) == 4;
+            assert c[0] >= 0.0;
+            assert c[0] + c[2] <= 1.0;
+            assert c[1] >= 0.0;
+            assert c[1] + c[3] <= 1.0;
+            px = px + 25;
+        }
+        z = z + 20;
+    }
+    assert cm_needs_processing(true, false, true) == true;
+    assert cm_needs_processing(true, true, false) == true;
+    assert cm_needs_processing(true, true, true) == false;
+    assert cm_needs_processing(false, false, false) == false;
+}
+
+test cm_link_rules {
+    var t: [256]u8 = [0; 256];
+    var n: i64 = cm_row(CM_ROW_EXTENSION_ORIGIN, t);
+    assert n == 51;
+    assert cm_origin_allowed(t, n) == true;
+    assert cm_origin_allowed(t, n - 1) == false;
+    assert cm_origin_allowed(t, 0 - 1) == false;
+    assert cm_origin_allowed(t, 9223372036854775807) == false;
+    n = cm_row(CM_ROW_OTHER_EXTENSION, t);
+    assert cm_origin_allowed(t, n) == false;
+    n = cm_row(CM_ROW_MEET_PAGE, t);
+    assert cm_origin_allowed(t, n) == false;
+    n = cm_row(CM_ROW_ORIGIN_SLASH, t);
+    assert cm_origin_allowed(t, n) == false;
+    n = cm_row(CM_ROW_ORIGIN_UPPER, t);
+    assert cm_origin_allowed(t, n) == false;
+    assert cm_row(CM_ROW_COUNT, t) == 0;
+    assert cm_row(0 - 1, t) == 0;
+    assert cm_link_accepts(0) == true;
+    assert cm_link_accepts(3) == true;
+    assert cm_link_accepts(4) == false;
+    assert cm_link_accepts(0 - 1) == false;
+    assert cm_link_status(false, false, 0, 0) == CM_LINK_OFF;
+    assert cm_link_status(true, true, 2, 2) == CM_LINK_FAILED;
+    assert cm_link_status(true, false, 0, 1) == CM_LINK_NO_EXTENSION;
+    assert cm_link_status(true, false, 1, 0) == CM_LINK_WAITING;
+    assert cm_link_status(true, false, 1, 1) == CM_LINK_ACTIVE;
+    assert CM_LINK_PING_MS < 30000;
+}
