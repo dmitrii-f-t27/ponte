@@ -271,6 +271,7 @@ bool ui_listener_dismissed(bool dismissed, bool gone, bool closed, bool streak);
 bool ui_hear_pick_clears_headphones(bool has_saved);
 bool ui_hear_pick_failed(bool system_is_picked);
 bool ui_listener_tick_reads_devices(bool sheet_open);
+bool ui_packs_banner_clears(bool shown, int32_t translators_failed);
 int32_t ui_peer_notes(bool peer_on, bool running, bool headphones_like);
 
 /* -------------------------------------------------------
@@ -965,6 +966,10 @@ bool ui_listener_tick_reads_devices(bool sheet_open) {
     return sheet_open;
 }
 
+bool ui_packs_banner_clears(bool shown, int32_t translators_failed) {
+    return (shown && (translators_failed == 0));
+}
+
 int32_t ui_peer_notes(bool peer_on, bool running, bool headphones_like) {
     int32_t notes = 0;
     if ((peer_on == false)) {
@@ -1485,6 +1490,9 @@ void test_ui_moved_out_of_swift(void) {
     assert((ui_listener_dismissed(false, true, false, true) == false));
     assert((ui_listener_dismissed(true, false, false, true) == true));
     assert((ui_listener_dismissed(true, true, true, false) == false));
+    assert((ui_packs_banner_clears(true, 0) == true));
+    assert((ui_packs_banner_clears(true, 1) == false));
+    assert((ui_packs_banner_clears(false, 0) == false));
     assert((ui_hear_pick_clears_headphones(true) == true));
     assert((ui_hear_pick_failed(false) == true));
     assert((ui_hear_pick_failed(true) == false));

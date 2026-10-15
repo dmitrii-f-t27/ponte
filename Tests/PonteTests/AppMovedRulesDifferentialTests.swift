@@ -347,6 +347,9 @@ private typealias L = AppRulesLegacy
             }
         }
             log.check(F.hearPickClearsHeadphones(hasSaved: a), L.hearPickClearsHeadphones(hasSaved: a), "\(a)")
+            for n in Array(Int32(-2)...Int32(3)) + [Int32.min, Int32.max] {
+                log.check(F.packsBannerClears(shown: a, translatorsFailed: n), L.packsBannerClears(shown: a, translatorsFailed: n), "\(a) \(n)")
+            }
             log.check(F.hearPickFailed(systemIsPicked: a), L.hearPickFailed(systemIsPicked: a), "\(a)")
             log.check(F.listenerTickReadsDevices(sheetOpen: a), L.listenerTickReadsDevices(sheetOpen: a), "\(a)")
         } }

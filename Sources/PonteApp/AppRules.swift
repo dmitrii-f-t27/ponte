@@ -816,6 +816,7 @@ enum AppRules {
         ui_listener_dismissed(dismissed, gone, closed, streak)
     }
     static func hearPickClearsHeadphones(hasSaved: Bool) -> Bool { ui_hear_pick_clears_headphones(hasSaved) }
+    static func packsBannerClears(shown: Bool, translatorsFailed: Int32) -> Bool { ui_packs_banner_clears(shown, translatorsFailed) }
     static func hearPickFailed(systemIsPicked: Bool) -> Bool { ui_hear_pick_failed(systemIsPicked) }
     static func listenerTickReadsDevices(sheetOpen: Bool) -> Bool { ui_listener_tick_reads_devices(sheetOpen) }
     static let PEERNOTE_NOT_RUNNING: Int32 = UI_PEERNOTE_NOT_RUNNING

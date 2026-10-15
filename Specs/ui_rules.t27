@@ -829,6 +829,12 @@ pub fn ui_listener_tick_reads_devices(sheet_open: bool) -> bool {
     return sheet_open;
 }
 
+; The banner "language packs not downloaded" goes once no lane's translator is failing: macOS can report a pack missing
+; for a moment at launch and the lane prepares it again before the next phrase (live 2026-10-14).
+pub fn ui_packs_banner_clears(shown: bool, translators_failed: i32) -> bool {
+    return shown and translators_failed == 0;
+}
+
 ; The Russians' panel notes (PEERNOTE_* bits): the call is not running (the others hear the owner after "Start");
 ; no headphones (his voice goes to them only while the key is held).
 pub const UI_PEERNOTE_NOT_RUNNING : i32 = 1;
@@ -1325,6 +1331,9 @@ test ui_moved_out_of_swift {
     assert ui_listener_dismissed(false, true, false, true) == false;
     assert ui_listener_dismissed(true, false, false, true) == true;
     assert ui_listener_dismissed(true, true, true, false) == false;
+    assert ui_packs_banner_clears(true, 0) == true;
+    assert ui_packs_banner_clears(true, 1) == false;
+    assert ui_packs_banner_clears(false, 0) == false;
     assert ui_hear_pick_clears_headphones(true) == true;
     assert ui_hear_pick_failed(false) == true;
     assert ui_hear_pick_failed(true) == false;

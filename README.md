@@ -21,6 +21,8 @@ Ponte apps meet through a small relay, `relay/`, which runs on Railway. The code
 
 Each Ponte also announces when it speaks into the call, so no Ponte translates another Ponte's Portuguese voice back into Russian. With headphones your voice goes to the other Russians whenever you speak; without them, only while you hold the talk key, so they do not hear themselves as an echo. Only speech is sent, not the quiet noise of the room. When another Russian's voice plays on speakers, your microphone stays out of the call for 0.7 s after it, so the Portuguese side does not hear him.
 
+**Camera in Meet.** The Mac's built-in camera gives programs no exposure or white balance, and macOS video effects belong to each program separately. So Ponte changes the picture Meet gets in BrowserOS itself: the Ponte Camera extension (`camera/extension`) wraps the camera track Meet asks for and draws each frame through a small shader. The toolbar button «Камера в Meet» opens the panel: light (brightness, contrast, shadows), colour (warmth, saturation), frame (zoom up to 3×, pan, mirror) and ready-made settings (normal, warm, dark room, vivid). Changes show at once in Meet's own preview of you. Install the extension once: «Папка расширения» in the panel, then in BrowserOS chrome://extensions → «Режим разработчика» → «Загрузить распакованное». Ponte talks to it only on 127.0.0.1:47839 and accepts only the extension's own origin; without Ponte the extension keeps the last settings. A virtual camera for every app would need a paid Apple Developer account with system extensions.
+
 The call analysis is optional too. In Settings → «Анализ звонка» you pick a chat service (Z.ai GLM, DeepSeek, or any OpenAI-compatible one), paste its API key (kept only in the Keychain as `ponte-analysis-<id>`) and check it. During a call an agent sends the new lines (who spoke, original and translation) to that service about every two minutes and keeps notes. After «Стоп», or from the toolbar button «Отчёт по звонку», it writes a report: summary, participants, important data, agreements, tasks, open questions, risks and next steps. «Сохранить в TXT» writes the report and the whole transcript to `~/Documents/Ponte/Ponte-report-YYYY-MM-DD-HHmm.txt`. Nothing is sent until a key is saved. The key is saved for one address and is sent only there: change the address and Ponte asks for the key again. Plain `http://` is allowed only for this Mac (`localhost`, `127.0.0.1`). A reply cut short by the service is never used as notes or as a report. A report you did not save is written to a file before the next call, and also when you quit Ponte; quitting waits up to 10 s for a report still being written.
 
 ## Written in t27
@@ -38,6 +40,7 @@ Every decision Ponte makes is written in [t27](https://github.com/gHashTag/t27),
 | `ui_rules.t27` | buttons, status lights, latency colours, setup wizard, overlay |
 | `transcript_rules.t27` | transcript file names, Markdown escaping |
 | `peer_rules.t27` | «Русские в звонке»: the secret code, frames and their freshness, link status and reconnects, presence, when your microphone goes to the other Russians, the jitter buffer, voice windows, and which recognized phrase is a Ponte's voice (another Ponte's, or this Ponte's own TTS echoed back), while a short reply that repeats a word of the TTS is translated |
+| `camera_rules.t27` | the camera picture in Meet: settings and presets, the colour matrix and shadow lift, zoom/pan/mirror, the link to the extension (port, origin, limits); the extension runs the same C as WebAssembly |
 | `analysis_rules.t27` | the call analysis agent: providers and defaults, endpoint, when notes update, request chunks, error classes, retries and backoff, the report and its TXT file name |
 
 The generated C is committed in `Sources/PonteSpecs`, so building the app does not need `t27c`. To regenerate the C and run every spec's own tests:
@@ -48,7 +51,7 @@ T27C=/path/to/t27c Specs/generate.sh
 
 `Specs/T27C_PIN` names the compiler release, which is t27c v0.5.1. `Specs/README.md` maps each spec to the Swift that calls it.
 
-The Swift facades `AudioRules`, `SpeechRules`, `AppRules`, `TextRules`, `PeerRules` and `AnalysisRules` only pass values to the generated C and back. Swift keeps only what t27 cannot reach: SwiftUI views and their texts, Core Audio, AVFoundation, Speech, Translation, Keychain, URLSession, Unicode text handling, the Claude prompt and JSON, and concurrency. `Specs/README.md` lists what stays in Swift and why.
+The Swift facades `AudioRules`, `SpeechRules`, `AppRules`, `TextRules`, `PeerRules`, `AnalysisRules` and `CameraRules` only pass values to the generated C and back. Swift keeps only what t27 cannot reach: SwiftUI views and their texts, Core Audio, AVFoundation, Speech, Translation, Keychain, URLSession, Unicode text handling, the Claude prompt and JSON, and concurrency. `Specs/README.md` lists what stays in Swift and why.
 
 ## Requirements
 
@@ -84,8 +87,9 @@ This is a work in progress. These parts are verified on a Mac:
 - Excluding Ponte's own sound.
 - On-device recognition of pt-BR and ru-RU, 0.35–0.8 s after the speaker stops.
 - Speech synthesis.
-- Every decision runs in the C generated from the t27 specs (11 specs, 71 spec tests). The Swift rules facades only pass values to it. The Swift they replaced, or a separate plain-Swift version, is kept as a test oracle. 87 differential tests compare the two bit for bit over about 27.9 million inputs.
-- The full app, built and signed, with 308 tests passing.
+- Every decision runs in the C generated from the t27 specs (12 specs, 85 spec tests). The Swift rules facades only pass values to it. The Swift they replaced, or a separate plain-Swift version, is kept as a test oracle. 101 differential tests compare the two bit for bit over about 29.8 million inputs.
+- The full app, built and signed, with 327 tests passing.
+- The camera extension: its WebAssembly equals the native C bit for bit (`node camera/test/wasm-vectors.mjs`), and in a headless Chrome with a fake camera the shader's colours equal `cm_apply_pixel` (`node camera/test/e2e.mjs`, also with Ponte's own link: `PONTE_LINK=1`).
 - An end-to-end run with test files, one phrase each way, from the end of the phrase to the translation on screen:
   - Ru → Pt took 0.6 s.
   - Pt → Ru took 0.4 s.

@@ -1052,6 +1052,8 @@ extension AppRulesLegacy {
         return d
     }
     static func hearPickClearsHeadphones(hasSaved: Bool) -> Bool { hasSaved }
+    /// New 2026-10-15: the packs banner went only when closed by hand.
+    static func packsBannerClears(shown: Bool, translatorsFailed: Int32) -> Bool { shown && translatorsFailed == 0 }
     static func hearPickFailed(systemIsPicked: Bool) -> Bool { !systemIsPicked }
     static func listenerTickReadsDevices(sheetOpen: Bool) -> Bool { sheetOpen }
     /// PeerPanel: `peerOn && !isRunning`, `peerOn && !headphonesLike`.

@@ -265,6 +265,7 @@ bool ui_listener_dismissed(bool dismissed, bool gone, bool closed, bool streak);
 bool ui_hear_pick_clears_headphones(bool has_saved);
 bool ui_hear_pick_failed(bool system_is_picked);
 bool ui_listener_tick_reads_devices(bool sheet_open);
+bool ui_packs_banner_clears(bool shown, int32_t translators_failed);
 int32_t ui_peer_notes(bool peer_on, bool running, bool headphones_like);
 /* Function bodies: see the full header. */
 #endif

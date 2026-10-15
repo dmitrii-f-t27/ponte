@@ -836,6 +836,10 @@ final class AppModel {
 
         if isRunning {
             translatorsFailed = Int32([incomingLane, outgoingLane].compactMap { $0 }.filter { $0.translatorError != nil }.count)
+            // A pack macOS reported missing for a moment at launch is ready now: its banner goes by itself.
+            let packsStep = WizardStep(code: AppRules.bannerStep(banner: AppRules.BAN_NO_PACKS))
+            let packsShown = banner != nil && banner?.action == packsStep.map { Banner.Action.openWizard($0) }
+            if AppRules.packsBannerClears(shown: packsShown, translatorsFailed: translatorsFailed) { banner = nil }
         }
         // The silence banner follows the source light: it goes as soon as a non-zero sample turns the light OK.
         let next = silenceWarning.banner(after: banner, sourceLight: sourceCode, sourceName: activeSourceName)

@@ -95,8 +95,17 @@ struct AnalysisSettingsView: View {
                     Label("Ключа \(analysis.providerName) нет", systemImage: "key")
                         .foregroundStyle(.secondary)
                 }
-                SecureField("API-ключ", text: $draftKey, prompt: Text(analysis.hasKey ? "вставьте новый, чтобы заменить" : "вставьте ключ"))
-                    .onSubmit(save)
+                // A visible box with its label above it: in a Form row the field was only a grey prompt at the right edge,
+                // and the owner could not find where to paste the key (2026-10-14).
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(analysis.hasKey ? "Новый API-ключ (заменит сохранённый)" : "Вставьте API-ключ сюда (⌘V)")
+                        .font(.callout.weight(.medium))
+                    SecureField("API-ключ", text: $draftKey, prompt: Text("например, 1a2b3c…"))
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .onSubmit(save)
+                        .accessibilityLabel("API-ключ")
+                }
                 HStack {
                     Button("Сохранить ключ", action: save)
                         .disabled(draftKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
