@@ -7,8 +7,18 @@ struct CameraPanel: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        // Scrolls when the screen is short: eight sliders, presets and the install steps.
+        ScrollView {
+            content
+                .padding(16)
+        }
+        .frame(width: 460)
+        .frame(maxHeight: 600)
+    }
+
+    private var content: some View {
         let camera = model.camera
-        VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 10) {
             Text("Камера в Meet")
                 .font(.headline)
             Label(statusText(camera), systemImage: statusIcon(camera))
@@ -34,8 +44,8 @@ struct CameraPanel: View {
             group("Цвет", rows: [(CameraRules.setWarmth, "Оттенок", "холоднее", "теплее"),
                                  (CameraRules.setSaturation, "Насыщенность", "бледнее", "ярче")])
             group("Кадр", rows: [(CameraRules.setZoom, "Приближение", "весь кадр", "×3"),
-                                 (CameraRules.setPanX, "Сдвиг", "влево", "вправо"),
-                                 (CameraRules.setPanY, "Сдвиг", "вверх", "вниз")])
+                                 (CameraRules.setPanX, "Сдвиг ↔", "влево", "вправо"),
+                                 (CameraRules.setPanY, "Сдвиг ↕", "вверх", "вниз")])
             Toggle("Зеркально (как в зеркале для собеседника)",
                    isOn: Binding(get: { camera.value(CameraRules.setMirror) == 1 },
                                  set: { camera.set(CameraRules.setMirror, $0 ? 1 : 0) }))
@@ -47,13 +57,16 @@ struct CameraPanel: View {
                 Button("Папка расширения") { camera.revealExtensionFolder() }
             }
 
-            if camera.status == CameraRules.linkNoExtension || camera.status == CameraRules.linkOff {
+            // Open by itself while the extension is not connected.
+            DisclosureGroup("Как установить расширение (один раз)", isExpanded: Binding(
+                get: { installShown ?? (camera.status == CameraRules.linkNoExtension || camera.status == CameraRules.linkOff) },
+                set: { installShown = $0 })) {
                 InstallSteps()
             }
         }
-        .padding(16)
-        .frame(width: 440)
     }
+
+    @State private var installShown: Bool?
 
     private func group(_ title: String, rows: [(Int, String, String, String)]) -> some View {
         let camera = model.camera
@@ -62,26 +75,26 @@ struct CameraPanel: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
             ForEach(rows, id: \.0) { kind, name, low, high in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text(name)
-                        Spacer()
-                        Text(shown(kind, camera.value(kind)))
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
+                // One line: name, the slider between its two ends, the value.
+                HStack(spacing: 8) {
+                    Text(name)
+                        .frame(width: 104, alignment: .leading)
                     Slider(value: Binding(get: { Double(camera.value(kind)) },
                                           set: { camera.set(kind, Int($0.rounded())) }),
                            in: Double(CameraRules.settingMin(kind))...Double(CameraRules.settingMax(kind)),
                            step: 1) {
                         Text(name)
                     } minimumValueLabel: {
-                        Text(low).font(.caption2).foregroundStyle(.secondary)
+                        Text(low).font(.caption2).foregroundStyle(.secondary).frame(width: 58, alignment: .trailing)
                     } maximumValueLabel: {
-                        Text(high).font(.caption2).foregroundStyle(.secondary)
+                        Text(high).font(.caption2).foregroundStyle(.secondary).frame(width: 52, alignment: .leading)
                     }
                     .labelsHidden()
                     .accessibilityLabel(name)
+                    Text(shown(kind, camera.value(kind)))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34, alignment: .trailing)
                 }
             }
         }
@@ -129,8 +142,6 @@ private struct InstallSteps: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Как установить (один раз)")
-                .font(.subheadline.weight(.semibold))
             Text("1. Нажмите «Папка расширения»: откроется папка PonteCamera.")
             Text("2. В BrowserOS откройте адрес chrome://extensions.")
             Text("3. Включите «Режим разработчика» справа вверху.")

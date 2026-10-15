@@ -218,6 +218,7 @@ final class TranslationLane {
 
     private var preparedTranscriber: Transcriber?
     private var translatorPrepared = false
+    private var preparingTranslator = false
     private var lastPrepareAttempt: Date?
     private var segment: Segment?
     private var gateChange: Task<Void, Never>?
@@ -300,6 +301,19 @@ final class TranslationLane {
             try player.prepare()
         } catch {
             log.error("output not ready \(self.direction.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// A translator that could not be prepared is tried again from the app's poll too (AppRules.retryTranslatorPrepare,
+    /// every LN_PREPARE_RETRY_MS), not only before the next phrase: macOS can report a pack missing for a moment at
+    /// launch, and the banner about it should go without the owner saying anything first.
+    func retryTranslatorIfNeeded() {
+        let since = lastPrepareAttempt.map { millis(clock().timeIntervalSince($0)) } ?? -1
+        guard !preparingTranslator, AppRules.retryTranslatorPrepare(prepared: translatorPrepared, msSinceAttempt: since) else { return }
+        preparingTranslator = true
+        Task { [weak self] in
+            await self?.prepareTranslator()
+            self?.preparingTranslator = false
         }
     }
 
