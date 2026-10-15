@@ -270,6 +270,82 @@ public enum PeerRules {
         var ts = PeerText(said)
         return Int(pe_containment_milli(&tp.bytes, tp.length, &ts.bytes, ts.length))
     }
+    // MARK: - The wire and the link's housekeeping
+
+    /// Seconds to whole milliseconds, rounded half away from zero: the lane's own rule (lane_rules.t27 ln_millis), so
+    /// every module converts times the same way.
+    public static func millis(_ seconds: Double) -> Int64 { ln_millis(seconds) }
+
+    /// Frame header and VOICE payload offsets; samples per frame; limits.
+    public static let hdrKind = Int(PE_HDR_KIND)
+    public static let hdrSender = Int(PE_HDR_SENDER)
+    public static let hdrSeq = Int(PE_HDR_SEQ)
+    public static let hdrSent = Int(PE_HDR_SENT)
+    public static let hdrBytes = Int(PE_HDR_BYTES)
+    public static let vpKind = Int(PE_VP_KIND)
+    public static let vpState = Int(PE_VP_STATE)
+    public static let vpAt = Int(PE_VP_AT)
+    public static let vpText = Int(PE_VP_TEXT)
+    public static let frameSamples = Int(PE_FRAME_SAMPLES)
+    public static let voiceTextMax = Int(PE_VOICE_TEXT_MAX)
+    public static let keyBytes = Int(PE_KEY_BYTES)
+    public static let byeGraceMs = Int(PE_BYE_GRACE_MS)
+    public static let quitWaitMs = Int(PE_QUIT_WAIT_MS)
+
+    public static func frameComplete(_ len: Int) -> Bool { pe_frame_complete(Int64(len)) }
+    public static func voiceComplete(_ payloadLen: Int) -> Bool { pe_voice_complete(Int64(payloadLen)) }
+    public static func audioSamples(_ payloadLen: Int) -> Int { Int(pe_audio_samples(Int64(payloadLen))) }
+    /// A sample to the wire: held to -1...1, times 32767, rounded.
+    public static func sampleToInt16(_ x: Float) -> Int16 { Int16(truncatingIfNeeded: pe_sample_to_int16(x)) }
+
+    /// How many bytes of a voice text go out: at most voiceTextMax, never splitting a UTF-8 character.
+    public static func voiceTextBytes(_ utf8: [UInt8]) -> Int {
+        var text = [UInt8](repeating: 0, count: 4096)
+        let n = min(utf8.count, text.count)
+        text.replaceSubrange(0..<n, with: utf8.prefix(n))
+        return text.withUnsafeMutableBufferPointer { Int(pe_voice_text_bytes($0.baseAddress!, Int64(utf8.count))) }
+    }
+
+    /// The PBKDF2 salts of the room id and of the link key.
+    public static let roomSalt = row(Int(PE_ROW_ROOM_SALT))
+    public static let keySalt = row(Int(PE_ROW_KEY_SALT))
+    private static func row(_ index: Int) -> String {
+        var out = [UInt8](repeating: 0, count: 64)
+        let n = out.withUnsafeMutableBufferPointer { pe_row(Int64(index), $0.baseAddress!) }
+        return String(decoding: out.prefix(Int(n)), as: UTF8.self)
+    }
+
+    public static func noteFits(_ len: Int) -> Bool { pe_note_fits(Int64(len)) }
+    public static func membersValid(_ n: Int) -> Bool { pe_members_valid(Int64(n)) }
+    public static func failuresAfterClose(_ failures: Int, roomFull: Bool) -> Int {
+        Int(pe_failures_after_close(Int64(failures), roomFull))
+    }
+    public static func frameAdmitted(known: Bool, kind: UInt8, knownPeers: Int) -> Bool {
+        pe_frame_admitted(known, Int64(kind), Int64(knownPeers))
+    }
+    public static func answersHello(newPeer: Bool, kind: UInt8) -> Bool { pe_answers_hello(newPeer, Int64(kind)) }
+    public static let tickMs = Int(pe_tick_ms())
+    public static func linkUp(status: Int) -> Bool { pe_link_up(Int64(status)) }
+    public static func peerSpeaking(msSinceFrame: Int64) -> Bool { pe_peer_speaking(msSinceFrame) }
+    public static func membersMismatch(members: Int, peers: Int) -> Bool { pe_members_mismatch(Int64(members), Int64(peers)) }
+
+    /// PeerWindows.record: what a START or END does to the sender's window of that kind (REC_*).
+    public static let recNone = Int(PE_REC_NONE)
+    public static let recRefresh = Int(PE_REC_REFRESH)
+    public static let recReplace = Int(PE_REC_REPLACE)
+    public static let recOpen = Int(PE_REC_OPEN)
+    public static let recEnd = Int(PE_REC_END)
+    public static func windowRecord(state: Int, hasOpen: Bool, sameText: Bool) -> Int {
+        Int(pe_window_record(Int64(state), hasOpen, sameText))
+    }
+    public static func windowForgotten(windowEndMs: Int64, nowMs: Int64) -> Bool { pe_window_forgotten(windowEndMs, nowMs) }
+    public static func windowComparesText(kind: Int) -> Bool { pe_window_compares_text(Int64(kind)) }
+
+    /// PeerMicGate: send, flush the half frame waiting, or nothing (GATE_*).
+    public static let gateNone = Int(PE_GATE_NONE)
+    public static let gateSend = Int(PE_GATE_SEND)
+    public static let gateFlush = Int(PE_GATE_FLUSH)
+    public static func micGateStep(sends: Bool, wasSending: Bool) -> Int { Int(pe_mic_gate_step(sends, wasSending)) }
 }
 
 /// A text in the fixed buffer the C takes: the first PE_TEXT_MAX bytes, with the whole text's length.
@@ -282,4 +358,5 @@ private struct PeerText {
         bytes.replaceSubrange(0..<readable, with: utf8[0..<readable])
         length = Int64(utf8.count)
     }
+
 }

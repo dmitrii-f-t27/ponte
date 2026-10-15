@@ -617,6 +617,63 @@ private typealias L = PeerRulesLegacy
         log.finish(minimumCases: 40)
     }
 
+    /// The wire and the link's housekeeping (moved out of PeerLink, PeerSession and AppModel).
+    @Test func wireAndHousekeeping() {
+        let log = DiffLog("wire, voiceTextBytes, failures, admission, windows, gate")
+        log.check([F.hdrBytes, F.vpText, F.frameSamples, F.voiceTextMax, F.tickMs], [L.hdrBytes, L.vpText, L.frameSamples, L.voiceTextMax, L.tickMs], "constants")
+        log.check([F.roomSalt, F.keySalt], [L.roomSalt, L.keySalt], "salts")
+        for n in Array(-5...70) + [Int.min, Int.max] {
+            log.check(F.frameComplete(n), L.frameComplete(n), "\(n)")
+            log.check(F.voiceComplete(n), L.voiceComplete(n), "\(n)")
+            log.check(F.audioSamples(n), L.audioSamples(n), "\(n)")
+            log.check(F.noteFits(n), L.noteFits(n), "\(n)")
+            log.check(F.membersValid(n), L.membersValid(n), "\(n)")
+            log.check(F.linkUp(status: n), L.linkUp(status: n), "\(n)")
+            log.check(F.windowComparesText(kind: n), L.windowComparesText(kind: n), "\(n)")
+            for roomFull in [false, true] {
+                log.check(F.failuresAfterClose(n, roomFull: roomFull), L.failuresAfterClose(n, roomFull: roomFull), "\(n) \(roomFull)")
+            }
+            for members in -2...10 { log.check(F.membersMismatch(members: members, peers: n), L.membersMismatch(members: members, peers: n), "\(members) \(n)") }
+        }
+        for kind in UInt8.min...UInt8.max {
+            for known in [false, true] { for peers in -1...7 {
+                log.check(F.frameAdmitted(known: known, kind: kind, knownPeers: peers), L.frameAdmitted(known: known, kind: kind, knownPeers: peers), "\(known) \(kind) \(peers)")
+            } }
+            for new in [false, true] { log.check(F.answersHello(newPeer: new, kind: kind), L.answersHello(newPeer: new, kind: kind), "\(new) \(kind)") }
+        }
+        for state in -1...4 { for open in [false, true] { for same in [false, true] {
+            log.check(F.windowRecord(state: state, hasOpen: open, sameText: same), L.windowRecord(state: state, hasOpen: open, sameText: same), "\(state) \(open) \(same)")
+        } } }
+        for sends in [false, true] { for was in [false, true] { log.check(F.micGateStep(sends: sends, wasSending: was), L.micGateStep(sends: sends, wasSending: was), "\(sends) \(was)") } }
+        var r = DiffRandom(seed: 0xB1E)
+        for _ in 0..<40_000 {
+            let ms = r.bool() ? Int64(r.int(-1000...2000)) : Int64(bitPattern: r.next())
+            log.check(F.peerSpeaking(msSinceFrame: ms), L.peerSpeaking(msSinceFrame: ms), "\(ms)")
+            let end = r.bool() ? Int64(r.int(-10...100_000)) : Int64(bitPattern: r.next())
+            let now = r.bool() ? end &+ Int64(r.int(-100...40_000)) : Int64(bitPattern: r.next())
+            log.check(F.windowForgotten(windowEndMs: end, nowMs: now), L.windowForgotten(windowEndMs: end, nowMs: now), "\(end) \(now)")
+            let x = r.float()
+            log.check(F.sampleToInt16(x), L.sampleToInt16(x), "\(x)")
+        }
+        for x: Float in [0, -0.0, 1, -1, 0.5, -0.5, 1 / 32767, .nan, .infinity, -.infinity, 0.99999] {
+            log.check(F.sampleToInt16(x), L.sampleToInt16(x), "\(x)")
+        }
+        // Texts at the limit with characters of 1 to 4 bytes falling across it.
+        let pieces = ["a", "é", "ж", "€", "😀", " "]
+        for _ in 0..<4_000 {
+            var text = ""
+            let target = r.int(3_990...4_010)
+            while text.utf8.count < target { text += r.pick(pieces) }
+            let bytes = Array(text.utf8)
+            log.check(F.voiceTextBytes(bytes), L.voiceTextBytes(bytes), "\(bytes.count)")
+        }
+        for n in [0, 1, 3999, 4000, 4001, 4096, 5000] {
+            let bytes = Array(repeating: UInt8(0x80), count: n)
+            log.check(F.voiceTextBytes(bytes), L.voiceTextBytes(bytes), "continuations \(n)")
+        }
+        log.finish(minimumCases: 130_000)
+    }
+
     // MARK: - Inputs
 
     /// The spec's own test texts (pe_fixture).

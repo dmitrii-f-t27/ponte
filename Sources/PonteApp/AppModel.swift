@@ -1134,7 +1134,7 @@ final class AppModel {
         await stop()
         if peerOn {
             setPeer(on: false)   // the goodbye goes out on the link queue; give it a moment before the app exits
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: .milliseconds(PeerRules.quitWaitMs))
         }
         await analysis.finishForQuit()   // an unsaved report to a file; one being written gets a short wait
     }
@@ -1368,7 +1368,7 @@ final class AppModel {
     }
 
     private func updatePeerMic() {
-        peerMic.update(link: peerLink, linkUp: peerStatus == PeerRules.statusLinked, muted: peerMuted,
+        peerMic.update(link: peerLink, linkUp: PeerRules.linkUp(status: peerStatus), muted: peerMuted,
                        headphonesLike: headphonesLike, keyHeld: talkKeyHeld)
     }
 

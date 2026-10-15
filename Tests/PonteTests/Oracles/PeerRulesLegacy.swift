@@ -277,4 +277,62 @@ enum PeerRulesLegacy {
             return false
         }
     }
+
+    // MARK: - The wire and the link's housekeeping (PeerLink, PeerSession and AppModel before 2026-10-15)
+
+    static let hdrBytes = 21
+    static let vpText = 10
+    static let frameSamples = 640
+    static let voiceTextMax = 4000
+    static let roomSalt = "ponte-room-v2"
+    static let keySalt = "ponte-key-v2"
+    static func frameComplete(_ len: Int) -> Bool { len >= 21 }
+    static func voiceComplete(_ payloadLen: Int) -> Bool { payloadLen >= 10 }
+    static func audioSamples(_ payloadLen: Int) -> Int { max(0, payloadLen) / 2 }
+    /// The old encoder truncated `max(-1, min(1, x)) * 32767`; the rule now rounds half away from zero.
+    static func sampleToInt16(_ x: Float) -> Int16 {
+        let v: Float = x > 0 ? min(x, 1) : (x < 0 ? max(x, -1) : 0)
+        return Int16((v * 32767).rounded(.toNearestOrAwayFromZero))
+    }
+    /// `text.utf8.prefix(4000)`, moved back to the start of a character the limit falls in.
+    static func voiceTextBytes(_ utf8: [UInt8]) -> Int {
+        guard utf8.count > voiceTextMax else { return utf8.count }
+        var n = voiceTextMax
+        while n > 0, utf8[n] & 0xC0 == 0x80 { n -= 1 }
+        return n
+    }
+    static func noteFits(_ len: Int) -> Bool { (0...64).contains(len) }
+    static func membersValid(_ n: Int) -> Bool { (0...64).contains(n) }
+    /// `failures = max(failures + 1, failedAfter)` on a full room, else `failures += 1`.
+    static func failuresAfterClose(_ failures: Int, roomFull: Bool) -> Int {
+        let next = failures < 0 ? 1 : (failures >= 1 << 62 ? failures : failures + 1)
+        return roomFull ? max(next, 3) : next
+    }
+    /// `if peers[peer] == nil, kind != msgBye, !acceptsNewPeer(..) { return }`.
+    static func frameAdmitted(known: Bool, kind: UInt8, knownPeers: Int) -> Bool {
+        known || kind == 4 || acceptsNewPeer(knownPeers: knownPeers)
+    }
+    static func answersHello(newPeer: Bool, kind: UInt8) -> Bool { newPeer && kind != 4 }
+    static let tickMs = min(helloEveryMs, 5000)
+    static func linkUp(status: Int) -> Bool { status == 3 }
+    /// PeerVoices.speaking: `Date().timeIntervalSince(lastAt) < 0.5`.
+    static func peerSpeaking(msSinceFrame: Int64) -> Bool { (0..<500).contains(msSinceFrame) }
+    static func membersMismatch(members: Int, peers: Int) -> Bool {
+        members >= 0 && peers >= 0 && Int128(members) - Int128(peers) > 1
+    }
+    /// PeerWindows.record: same text → refresh; new text → end and append; END → end.
+    static func windowRecord(state: Int, hasOpen: Bool, sameText: Bool) -> Int {
+        switch state {
+        case 1: return hasOpen ? (sameText ? 1 : 2) : 3
+        case 2: return hasOpen ? 4 : 0
+        default: return 0
+        }
+    }
+    /// `end >= 0 && ms - end > windowKeepMs`, without overflow.
+    static func windowForgotten(windowEndMs: Int64, nowMs: Int64) -> Bool {
+        windowEndMs >= 0 && Int128(nowMs) - Int128(windowEndMs) > 20_000
+    }
+    static func windowComparesText(kind: Int) -> Bool { kind == 1 }
+    /// PeerMicGate.push: `if sends { send } else if wasSending { flush }`.
+    static func micGateStep(sends: Bool, wasSending: Bool) -> Int { sends ? 1 : (wasSending ? 2 : 0) }
 }

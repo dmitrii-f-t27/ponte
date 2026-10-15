@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <math.h>
 #include <assert.h>
 #define t27_assert(c, m) do { if (!(c)) { __builtin_trap(); } } while (0)
 #define assert_eq(a, b) do { if ((a) != (b)) { __builtin_trap(); } } while (0)
@@ -86,6 +87,12 @@
 #define PE_UNDERSCORE 95
 #define PE_SECRET_ALPHABET_LEN 31
 static const uint8_t PE_SECRET_ALPHABET[31] = { 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102, 103, 104, 106, 107, 109, 110, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122 };
+#define PE_ROW_ROOM_SALT 0
+#define PE_ROW_KEY_SALT 1
+#define PE_ROW_COUNT 2
+static const uint8_t PE_ROW_TEXT[25] = { 112, 111, 110, 116, 101, 45, 114, 111, 111, 109, 45, 118, 50, 112, 111, 110, 116, 101, 45, 107, 101, 121, 45, 118, 50 };
+static const uint32_t PE_ROW_OFFSETS[2] = { 0, 13 };
+static const uint32_t PE_ROW_LENGTHS[2] = { 13, 12 };
 #define PE_FX_TTS_CONTRACT 0
 #define PE_FX_HEARD_TAIL 1
 #define PE_FX_TTS_CONTRACT_PT 2
@@ -126,6 +133,31 @@ static const uint8_t PE_FX_TEXT[828] = { 69, 110, 116, 97, 111, 32, 102, 105, 99
 static const uint32_t PE_FX_OFFSETS[35] = { 0, 140, 166, 311, 339, 365, 387, 419, 454, 464, 474, 485, 489, 498, 498, 521, 529, 539, 569, 597, 616, 636, 647, 661, 673, 687, 701, 719, 731, 745, 758, 773, 787, 801, 816 };
 static const uint32_t PE_FX_LENGTHS[35] = { 140, 26, 145, 28, 26, 22, 32, 35, 10, 10, 11, 4, 9, 0, 23, 8, 10, 30, 28, 19, 20, 11, 14, 12, 14, 14, 18, 12, 14, 13, 15, 14, 14, 15, 12 };
 #define PE_UNKNOWN_LISTENER_MS 6000
+#define PE_HDR_KIND 0
+#define PE_HDR_SENDER 1
+#define PE_HDR_SEQ 9
+#define PE_HDR_SENT 13
+#define PE_HDR_BYTES 21
+#define PE_VP_KIND 0
+#define PE_VP_STATE 1
+#define PE_VP_AT 2
+#define PE_VP_TEXT 10
+#define PE_FRAME_SAMPLES 640
+#define PE_VOICE_TEXT_MAX 4000
+#define PE_KEY_BYTES 32
+#define PE_NOTE_MAX 64
+#define PE_MEMBERS_MAX 64
+#define PE_BYE_GRACE_MS 200
+#define PE_QUIT_WAIT_MS 300
+#define PE_SPEAKING_MS 500
+#define PE_REC_NONE 0
+#define PE_REC_REFRESH 1
+#define PE_REC_REPLACE 2
+#define PE_REC_OPEN 3
+#define PE_REC_END 4
+#define PE_GATE_NONE 0
+#define PE_GATE_SEND 1
+#define PE_GATE_FLUSH 2
 
 /* -------------------------------------------------------
    Function prototypes
@@ -135,6 +167,7 @@ int64_t pe_status(bool link_on, bool connected, int64_t peers, int64_t failures)
 int64_t pe_reconnect_delay_ms(int64_t attempt);
 bool pe_peer_alive(int64_t ms_since_hello);
 bool pe_unknown_listener(int64_t members, int64_t peers, int64_t ms_since_mismatch);
+bool pe_members_mismatch(int64_t members, int64_t peers);
 bool pe_accepts_new_peer(int64_t known_peers);
 bool pe_room_full(int64_t close_code);
 int64_t pe_retry_delay_ms(int64_t close_code, int64_t attempt);
@@ -164,6 +197,24 @@ bool pe_permille_at_least(int64_t part, int64_t whole, int64_t permille);
 bool pe_mostly_in(int64_t p_start, int64_t duration, int64_t w_from, bool open, int64_t w_until);
 bool pe_meets(int64_t p_start, int64_t p_end, int64_t w_from, bool open, int64_t w_until);
 bool pe_is_peer_voice(int64_t kind, bool is_self, int64_t phrase_words, int64_t containment_milli, int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t window_start_ms, int64_t window_end_ms);
+bool pe_frame_complete(int64_t len);
+bool pe_voice_complete(int64_t payload_len);
+int64_t pe_audio_samples(int64_t payload_len);
+int64_t pe_sample_to_int16(float x);
+int64_t pe_voice_text_bytes(uint8_t text[static 4096], int64_t len);
+int64_t pe_row(int64_t row, uint8_t out[static 64]);
+bool pe_note_fits(int64_t len);
+bool pe_members_valid(int64_t n);
+int64_t pe_failures_after_close(int64_t failures, bool room_full);
+bool pe_frame_admitted(bool known, int64_t kind, int64_t known_peers);
+bool pe_answers_hello(bool new_peer, int64_t kind);
+int64_t pe_tick_ms(void);
+bool pe_link_up(int64_t status);
+bool pe_peer_speaking(int64_t ms_since_frame);
+int64_t pe_window_record(int64_t state, bool has_open, bool same_text);
+bool pe_window_forgotten(int64_t window_end_ms, int64_t now_ms);
+bool pe_window_compares_text(int64_t kind);
+int64_t pe_mic_gate_step(bool sends, bool was_sending);
 int64_t pe_fixture(int64_t index, uint8_t out[static 4096]);
 int64_t pe_fixture_words(int64_t index);
 int64_t pe_fixture_containment(int64_t phrase, int64_t said);
@@ -208,10 +259,14 @@ bool pe_peer_alive(int64_t ms_since_hello) {
 }
 
 bool pe_unknown_listener(int64_t members, int64_t peers, int64_t ms_since_mismatch) {
+    return (pe_members_mismatch(members, peers) && (ms_since_mismatch >= PE_UNKNOWN_LISTENER_MS));
+}
+
+bool pe_members_mismatch(int64_t members, int64_t peers) {
     if (((members < 0) || (peers < 0))) {
         return false;
     }
-    return (((members - peers) > 1) && (ms_since_mismatch >= PE_UNKNOWN_LISTENER_MS));
+    return ((members - peers) > 1);
 }
 
 bool pe_accepts_new_peer(int64_t known_peers) {
@@ -551,6 +606,148 @@ bool pe_is_peer_voice(int64_t kind, bool is_self, int64_t phrase_words, int64_t 
         return ((containment_milli >= PE_CONTAIN_SURE_MILLI) && pe_meets(p_start, p_end, w_from, open, (window_end_ms + PE_TEXT_WINDOW_MS)));
     }
     return false;
+}
+
+bool pe_frame_complete(int64_t len) {
+    return (len >= PE_HDR_BYTES);
+}
+
+bool pe_voice_complete(int64_t payload_len) {
+    return (payload_len >= PE_VP_TEXT);
+}
+
+int64_t pe_audio_samples(int64_t payload_len) {
+    if ((payload_len < 0)) {
+        return 0;
+    }
+    return (payload_len / 2);
+}
+
+int64_t pe_sample_to_int16(float x) {
+    float one = 1.0;
+    float zero = 0.0;
+    float scale = 32767.0;
+    float v = zero;
+    if ((x > zero)) {
+        v = x;
+        if ((v > one)) {
+            v = one;
+        }
+    }
+    if ((x < zero)) {
+        v = x;
+        if ((v < (zero - one))) {
+            v = (zero - one);
+        }
+    }
+    return ((int64_t)(round((v * scale))));
+}
+
+int64_t pe_voice_text_bytes(uint8_t text[static 4096], int64_t len) {
+    if ((len <= 0)) {
+        return 0;
+    }
+    if ((len <= PE_VOICE_TEXT_MAX)) {
+        return len;
+    }
+    int64_t n = PE_VOICE_TEXT_MAX;
+    while (((n > 0) && ((text[n] & 192) == 128))) {
+        n = (n - 1);
+    }
+    return n;
+}
+
+int64_t pe_row(int64_t row, uint8_t out[static 64]) {
+    if (((row < 0) || (row >= PE_ROW_COUNT))) {
+        return 0;
+    }
+    int64_t off = PE_ROW_OFFSETS[row];
+    int64_t len = PE_ROW_LENGTHS[row];
+    int64_t k = 0;
+    while ((k < len)) {
+        out[k] = PE_ROW_TEXT[(off + k)];
+        k = (k + 1);
+    }
+    return len;
+}
+
+bool pe_note_fits(int64_t len) {
+    return ((len >= 0) && (len <= PE_NOTE_MAX));
+}
+
+bool pe_members_valid(int64_t n) {
+    return ((n >= 0) && (n <= PE_MEMBERS_MAX));
+}
+
+int64_t pe_failures_after_close(int64_t failures, bool room_full) {
+    int64_t next = failures;
+    if ((next < 0)) {
+        next = 0;
+    }
+    if ((next < 4611686018427387904)) {
+        next = (next + 1);
+    }
+    if ((room_full && (next < PE_FAILED_AFTER))) {
+        next = PE_FAILED_AFTER;
+    }
+    return next;
+}
+
+bool pe_frame_admitted(bool known, int64_t kind, int64_t known_peers) {
+    return ((known || (kind == PE_MSG_BYE)) || pe_accepts_new_peer(known_peers));
+}
+
+bool pe_answers_hello(bool new_peer, int64_t kind) {
+    return (new_peer && (kind != PE_MSG_BYE));
+}
+
+int64_t pe_tick_ms(void) {
+    if ((PE_HELLO_EVERY_MS < PE_VOICE_REFRESH_MS)) {
+        return PE_HELLO_EVERY_MS;
+    }
+    return PE_VOICE_REFRESH_MS;
+}
+
+bool pe_link_up(int64_t status) {
+    return (status == PE_STATUS_LINKED);
+}
+
+bool pe_peer_speaking(int64_t ms_since_frame) {
+    return ((ms_since_frame >= 0) && (ms_since_frame < PE_SPEAKING_MS));
+}
+
+int64_t pe_window_record(int64_t state, bool has_open, bool same_text) {
+    if ((state == PE_VOICE_START)) {
+        if ((has_open == false)) {
+            return PE_REC_OPEN;
+        }
+        if (same_text) {
+            return PE_REC_REFRESH;
+        }
+        return PE_REC_REPLACE;
+    }
+    if (((state == PE_VOICE_END) && has_open)) {
+        return PE_REC_END;
+    }
+    return PE_REC_NONE;
+}
+
+bool pe_window_forgotten(int64_t window_end_ms, int64_t now_ms) {
+    return ((window_end_ms >= 0) && pe_gap_over(now_ms, window_end_ms, PE_WINDOW_KEEP_MS));
+}
+
+bool pe_window_compares_text(int64_t kind) {
+    return (kind == PE_VOICE_TTS);
+}
+
+int64_t pe_mic_gate_step(bool sends, bool was_sending) {
+    if (sends) {
+        return PE_GATE_SEND;
+    }
+    if (was_sending) {
+        return PE_GATE_FLUSH;
+    }
+    return PE_GATE_NONE;
 }
 
 int64_t pe_fixture(int64_t index, uint8_t out[static 4096]) {
@@ -1285,6 +1482,89 @@ void test_pe_phrase_drop_rules(void) {
     assert((pe_window_end_ms(-1, 10000, 70000, true) == 10000));
 }
 
+void test_pe_wire_rules(void) {
+    assert(((PE_FRAME_SAMPLES * 1000) == (16000 * PE_FRAME_MS)));
+    assert((pe_frame_complete(21) == true));
+    assert((pe_frame_complete(20) == false));
+    assert((pe_voice_complete(10) == true));
+    assert((pe_voice_complete(9) == false));
+    assert((pe_audio_samples(1280) == 640));
+    assert((pe_audio_samples(1281) == 640));
+    assert((pe_audio_samples((0 - 2)) == 0));
+    assert((pe_sample_to_int16(1.0) == 32767));
+    assert((pe_sample_to_int16(2.0) == 32767));
+    assert((pe_sample_to_int16((0.0 - 1.0)) == (0 - 32767)));
+    assert((pe_sample_to_int16((0.0 - 5.0)) == (0 - 32767)));
+    assert((pe_sample_to_int16(0.0) == 0));
+    assert((pe_sample_to_int16(0.5) == 16384));
+    uint8_t t[4096] = { [0 ... (4096) - 1] = 0 };
+    int64_t k = 0;
+    while ((k < 4096)) {
+        t[k] = 97;
+        k = (k + 1);
+    }
+    assert((pe_voice_text_bytes(t, (0 - 1)) == 0));
+    assert((pe_voice_text_bytes(t, 12) == 12));
+    assert((pe_voice_text_bytes(t, 4000) == 4000));
+    assert((pe_voice_text_bytes(t, 4096) == 4000));
+    t[3999] = 208;
+    t[4000] = 159;
+    assert((pe_voice_text_bytes(t, 4096) == 3999));
+    t[3998] = 226;
+    t[3999] = 128;
+    t[4000] = 148;
+    assert((pe_voice_text_bytes(t, 4096) == 3998));
+    uint8_t row[64] = { [0 ... (64) - 1] = 0 };
+    assert((pe_row(PE_ROW_ROOM_SALT, row) == 13));
+    assert((pe_row(PE_ROW_KEY_SALT, row) == 12));
+    assert((pe_row(PE_ROW_COUNT, row) == 0));
+    assert((pe_note_fits(64) == true));
+    assert((pe_note_fits(65) == false));
+    assert((pe_members_valid(64) == true));
+    assert((pe_members_valid((0 - 1)) == false));
+    assert((pe_failures_after_close(0, false) == 1));
+    assert((pe_failures_after_close(0, true) == PE_FAILED_AFTER));
+    assert((pe_failures_after_close(5, true) == 6));
+    assert((pe_failures_after_close((0 - 9), false) == 1));
+    assert((pe_failures_after_close(9223372036854775807, false) == 9223372036854775807));
+    assert((pe_frame_admitted(true, PE_MSG_AUDIO, 99) == true));
+    assert((pe_frame_admitted(false, PE_MSG_BYE, 99) == true));
+    assert((pe_frame_admitted(false, PE_MSG_HELLO, 0) == true));
+    assert((pe_frame_admitted(false, PE_MSG_HELLO, (PE_MAX_PEERS - 1)) == false));
+    assert((pe_answers_hello(true, PE_MSG_HELLO) == true));
+    assert((pe_answers_hello(true, PE_MSG_BYE) == false));
+    assert((pe_answers_hello(false, PE_MSG_AUDIO) == false));
+    assert((pe_tick_ms() == 5000));
+    assert((pe_link_up(PE_STATUS_LINKED) == true));
+    assert((pe_link_up((PE_STATUS_LINKED - 1)) == false));
+    assert((pe_peer_speaking(0) == true));
+    assert((pe_peer_speaking(499) == true));
+    assert((pe_peer_speaking(500) == false));
+    assert((pe_peer_speaking((0 - 1)) == false));
+    assert((pe_members_mismatch(3, 1) == true));
+    assert((pe_members_mismatch(2, 1) == false));
+    assert((pe_members_mismatch((0 - 1), 0) == false));
+}
+
+void test_pe_window_book_rules(void) {
+    assert((pe_window_record(PE_VOICE_START, false, false) == PE_REC_OPEN));
+    assert((pe_window_record(PE_VOICE_START, true, true) == PE_REC_REFRESH));
+    assert((pe_window_record(PE_VOICE_START, true, false) == PE_REC_REPLACE));
+    assert((pe_window_record(PE_VOICE_END, true, false) == PE_REC_END));
+    assert((pe_window_record(PE_VOICE_END, false, true) == PE_REC_NONE));
+    assert((pe_window_record(7, true, true) == PE_REC_NONE));
+    assert((pe_window_forgotten((0 - 1), 999999) == false));
+    assert((pe_window_forgotten(1000, 21000) == false));
+    assert((pe_window_forgotten(1000, 21001) == true));
+    assert((pe_window_forgotten(0, 9223372036854775807) == true));
+    assert((pe_window_compares_text(PE_VOICE_TTS) == true));
+    assert((pe_window_compares_text(PE_VOICE_OWN) == false));
+    assert((pe_mic_gate_step(true, false) == PE_GATE_SEND));
+    assert((pe_mic_gate_step(true, true) == PE_GATE_SEND));
+    assert((pe_mic_gate_step(false, true) == PE_GATE_FLUSH));
+    assert((pe_mic_gate_step(false, false) == PE_GATE_NONE));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1303,7 +1583,9 @@ int main(void) {
     test_pe_containment_rules();
     test_pe_peer_voice_rules();
     test_pe_phrase_drop_rules();
-    printf("All %d tests passed.\n", 10);
+    test_pe_wire_rules();
+    test_pe_window_book_rules();
+    printf("All %d tests passed.\n", 12);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

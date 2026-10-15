@@ -165,6 +165,15 @@ pub const PE_UNDERSCORE : u8 = 95;
 ; The secret code's alphabet: 23456789abcdefghjkmnpqrstuvwxyz
 pub const PE_SECRET_ALPHABET_LEN : i64 = 31;
 pub const PE_SECRET_ALPHABET : [31]u8 = [50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102, 103, 104, 106, 107, 109, 110, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122];
+; Texts the link uses
+; ponte-room-v2
+pub const PE_ROW_ROOM_SALT : i64 = 0;
+; ponte-key-v2
+pub const PE_ROW_KEY_SALT : i64 = 1;
+pub const PE_ROW_COUNT : i64 = 2;
+pub const PE_ROW_TEXT : [25]u8 = [112, 111, 110, 116, 101, 45, 114, 111, 111, 109, 45, 118, 50, 112, 111, 110, 116, 101, 45, 107, 101, 121, 45, 118, 50];
+pub const PE_ROW_OFFSETS : [2]u32 = [0, 13];
+pub const PE_ROW_LENGTHS : [2]u32 = [13, 12];
 ; Texts for the tests
 ; Entao fica combinado assim: eu preparo tudo hoje a noite e voces podem revisar com calma e, se quiserem, assinar o contrato amanha de manha.
 pub const PE_FX_TTS_CONTRACT : i64 = 0;
@@ -277,8 +286,13 @@ pub fn pe_peer_alive(ms_since_hello: i64) -> bool {
 ; not one. Negative counts are never one.
 pub const PE_UNKNOWN_LISTENER_MS : i64 = 6000;
 pub fn pe_unknown_listener(members: i64, peers: i64, ms_since_mismatch: i64) -> bool {
+    return pe_members_mismatch(members, peers) and ms_since_mismatch >= PE_UNKNOWN_LISTENER_MS;
+}
+
+; The relay counts more connections than the peers this Ponte knows plus itself (negative counts never).
+pub fn pe_members_mismatch(members: i64, peers: i64) -> bool {
     if (members < 0 or peers < 0) { return false; }
-    return members - peers > 1 and ms_since_mismatch >= PE_UNKNOWN_LISTENER_MS;
+    return members - peers > 1;
 }
 
 ; A new peer is accepted while this Ponte knows 0 to PE_MAX_PEERS - 2 peers (fewer than PE_MAX_PEERS - 1).
@@ -631,6 +645,172 @@ pub fn pe_is_peer_voice(kind: i64, is_self: bool, phrase_words: i64, containment
         return containment_milli >= PE_CONTAIN_SURE_MILLI and pe_meets(p_start, p_end, w_from, open, window_end_ms + PE_TEXT_WINDOW_MS);
     }
     return false;
+}
+
+; --- The wire and the link's housekeeping (moved out of Swift 2026-10-15) --------------------------------------
+; A frame after decryption: kind (1 byte), sender (8, little-endian), sequence number (4), the sender's clock in ms
+; (8, signed), then the payload. A VOICE payload: kind (1), state (1), when it started or ended in ms (8, signed),
+; then the text. An AUDIO payload: 16-bit little-endian samples (an odd last byte is ignored).
+pub const PE_HDR_KIND : i64 = 0;
+pub const PE_HDR_SENDER : i64 = 1;
+pub const PE_HDR_SEQ : i64 = 9;
+pub const PE_HDR_SENT : i64 = 13;
+pub const PE_HDR_BYTES : i64 = 21;
+pub const PE_VP_KIND : i64 = 0;
+pub const PE_VP_STATE : i64 = 1;
+pub const PE_VP_AT : i64 = 2;
+pub const PE_VP_TEXT : i64 = 10;
+; The samples of one PE_FRAME_MS frame at PE_SAMPLE_RATE.
+pub const PE_FRAME_SAMPLES : i64 = 640;
+; A voice text goes out with at most this many bytes.
+pub const PE_VOICE_TEXT_MAX : i64 = 4000;
+; PBKDF2 gives this many bytes for the room id and for the key.
+pub const PE_KEY_BYTES : i64 = 32;
+; The relay's own note {"members":n}: at most PE_NOTE_MAX bytes, n in 0...PE_MEMBERS_MAX.
+pub const PE_NOTE_MAX : i64 = 64;
+pub const PE_MEMBERS_MAX : i64 = 64;
+; The socket closes this long after the BYE is handed to it; quitting waits a little longer for that.
+pub const PE_BYE_GRACE_MS : i64 = 200;
+pub const PE_QUIT_WAIT_MS : i64 = 300;
+; "Another Russian is speaking" (the panel): a frame of his voice played within this long.
+pub const PE_SPEAKING_MS : i64 = 500;
+
+pub fn pe_frame_complete(len: i64) -> bool {
+    return len >= PE_HDR_BYTES;
+}
+
+pub fn pe_voice_complete(payload_len: i64) -> bool {
+    return payload_len >= PE_VP_TEXT;
+}
+
+pub fn pe_audio_samples(payload_len: i64) -> i64 {
+    if (payload_len < 0) { return 0; }
+    return payload_len / 2;
+}
+
+; A sample to the wire: held to -1...1 (NaN to 0), times 32767, rounded half away from zero (-32767...32767).
+pub fn pe_sample_to_int16(x: f32) -> i64 {
+    var one: f32 = 1.0;
+    var zero: f32 = 0.0;
+    var scale: f32 = 32767.0;
+    var v: f32 = zero;
+    if (x > zero) {
+        v = x;
+        if (v > one) { v = one; }
+    }
+    if (x < zero) {
+        v = x;
+        if (v < zero - one) { v = zero - one; }
+    }
+    return cast_i64(round(v * scale));
+}
+
+; How many bytes of a voice text go out (text holds len bytes; a negative length reads as 0): all of it up to
+; PE_VOICE_TEXT_MAX, else that many cut before the character the limit falls in, so no UTF-8 character is split.
+pub fn pe_voice_text_bytes(text: [4096]u8, len: i64) -> i64 {
+    if (len <= 0) { return 0; }
+    if (len <= PE_VOICE_TEXT_MAX) { return len; }
+    var n: i64 = PE_VOICE_TEXT_MAX;
+    while (n > 0 and (text[n] & 192) == 128) {
+        n = n - 1;
+    }
+    return n;
+}
+
+; A row of the link's texts, copied to out: its length (0 for an unknown row).
+pub fn pe_row(row: i64, out: [64]u8) -> i64 {
+    if (row < 0 or row >= PE_ROW_COUNT) { return 0; }
+    var off: i64 = PE_ROW_OFFSETS[row];
+    var len: i64 = PE_ROW_LENGTHS[row];
+    var k: i64 = 0;
+    while (k < len) {
+        out[k] = PE_ROW_TEXT[off + k];
+        k = k + 1;
+    }
+    return len;
+}
+
+pub fn pe_note_fits(len: i64) -> bool {
+    return len >= 0 and len <= PE_NOTE_MAX;
+}
+
+pub fn pe_members_valid(n: i64) -> bool {
+    return n >= 0 and n <= PE_MEMBERS_MAX;
+}
+
+; The failure count after the relay closed the socket: one more (it stops growing at 2^62); a full room counts as
+; failed at once (PE_FAILED_AFTER).
+pub fn pe_failures_after_close(failures: i64, room_full: bool) -> i64 {
+    var next: i64 = failures;
+    if (next < 0) { next = 0; }
+    if (next < 4611686018427387904) { next = next + 1; }
+    if (room_full and next < PE_FAILED_AFTER) { next = PE_FAILED_AFTER; }
+    return next;
+}
+
+; A frame from a sender this Ponte does not know is taken while it may accept a new peer; a BYE always (it only
+; removes); a known sender's always.
+pub fn pe_frame_admitted(known: bool, kind: i64, known_peers: i64) -> bool {
+    return known or kind == PE_MSG_BYE or pe_accepts_new_peer(known_peers);
+}
+
+; A Ponte answers a new peer's first frame with its own HELLO, so the newcomer knows it at once.
+pub fn pe_answers_hello(new_peer: bool, kind: i64) -> bool {
+    return new_peer and kind != PE_MSG_BYE;
+}
+
+; The link's timer: HELLO and the re-announcement of voices on one tick, at the shorter of the two periods.
+pub fn pe_tick_ms() -> i64 {
+    if (PE_HELLO_EVERY_MS < PE_VOICE_REFRESH_MS) { return PE_HELLO_EVERY_MS; }
+    return PE_VOICE_REFRESH_MS;
+}
+
+; The microphone goes to the peers only while the link is linked.
+pub fn pe_link_up(status: i64) -> bool {
+    return status == PE_STATUS_LINKED;
+}
+
+pub fn pe_peer_speaking(ms_since_frame: i64) -> bool {
+    return ms_since_frame >= 0 and ms_since_frame < PE_SPEAKING_MS;
+}
+
+; PeerWindows.record (REC_*): a START with the text of the open window of that sender and kind refreshes it; a START
+; with another text ends it and opens a new one; a START without one opens one; an END ends the open window; an END
+; without one, or another state, does nothing.
+pub const PE_REC_NONE : i64 = 0;
+pub const PE_REC_REFRESH : i64 = 1;
+pub const PE_REC_REPLACE : i64 = 2;
+pub const PE_REC_OPEN : i64 = 3;
+pub const PE_REC_END : i64 = 4;
+pub fn pe_window_record(state: i64, has_open: bool, same_text: bool) -> i64 {
+    if (state == PE_VOICE_START) {
+        if (has_open == false) { return PE_REC_OPEN; }
+        if (same_text) { return PE_REC_REFRESH; }
+        return PE_REC_REPLACE;
+    }
+    if (state == PE_VOICE_END and has_open) { return PE_REC_END; }
+    return PE_REC_NONE;
+}
+
+; A window is forgotten PE_WINDOW_KEEP_MS after it ended (window_end_ms from pe_window_end_ms; below 0: open).
+pub fn pe_window_forgotten(window_end_ms: i64, now_ms: i64) -> bool {
+    return window_end_ms >= 0 and pe_gap_over(now_ms, window_end_ms, PE_WINDOW_KEEP_MS);
+}
+
+; Only a TTS window has a text to compare a phrase with; an own-voice window is time only.
+pub fn pe_window_compares_text(kind: i64) -> bool {
+    return kind == PE_VOICE_TTS;
+}
+
+; PeerMicGate (GATE_*): a buffer the gate lets through is sent; the first one it holds back after sending flushes the
+; half frame waiting, so that is not sent later; otherwise nothing.
+pub const PE_GATE_NONE : i64 = 0;
+pub const PE_GATE_SEND : i64 = 1;
+pub const PE_GATE_FLUSH : i64 = 2;
+pub fn pe_mic_gate_step(sends: bool, was_sending: bool) -> i64 {
+    if (sends) { return PE_GATE_SEND; }
+    if (was_sending) { return PE_GATE_FLUSH; }
+    return PE_GATE_NONE;
 }
 
 ; --- Texts for the tests ------------------------------------------------------------------------------------------
@@ -1348,4 +1528,89 @@ test pe_phrase_drop_rules {
     // This Ponte's own window is never refreshed: a minute on it is still open, and its echo still dropped.
     assert pe_window_end_ms(-1, 10000, 70000, false) == -1;
     assert pe_window_end_ms(-1, 10000, 70000, true) == 10000;
+}
+
+test pe_wire_rules {
+    assert PE_FRAME_SAMPLES * 1000 == 16000 * PE_FRAME_MS;
+    assert pe_frame_complete(21) == true;
+    assert pe_frame_complete(20) == false;
+    assert pe_voice_complete(10) == true;
+    assert pe_voice_complete(9) == false;
+    assert pe_audio_samples(1280) == 640;
+    assert pe_audio_samples(1281) == 640;
+    assert pe_audio_samples(0 - 2) == 0;
+    assert pe_sample_to_int16(1.0) == 32767;
+    assert pe_sample_to_int16(2.0) == 32767;
+    assert pe_sample_to_int16(0.0 - 1.0) == 0 - 32767;
+    assert pe_sample_to_int16(0.0 - 5.0) == 0 - 32767;
+    assert pe_sample_to_int16(0.0) == 0;
+    assert pe_sample_to_int16(0.5) == 16384;
+    var t: [4096]u8 = [0; 4096];
+    var k: i64 = 0;
+    while (k < 4096) {
+        t[k] = 97;
+        k = k + 1;
+    }
+    assert pe_voice_text_bytes(t, 0 - 1) == 0;
+    assert pe_voice_text_bytes(t, 12) == 12;
+    assert pe_voice_text_bytes(t, 4000) == 4000;
+    assert pe_voice_text_bytes(t, 4096) == 4000;
+    // A two-byte character at 3999...4000: the cut falls inside it and moves before it.
+    t[3999] = 208;
+    t[4000] = 159;
+    assert pe_voice_text_bytes(t, 4096) == 3999;
+    // A three-byte character at 3998...4000.
+    t[3998] = 226;
+    t[3999] = 128;
+    t[4000] = 148;
+    assert pe_voice_text_bytes(t, 4096) == 3998;
+    var row: [64]u8 = [0; 64];
+    assert pe_row(PE_ROW_ROOM_SALT, row) == 13;
+    assert pe_row(PE_ROW_KEY_SALT, row) == 12;
+    assert pe_row(PE_ROW_COUNT, row) == 0;
+    assert pe_note_fits(64) == true;
+    assert pe_note_fits(65) == false;
+    assert pe_members_valid(64) == true;
+    assert pe_members_valid(0 - 1) == false;
+    assert pe_failures_after_close(0, false) == 1;
+    assert pe_failures_after_close(0, true) == PE_FAILED_AFTER;
+    assert pe_failures_after_close(5, true) == 6;
+    assert pe_failures_after_close(0 - 9, false) == 1;
+    assert pe_failures_after_close(9223372036854775807, false) == 9223372036854775807;
+    assert pe_frame_admitted(true, PE_MSG_AUDIO, 99) == true;
+    assert pe_frame_admitted(false, PE_MSG_BYE, 99) == true;
+    assert pe_frame_admitted(false, PE_MSG_HELLO, 0) == true;
+    assert pe_frame_admitted(false, PE_MSG_HELLO, PE_MAX_PEERS - 1) == false;
+    assert pe_answers_hello(true, PE_MSG_HELLO) == true;
+    assert pe_answers_hello(true, PE_MSG_BYE) == false;
+    assert pe_answers_hello(false, PE_MSG_AUDIO) == false;
+    assert pe_tick_ms() == 5000;
+    assert pe_link_up(PE_STATUS_LINKED) == true;
+    assert pe_link_up(PE_STATUS_LINKED - 1) == false;
+    assert pe_peer_speaking(0) == true;
+    assert pe_peer_speaking(499) == true;
+    assert pe_peer_speaking(500) == false;
+    assert pe_peer_speaking(0 - 1) == false;
+    assert pe_members_mismatch(3, 1) == true;
+    assert pe_members_mismatch(2, 1) == false;
+    assert pe_members_mismatch(0 - 1, 0) == false;
+}
+
+test pe_window_book_rules {
+    assert pe_window_record(PE_VOICE_START, false, false) == PE_REC_OPEN;
+    assert pe_window_record(PE_VOICE_START, true, true) == PE_REC_REFRESH;
+    assert pe_window_record(PE_VOICE_START, true, false) == PE_REC_REPLACE;
+    assert pe_window_record(PE_VOICE_END, true, false) == PE_REC_END;
+    assert pe_window_record(PE_VOICE_END, false, true) == PE_REC_NONE;
+    assert pe_window_record(7, true, true) == PE_REC_NONE;
+    assert pe_window_forgotten(0 - 1, 999999) == false;
+    assert pe_window_forgotten(1000, 21000) == false;
+    assert pe_window_forgotten(1000, 21001) == true;
+    assert pe_window_forgotten(0, 9223372036854775807) == true;
+    assert pe_window_compares_text(PE_VOICE_TTS) == true;
+    assert pe_window_compares_text(PE_VOICE_OWN) == false;
+    assert pe_mic_gate_step(true, false) == PE_GATE_SEND;
+    assert pe_mic_gate_step(true, true) == PE_GATE_SEND;
+    assert pe_mic_gate_step(false, true) == PE_GATE_FLUSH;
+    assert pe_mic_gate_step(false, false) == PE_GATE_NONE;
 }

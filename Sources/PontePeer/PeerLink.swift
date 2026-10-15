@@ -53,7 +53,6 @@ public final class PeerLink: @unchecked Sendable {
 
     public let sender = UInt64.random(in: 1...UInt64.max)
 
-    private static let headerBytes = 21
     private let relay: URL
     private let secret: String
     private let queue = DispatchQueue(label: "app.ponte.peer.link")
@@ -118,13 +117,13 @@ public final class PeerLink: @unchecked Sendable {
             reportStatus()
             if key == nil {
                 // Slow on purpose (PBKDF2): done once, off the main thread.
-                let room = Self.derive(secret, salt: "ponte-room-v2")
-                key = SymmetricKey(data: Self.derive(secret, salt: "ponte-key-v2"))
+                let room = Self.derive(secret, salt: PeerRules.roomSalt)
+                key = SymmetricKey(data: Self.derive(secret, salt: PeerRules.keySalt))
                 url = relay.appendingPathComponent(room.map { String(format: "%02x", $0) }.joined())
             }
             connect()
             let timer = DispatchSource.makeTimerSource(queue: queue)
-            let every = min(PeerRules.helloEveryMs, PeerRules.voiceRefreshMs)
+            let every = PeerRules.tickMs
             timer.schedule(deadline: .now() + .milliseconds(every), repeating: .milliseconds(every))
             timer.setEventHandler { [weak self] in self?.tick() }
             timer.resume()
@@ -149,7 +148,7 @@ public final class PeerLink: @unchecked Sendable {
             members = -1
             reportStatus()
             // Let the bye go out, then close the socket and release the session.
-            queue.asyncAfter(deadline: .now() + .milliseconds(200)) { [session] in
+            queue.asyncAfter(deadline: .now() + .milliseconds(PeerRules.byeGraceMs)) { [session] in
                 closing?.cancel(with: .goingAway, reason: nil)
                 session.finishTasksAndInvalidate()
             }
@@ -171,10 +170,9 @@ public final class PeerLink: @unchecked Sendable {
             }
             guard let converted = try? converter?.convert(copy), let data = converted.floatChannelData else { return }
             for i in 0..<Int(converted.frameLength) {
-                let v = max(-1, min(1, data[0][i]))
-                pendingSamples.append(Int16(v * Float(Int16.max)))
+                pendingSamples.append(PeerRules.sampleToInt16(data[0][i]))
             }
-            let frame = Int(PeerRules.sampleRate) * PeerRules.frameMs / 1000
+            let frame = PeerRules.frameSamples
             while pendingSamples.count >= frame {
                 var payload = Data(capacity: frame * 2)
                 for s in pendingSamples.prefix(frame) { withUnsafeBytes(of: s.littleEndian) { payload.append(contentsOf: $0) } }
@@ -208,7 +206,8 @@ public final class PeerLink: @unchecked Sendable {
     private func sendVoiceFrame(kind: Int, state: Int, text: String, at: Date = Date()) {
         var payload = Data([UInt8(truncatingIfNeeded: kind), UInt8(truncatingIfNeeded: state)])
         withUnsafeBytes(of: Self.ms(at).littleEndian) { payload.append(contentsOf: $0) }
-        payload.append(Data(text.utf8.prefix(4000)))
+        let utf8 = Array(text.utf8)
+        payload.append(Data(utf8.prefix(PeerRules.voiceTextBytes(utf8))))
         send(kind: PeerRules.msgVoice, payload: payload)
     }
 
@@ -257,9 +256,9 @@ public final class PeerLink: @unchecked Sendable {
 
     /// The relay's own plain note: {"members": n}, the connections in the room (it cannot read the frames).
     private func relayNote(_ text: String) {
-        guard text.utf8.count <= 64, let data = text.data(using: .utf8),
+        guard PeerRules.noteFits(text.utf8.count), let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let n = object["members"] as? Int, n >= 0, n <= 64 else { return }
+              let n = object["members"] as? Int, PeerRules.membersValid(n) else { return }
         members = n
         reportStatus()
     }
@@ -285,16 +284,15 @@ public final class PeerLink: @unchecked Sendable {
         audioGeneration &+= 1
         for peer in peers.keys { onPeerGone?(peer) }
         peers.removeAll()
-        if PeerRules.roomFull(closeCode: closeCode) {
+        let full = PeerRules.roomFull(closeCode: closeCode)
+        failures = PeerRules.failuresAfterClose(failures, roomFull: full)
+        if full {
             // Shown as failed and full; tried again later (a slept Mac's socket may still hold a seat).
-            failures = max(failures + 1, PeerRules.failedAfter)
             if !roomFull {
                 roomFull = true
                 let handler = onRoomFull
                 DispatchQueue.main.async { handler?(true) }
             }
-        } else {
-            failures += 1
         }
         reportStatus()
         let delay = PeerRules.retryDelayMs(closeCode: closeCode, attempt: failures - 1)
@@ -309,7 +307,7 @@ public final class PeerLink: @unchecked Sendable {
         send(kind: PeerRules.msgHello, payload: Data())
         for (kind, text) in activeVoices { sendVoiceFrame(kind: kind, state: PeerRules.voiceStart, text: text) }
         let now = Date()
-        let gone = peers.filter { !PeerRules.peerAlive(msSinceHello: Int64(now.timeIntervalSince($0.value) * 1000)) }.keys
+        let gone = peers.filter { !PeerRules.peerAlive(msSinceHello: PeerRules.millis(now.timeIntervalSince($0.value))) }.keys
         for peer in gone {
             peers.removeValue(forKey: peer)
             onPeerGone?(peer)   // lastSeq stays for the whole session: his old frames cannot be replayed
@@ -343,35 +341,36 @@ public final class PeerLink: @unchecked Sendable {
 
     private func open(_ data: Data) {
         guard let key, let box = try? AES.GCM.SealedBox(combined: data),
-              let plain = try? AES.GCM.open(box, using: key), plain.count >= Self.headerBytes else { return }
+              let plain = try? AES.GCM.open(box, using: key), PeerRules.frameComplete(plain.count) else { return }
         let bytes = [UInt8](plain)
-        let kind = bytes[0]
-        let peer = bytes[1..<9].enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << (8 * UInt64($1.offset)) }
-        let frameSeq = bytes[9..<13].enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) }
-        let sentMs = Int64(bitPattern: bytes[13..<21].enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << (8 * UInt64($1.offset)) })
+        // The header's fields where peer_rules.t27 puts them, little-endian.
+        let kind = bytes[PeerRules.hdrKind]
+        let peer = Self.uint(bytes, at: PeerRules.hdrSender, count: 8)
+        let frameSeq = UInt32(truncatingIfNeeded: Self.uint(bytes, at: PeerRules.hdrSeq, count: 4))
+        let sentMs = Int64(bitPattern: Self.uint(bytes, at: PeerRules.hdrSent, count: 8))
         let now = Date()
         guard peer != sender, PeerRules.frameFresh(sentMs: sentMs, nowMs: Self.ms(now)) else { return }
         let last = lastSeq[peer]
         guard PeerRules.seqNewer(seq: frameSeq, lastSeq: last ?? 0, hasLast: last != nil) else { return }
-        if peers[peer] == nil, kind != PeerRules.msgBye, !PeerRules.acceptsNewPeer(knownPeers: peers.count) { return }
+        let known = peers[peer] != nil
+        guard PeerRules.frameAdmitted(known: known, kind: kind, knownPeers: peers.count) else { return }
         lastSeq[peer] = frameSeq
         joined()   // the room answers: the link holds
-        let payload = Array(bytes[Self.headerBytes...])
+        let payload = Array(bytes[PeerRules.hdrBytes...])
         switch kind {
         case PeerRules.msgBye:
             if peers.removeValue(forKey: peer) != nil { onPeerGone?(peer) }
             reportStatus()
             return
         default:
-            let isNew = peers[peer] == nil
             peers[peer] = now
             // A Ponte that just joined learns of this one at once, not at its next tick.
-            if isNew { send(kind: PeerRules.msgHello, payload: Data()) }
+            if PeerRules.answersHello(newPeer: !known, kind: kind) { send(kind: PeerRules.msgHello, payload: Data()) }
             reportStatus()
         }
         switch kind {
         case PeerRules.msgAudio:
-            let count = payload.count / 2
+            let count = PeerRules.audioSamples(payload.count)
             guard count > 0, let buffer = AVAudioPCMBuffer(pcmFormat: PCM.monoFormat(sampleRate: PeerRules.sampleRate),
                                                            frameCapacity: AVAudioFrameCount(count)),
                   let out = buffer.floatChannelData else { return }
@@ -382,25 +381,32 @@ public final class PeerLink: @unchecked Sendable {
             buffer.frameLength = AVAudioFrameCount(count)
             onAudio?(peer, buffer)
         case PeerRules.msgVoice:
-            guard payload.count >= 10 else { return }
-            let atMs = Int64(bitPattern: payload[2..<10].enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << (8 * UInt64($1.offset)) })
+            guard PeerRules.voiceComplete(payload.count) else { return }
+            let atMs = Int64(bitPattern: Self.uint(payload, at: PeerRules.vpAt, count: 8))
             // When it started or ended, on this Mac's clock (the two Macs' clocks need not agree).
             let at = Date(timeIntervalSince1970: Double(PeerRules.voiceLocalMs(atMs: atMs, sentMs: sentMs, nowMs: Self.ms(now))) / 1000)
-            let text = String(decoding: payload[10...], as: UTF8.self)
-            onVoice?(VoiceEvent(sender: peer, kind: Int(payload[0]), state: Int(payload[1]), text: text, receivedAt: at))
+            let text = String(decoding: payload[PeerRules.vpText...], as: UTF8.self)
+            onVoice?(VoiceEvent(sender: peer, kind: Int(payload[PeerRules.vpKind]), state: Int(payload[PeerRules.vpState]),
+                                text: text, receivedAt: at))
         default:
             break   // hello: presence only
         }
     }
 
+    /// `count` bytes from `at`, little-endian.
+    private static func uint(_ bytes: [UInt8], at: Int, count: Int) -> UInt64 {
+        bytes[at..<(at + count)].enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << (8 * UInt64($1.offset)) }
+    }
+
+
     private func reportStatus() {
         let now = Date()
-        if PeerRules.unknownListener(members: members, peers: peers.count, msSinceMismatch: .max) {
+        if PeerRules.membersMismatch(members: members, peers: peers.count) {
             if mismatchSince == nil { mismatchSince = now }
         } else {
             mismatchSince = nil
         }
-        let since = mismatchSince.map { Int64(now.timeIntervalSince($0) * 1000) } ?? -1
+        let since = mismatchSince.map { PeerRules.millis(now.timeIntervalSince($0)) } ?? -1
         let listener = PeerRules.unknownListener(members: members, peers: peers.count, msSinceMismatch: since)
         if listener != listenerShown {
             listenerShown = listener
@@ -415,11 +421,11 @@ public final class PeerLink: @unchecked Sendable {
         DispatchQueue.main.async { handler?(current.0, current.1, current.2) }
     }
 
-    static func ms(_ date: Date) -> Int64 { Int64((date.timeIntervalSince1970 * 1000).rounded()) }
+    static func ms(_ date: Date) -> Int64 { PeerRules.millis(date.timeIntervalSince1970) }
 
     /// PBKDF2-HMAC-SHA256 of the secret, 32 bytes.
     static func derive(_ secret: String, salt: String) -> Data {
-        var out = [UInt8](repeating: 0, count: 32)
+        var out = [UInt8](repeating: 0, count: PeerRules.keyBytes)
         let password = Array(secret.utf8)
         let saltBytes = Array(salt.utf8)
         _ = password.withUnsafeBufferPointer { p in

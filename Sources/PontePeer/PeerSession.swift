@@ -59,7 +59,10 @@ public final class PeerVoices: @unchecked Sendable {
 
     /// Whether another Russian's voice reached the owner within the last half second (for the UI).
     public var speaking: Bool {
-        timesLock.withLock { lastAt.values.contains { Date().timeIntervalSince($0) < 0.5 } }
+        let now = Date()
+        return timesLock.withLock {
+            lastAt.values.contains { PeerRules.peerSpeaking(msSinceFrame: PeerWindows.ms(now) - PeerWindows.ms($0)) }
+        }
     }
 
     /// A Russian left the room.
@@ -112,18 +115,21 @@ public final class PeerWindows: @unchecked Sendable {
         lock.withLock {
             windows.removeAll {
                 let end = PeerRules.windowEndMs(endMs: $0.endMs, lastSeenMs: $0.lastSeenMs, nowMs: ms, refreshed: $0.sender != 0)
-                return end >= 0 && ms - end > PeerRules.windowKeepMs
+                return PeerRules.windowForgotten(windowEndMs: end, nowMs: ms)
             }
             let open = windows.lastIndex { $0.sender == sender && $0.kind == kind && $0.endMs < 0 }
-            if state == PeerRules.voiceStart {
-                if let i = open, windows[i].text == text {
-                    windows[i].lastSeenMs = ms   // the same voice, announced again
-                    return
-                }
-                if let i = open { windows[i].endMs = ms }   // one voice of a kind at a time: a new one ends the old
+            switch PeerRules.windowRecord(state: state, hasOpen: open != nil, sameText: open.map { windows[$0].text == text } ?? false) {
+            case PeerRules.recRefresh:
+                windows[open!].lastSeenMs = ms   // the same voice, announced again
+            case PeerRules.recReplace:
+                windows[open!].endMs = ms   // one voice of a kind at a time: a new one ends the old
                 windows.append(Window(sender: sender, kind: kind, text: text, startMs: ms, lastSeenMs: ms, endMs: -1))
-            } else if let i = open {
-                windows[i].endMs = ms
+            case PeerRules.recOpen:
+                windows.append(Window(sender: sender, kind: kind, text: text, startMs: ms, lastSeenMs: ms, endMs: -1))
+            case PeerRules.recEnd:
+                windows[open!].endMs = ms
+            default:
+                break
             }
         }
     }
@@ -136,7 +142,7 @@ public final class PeerWindows: @unchecked Sendable {
         let words = PeerRules.wordCount(text)
         let snapshot = lock.withLock { windows }
         return snapshot.contains { w in
-            let contained = w.kind == PeerRules.voiceTTS ? PeerRules.containmentMilli(phrase: text, said: w.text) : 0
+            let contained = PeerRules.windowComparesText(kind: w.kind) ? PeerRules.containmentMilli(phrase: text, said: w.text) : 0
             let own = w.sender == 0
             return PeerRules.isPeerVoice(kind: w.kind, isSelf: own, phraseWords: words, containmentMilli: contained,
                                          phraseStartMs: s, phraseEndMs: e, windowStartMs: w.startMs,
@@ -155,7 +161,7 @@ public final class PeerWindows: @unchecked Sendable {
 
     public func removeAll() { lock.withLock { windows.removeAll() } }
 
-    static func ms(_ date: Date) -> Int64 { Int64((date.timeIntervalSince1970 * 1000).rounded()) }
+    static func ms(_ date: Date) -> Int64 { PeerRules.millis(date.timeIntervalSince1970) }
 }
 
 /// The owner's microphone to the other Russians (PeerRules.sendsMic, vadSends): always with headphones, only
@@ -188,16 +194,16 @@ public final class PeerMicGate: @unchecked Sendable {
         let now = Date()
         let (target, wasSending, sends): (PeerLink?, Bool, Bool) = lock.withLock {
             if voice { lastSignalAt = now }
-            let since = lastSignalAt.map { Int64(now.timeIntervalSince($0) * 1000) } ?? -1
+            let since = lastSignalAt.map { PeerRules.millis(now.timeIntervalSince($0)) } ?? -1
             let open = PeerRules.sendsMic(linkUp: linkUp, muted: muted, headphonesLike: headphonesLike, keyHeld: keyHeld)
             let sends = open && PeerRules.vadSends(hasSignal: voice, msSinceSignal: since)
             defer { sending = sends }
             return (link, sending, sends)
         }
-        if sends {
-            target?.sendMicrophone(buffer)
-        } else if wasSending {
-            target?.flushMicrophone()
+        switch PeerRules.micGateStep(sends: sends, wasSending: wasSending) {
+        case PeerRules.gateSend: target?.sendMicrophone(buffer)
+        case PeerRules.gateFlush: target?.flushMicrophone()
+        default: break
         }
     }
 }

@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <math.h>
 #include <assert.h>
 #define t27_assert(c, m) do { if (!(c)) { __builtin_trap(); } } while (0)
 #define assert_eq(a, b) do { if ((a) != (b)) { __builtin_trap(); } } while (0)
@@ -82,6 +83,12 @@
 #define PE_UNDERSCORE 95
 #define PE_SECRET_ALPHABET_LEN 31
 static const uint8_t PE_SECRET_ALPHABET[31] = { 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102, 103, 104, 106, 107, 109, 110, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122 };
+#define PE_ROW_ROOM_SALT 0
+#define PE_ROW_KEY_SALT 1
+#define PE_ROW_COUNT 2
+static const uint8_t PE_ROW_TEXT[25] = { 112, 111, 110, 116, 101, 45, 114, 111, 111, 109, 45, 118, 50, 112, 111, 110, 116, 101, 45, 107, 101, 121, 45, 118, 50 };
+static const uint32_t PE_ROW_OFFSETS[2] = { 0, 13 };
+static const uint32_t PE_ROW_LENGTHS[2] = { 13, 12 };
 #define PE_FX_TTS_CONTRACT 0
 #define PE_FX_HEARD_TAIL 1
 #define PE_FX_TTS_CONTRACT_PT 2
@@ -122,6 +129,31 @@ static const uint8_t PE_FX_TEXT[828] = { 69, 110, 116, 97, 111, 32, 102, 105, 99
 static const uint32_t PE_FX_OFFSETS[35] = { 0, 140, 166, 311, 339, 365, 387, 419, 454, 464, 474, 485, 489, 498, 498, 521, 529, 539, 569, 597, 616, 636, 647, 661, 673, 687, 701, 719, 731, 745, 758, 773, 787, 801, 816 };
 static const uint32_t PE_FX_LENGTHS[35] = { 140, 26, 145, 28, 26, 22, 32, 35, 10, 10, 11, 4, 9, 0, 23, 8, 10, 30, 28, 19, 20, 11, 14, 12, 14, 14, 18, 12, 14, 13, 15, 14, 14, 15, 12 };
 #define PE_UNKNOWN_LISTENER_MS 6000
+#define PE_HDR_KIND 0
+#define PE_HDR_SENDER 1
+#define PE_HDR_SEQ 9
+#define PE_HDR_SENT 13
+#define PE_HDR_BYTES 21
+#define PE_VP_KIND 0
+#define PE_VP_STATE 1
+#define PE_VP_AT 2
+#define PE_VP_TEXT 10
+#define PE_FRAME_SAMPLES 640
+#define PE_VOICE_TEXT_MAX 4000
+#define PE_KEY_BYTES 32
+#define PE_NOTE_MAX 64
+#define PE_MEMBERS_MAX 64
+#define PE_BYE_GRACE_MS 200
+#define PE_QUIT_WAIT_MS 300
+#define PE_SPEAKING_MS 500
+#define PE_REC_NONE 0
+#define PE_REC_REFRESH 1
+#define PE_REC_REPLACE 2
+#define PE_REC_OPEN 3
+#define PE_REC_END 4
+#define PE_GATE_NONE 0
+#define PE_GATE_SEND 1
+#define PE_GATE_FLUSH 2
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -129,6 +161,7 @@ int64_t pe_status(bool link_on, bool connected, int64_t peers, int64_t failures)
 int64_t pe_reconnect_delay_ms(int64_t attempt);
 bool pe_peer_alive(int64_t ms_since_hello);
 bool pe_unknown_listener(int64_t members, int64_t peers, int64_t ms_since_mismatch);
+bool pe_members_mismatch(int64_t members, int64_t peers);
 bool pe_accepts_new_peer(int64_t known_peers);
 bool pe_room_full(int64_t close_code);
 int64_t pe_retry_delay_ms(int64_t close_code, int64_t attempt);
@@ -158,6 +191,24 @@ bool pe_permille_at_least(int64_t part, int64_t whole, int64_t permille);
 bool pe_mostly_in(int64_t p_start, int64_t duration, int64_t w_from, bool open, int64_t w_until);
 bool pe_meets(int64_t p_start, int64_t p_end, int64_t w_from, bool open, int64_t w_until);
 bool pe_is_peer_voice(int64_t kind, bool is_self, int64_t phrase_words, int64_t containment_milli, int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t window_start_ms, int64_t window_end_ms);
+bool pe_frame_complete(int64_t len);
+bool pe_voice_complete(int64_t payload_len);
+int64_t pe_audio_samples(int64_t payload_len);
+int64_t pe_sample_to_int16(float x);
+int64_t pe_voice_text_bytes(uint8_t text[static 4096], int64_t len);
+int64_t pe_row(int64_t row, uint8_t out[static 64]);
+bool pe_note_fits(int64_t len);
+bool pe_members_valid(int64_t n);
+int64_t pe_failures_after_close(int64_t failures, bool room_full);
+bool pe_frame_admitted(bool known, int64_t kind, int64_t known_peers);
+bool pe_answers_hello(bool new_peer, int64_t kind);
+int64_t pe_tick_ms(void);
+bool pe_link_up(int64_t status);
+bool pe_peer_speaking(int64_t ms_since_frame);
+int64_t pe_window_record(int64_t state, bool has_open, bool same_text);
+bool pe_window_forgotten(int64_t window_end_ms, int64_t now_ms);
+bool pe_window_compares_text(int64_t kind);
+int64_t pe_mic_gate_step(bool sends, bool was_sending);
 int64_t pe_fixture(int64_t index, uint8_t out[static 4096]);
 int64_t pe_fixture_words(int64_t index);
 int64_t pe_fixture_containment(int64_t phrase, int64_t said);
