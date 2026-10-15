@@ -113,7 +113,7 @@ import Testing
         clock.now = clock.now.addingTimeInterval(2)
         intake.expireOwnTalk(at: clock.now)
         #expect(events.all.map(\.0) == [true, false])
-        #expect(events.all.last?.1 == lastSignal)
+        #expect(abs((events.all.last?.1 ?? .distantPast).timeIntervalSince(lastSignal)) < 0.001)
         // Turning «Свой голос» off while silent sends nothing more.
         intake.setRelay(nil)
         #expect(events.all.count == 2)
@@ -146,7 +146,8 @@ import Testing
             intake.handle(roomNoise())
         }
         #expect(events.all.map(\.0) == [true, false])
-        #expect(events.all.last?.1 == spoke)
+        // Stamped at the last word, on whole milliseconds (AppRules.ownTalkChangeMs).
+        #expect(abs((events.all.last?.1 ?? .distantPast).timeIntervalSince(spoke)) < 0.001)
         #expect(toPeers.all.last == false)
     }
 

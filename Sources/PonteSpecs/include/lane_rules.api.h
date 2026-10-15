@@ -121,6 +121,12 @@
 #define LN_OWN_TALK_TAIL_MS 1500
 #define LN_OWN_TALK_DROP_PERMILLE 600
 #define LN_PHRASE_FALLBACK_MS 3000
+#define LN_ROUTE_RELAY 1
+#define LN_ROUTE_PEERS 2
+#define LN_TALK_NONE 0
+#define LN_TALK_OPEN 1
+#define LN_TALK_CLOSE 2
+#define LN_TALK_LOG_KEEP 20
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -159,6 +165,17 @@ int32_t ln_speech_waiting(int32_t backlog, bool counted);
 bool ln_reports_translation_error(bool cancelled);
 bool ln_play_end_reports(int32_t action, bool generation_current);
 bool ln_intake_forwards(bool has_segment, bool echo_blocks);
+int32_t ln_intake_routes(bool has_relay, bool has_peers, bool call_blocks);
+bool ln_blocks_call(bool mic_blocks, bool peer_audio_blocks);
+bool ln_own_voice_marks(bool voice, bool call_blocks);
+bool ln_own_talking(bool call_blocks, bool gate_open);
+int64_t ln_own_talk_change_ms(bool talking, int64_t now_ms, bool has_last_voice, int64_t last_voice_ms);
+int64_t ln_phrase_start_ms(bool has_timing, int64_t end_arrived_ms, int64_t audio_start_ms, int64_t audio_end_ms, int64_t end_ms);
+bool ln_phrase_dropped(bool own_talk, bool own_windows, bool link_on, bool peer_windows);
+int32_t ln_talk_log_step(bool held, bool has_open);
+int64_t ln_talk_log_forget(int64_t count);
+int32_t ln_backlog_after_queue(int32_t backlog);
+bool ln_test_holds_key(bool running, bool has_test_file);
 int32_t ln_segment_append(bool started, bool closed);
 int32_t ln_segment_close(bool started, bool closed);
 int32_t ln_source_kind(bool has_test_file);

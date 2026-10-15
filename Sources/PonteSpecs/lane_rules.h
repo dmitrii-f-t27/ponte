@@ -125,6 +125,12 @@
 #define LN_OWN_TALK_TAIL_MS 1500
 #define LN_OWN_TALK_DROP_PERMILLE 600
 #define LN_PHRASE_FALLBACK_MS 3000
+#define LN_ROUTE_RELAY 1
+#define LN_ROUTE_PEERS 2
+#define LN_TALK_NONE 0
+#define LN_TALK_OPEN 1
+#define LN_TALK_CLOSE 2
+#define LN_TALK_LOG_KEEP 20
 
 /* -------------------------------------------------------
    Function prototypes
@@ -165,6 +171,17 @@ int32_t ln_speech_waiting(int32_t backlog, bool counted);
 bool ln_reports_translation_error(bool cancelled);
 bool ln_play_end_reports(int32_t action, bool generation_current);
 bool ln_intake_forwards(bool has_segment, bool echo_blocks);
+int32_t ln_intake_routes(bool has_relay, bool has_peers, bool call_blocks);
+bool ln_blocks_call(bool mic_blocks, bool peer_audio_blocks);
+bool ln_own_voice_marks(bool voice, bool call_blocks);
+bool ln_own_talking(bool call_blocks, bool gate_open);
+int64_t ln_own_talk_change_ms(bool talking, int64_t now_ms, bool has_last_voice, int64_t last_voice_ms);
+int64_t ln_phrase_start_ms(bool has_timing, int64_t end_arrived_ms, int64_t audio_start_ms, int64_t audio_end_ms, int64_t end_ms);
+bool ln_phrase_dropped(bool own_talk, bool own_windows, bool link_on, bool peer_windows);
+int32_t ln_talk_log_step(bool held, bool has_open);
+int64_t ln_talk_log_forget(int64_t count);
+int32_t ln_backlog_after_queue(int32_t backlog);
+bool ln_test_holds_key(bool running, bool has_test_file);
 int32_t ln_segment_append(bool started, bool closed);
 int32_t ln_segment_close(bool started, bool closed);
 int32_t ln_source_kind(bool has_test_file);
@@ -554,6 +571,88 @@ bool ln_play_end_reports(int32_t action, bool generation_current) {
 
 bool ln_intake_forwards(bool has_segment, bool echo_blocks) {
     return (has_segment && (echo_blocks == false));
+}
+
+int32_t ln_intake_routes(bool has_relay, bool has_peers, bool call_blocks) {
+    int32_t routes = 0;
+    if (call_blocks) {
+        return routes;
+    }
+    if (has_relay) {
+        routes = (routes | LN_ROUTE_RELAY);
+    }
+    if (has_peers) {
+        routes = (routes | LN_ROUTE_PEERS);
+    }
+    return routes;
+}
+
+bool ln_blocks_call(bool mic_blocks, bool peer_audio_blocks) {
+    return (mic_blocks || peer_audio_blocks);
+}
+
+bool ln_own_voice_marks(bool voice, bool call_blocks) {
+    return (voice && (call_blocks == false));
+}
+
+bool ln_own_talking(bool call_blocks, bool gate_open) {
+    return ((call_blocks == false) && gate_open);
+}
+
+int64_t ln_own_talk_change_ms(bool talking, int64_t now_ms, bool has_last_voice, int64_t last_voice_ms) {
+    if ((talking || (has_last_voice == false))) {
+        return now_ms;
+    }
+    return last_voice_ms;
+}
+
+int64_t ln_phrase_start_ms(bool has_timing, int64_t end_arrived_ms, int64_t audio_start_ms, int64_t audio_end_ms, int64_t end_ms) {
+    if ((has_timing == false)) {
+        return (end_ms - LN_PHRASE_FALLBACK_MS);
+    }
+    int64_t length = (audio_end_ms - audio_start_ms);
+    if ((length < 0)) {
+        length = 0;
+    }
+    return (end_arrived_ms - length);
+}
+
+bool ln_phrase_dropped(bool own_talk, bool own_windows, bool link_on, bool peer_windows) {
+    return ((own_talk || own_windows) || (link_on && peer_windows));
+}
+
+int32_t ln_talk_log_step(bool held, bool has_open) {
+    if (held) {
+        if (has_open) {
+            return LN_TALK_NONE;
+        }
+        return LN_TALK_OPEN;
+    }
+    if (has_open) {
+        return LN_TALK_CLOSE;
+    }
+    return LN_TALK_NONE;
+}
+
+int64_t ln_talk_log_forget(int64_t count) {
+    if ((count > LN_TALK_LOG_KEEP)) {
+        return (count - LN_TALK_LOG_KEEP);
+    }
+    return 0;
+}
+
+int32_t ln_backlog_after_queue(int32_t backlog) {
+    if ((backlog < 0)) {
+        return 1;
+    }
+    if ((backlog >= 2147483647)) {
+        return backlog;
+    }
+    return (backlog + 1);
+}
+
+bool ln_test_holds_key(bool running, bool has_test_file) {
+    return (running && has_test_file);
 }
 
 int32_t ln_segment_append(bool started, bool closed) {
@@ -976,6 +1075,46 @@ void test_ln_moved_rules(void) {
     assert((LN_DEFAULT_PTT_KEY == LN_PTT_RIGHT_OPTION));
 }
 
+void test_ln_intake_rules(void) {
+    assert((ln_intake_routes(true, true, false) == (LN_ROUTE_RELAY | LN_ROUTE_PEERS)));
+    assert((ln_intake_routes(true, false, false) == LN_ROUTE_RELAY));
+    assert((ln_intake_routes(false, true, false) == LN_ROUTE_PEERS));
+    assert((ln_intake_routes(true, true, true) == 0));
+    assert((ln_intake_routes(false, false, false) == 0));
+    assert((ln_blocks_call(false, false) == false));
+    assert((ln_blocks_call(true, false) == true));
+    assert((ln_blocks_call(false, true) == true));
+    assert((ln_own_voice_marks(true, false) == true));
+    assert((ln_own_voice_marks(true, true) == false));
+    assert((ln_own_voice_marks(false, false) == false));
+    assert((ln_own_talking(false, true) == true));
+    assert((ln_own_talking(true, true) == false));
+    assert((ln_own_talking(false, false) == false));
+    assert((ln_own_talk_change_ms(true, 5000, true, 4000) == 5000));
+    assert((ln_own_talk_change_ms(false, 5000, true, 4000) == 4000));
+    assert((ln_own_talk_change_ms(false, 5000, false, 4000) == 5000));
+    assert((ln_phrase_start_ms(true, 10000, 2000, 3500, 10100) == 8500));
+    assert((ln_phrase_start_ms(true, 10000, 3500, 2000, 10100) == 10000));
+    assert((ln_phrase_start_ms(false, 10000, 2000, 3500, 10100) == 7100));
+    assert((ln_phrase_dropped(false, false, true, true) == true));
+    assert((ln_phrase_dropped(false, false, false, true) == false));
+    assert((ln_phrase_dropped(true, false, false, false) == true));
+    assert((ln_phrase_dropped(false, true, false, false) == true));
+    assert((ln_phrase_dropped(false, false, true, false) == false));
+    assert((ln_talk_log_step(true, false) == LN_TALK_OPEN));
+    assert((ln_talk_log_step(true, true) == LN_TALK_NONE));
+    assert((ln_talk_log_step(false, true) == LN_TALK_CLOSE));
+    assert((ln_talk_log_step(false, false) == LN_TALK_NONE));
+    assert((ln_talk_log_forget(20) == 0));
+    assert((ln_talk_log_forget(21) == 1));
+    assert((ln_talk_log_forget((0 - 3)) == 0));
+    assert((ln_backlog_after_queue(0) == 1));
+    assert((ln_backlog_after_queue((0 - 4)) == 1));
+    assert((ln_backlog_after_queue(2147483647) == 2147483647));
+    assert((ln_test_holds_key(true, true) == true));
+    assert((ln_test_holds_key(false, true) == false));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -990,7 +1129,8 @@ int main(void) {
     test_ln_peer_audio_guard();
     test_ln_own_talk();
     test_ln_moved_rules();
-    printf("All %d tests passed.\n", 6);
+    test_ln_intake_rules();
+    printf("All %d tests passed.\n", 7);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

@@ -1070,7 +1070,7 @@ final class AppModel {
         updatePushToTalk()
         // Test mode (-PonteOutgoingFile): the outgoing lane is push-to-talk only, so the file is
         // "spoken" with the talk key held, as a person would.
-        if isRunning, launch.outgoingFile != nil { setTalkKey(true) }
+        if AppRules.testHoldsKey(running: isRunning, hasTestFile: launch.outgoingFile != nil) { setTalkKey(true) }
 
         let hasCallOutput = AppRules.hasCallOutput(hasBlackHole: blackHoleDevice != nil, hasSink: launch.outgoingSink != nil)
         let startBanner = AppRules.startBannerAfterStart(lanesFailed: lanesFailed, translatorsFailed: translatorsFailed,
@@ -1360,8 +1360,10 @@ final class AppModel {
         let ownTalk = self.ownTalk, mine = selfWindows
         let windows: PeerWindows? = peerLink == nil ? nil : peerWindows
         return { text, start, end in
-            ownTalk.drops(start: start, end: end) || mine.isPeerVoice(text, start: start, end: end)
-                || (windows?.isPeerVoice(text, start: start, end: end) ?? false)
+            AppRules.phraseDropped(ownTalk: ownTalk.drops(start: start, end: end),
+                                   ownWindows: mine.isPeerVoice(text, start: start, end: end),
+                                   linkOn: windows != nil,
+                                   peerWindows: windows?.isPeerVoice(text, start: start, end: end) ?? false)
         }
     }
 

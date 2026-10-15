@@ -744,6 +744,34 @@ extension AppRulesLegacy {
     static func playEndReports(action: Int32, generationCurrent: Bool) -> Bool { action == PACT_FINISH && generationCurrent }
     /// AudioIntake.handle: `guard let segment`, `if let echo, echo.blocksMic(at: now) { return }`.
     static func intakeForwards(hasSegment: Bool, echoBlocks: Bool) -> Bool { hasSegment && !echoBlocks }
+    /// AudioIntake.handle before 2026-10-15: `if !callBlocks { relay?.push(buffer); peer?(buffer, voice) }`.
+    static func intakeRoutes(hasRelay: Bool, hasPeers: Bool, callBlocks: Bool) -> Int32 {
+        guard !callBlocks else { return 0 }
+        return (hasRelay ? 1 : 0) | (hasPeers ? 2 : 0)
+    }
+    /// EchoGuard.blocksCall: `peer || blocksMic(at: now)`.
+    static func blocksCall(micBlocks: Bool, peerAudioBlocks: Bool) -> Bool { peerAudioBlocks || micBlocks }
+    /// `if voice && !callBlocks { lastOwnSignalAt = now }`; `talking = !callBlocks && vadSends(..)`;
+    /// `talking ? now : (lastOwnSignalAt ?? now)`.
+    static func ownVoiceMarks(voice: Bool, callBlocks: Bool) -> Bool { voice && !callBlocks }
+    static func ownTalking(callBlocks: Bool, gateOpen: Bool) -> Bool { !callBlocks && gateOpen }
+    static func ownTalkChangeMs(talking: Bool, nowMs: Int64, lastVoiceMs: Int64?) -> Int64 { talking ? nowMs : (lastVoiceMs ?? nowMs) }
+    /// `timing.map { audioEndArrivedAt - max(0, audioEnd - audioStart) } ?? end - PHRASE_FALLBACK_MS`.
+    static func phraseStartMs(endArrivedMs: Int64?, audioStartMs: Int64, audioEndMs: Int64, endMs: Int64) -> Int64 {
+        guard let arrived = endArrivedMs else { return endMs - 3000 }
+        return arrived - max(0, audioEndMs - audioStartMs)
+    }
+    /// AppModel.incomingPhraseFilter: `ownTalk.drops || mine.isPeerVoice || (windows?.isPeerVoice ?? false)`.
+    static func phraseDropped(ownTalk: Bool, ownWindows: Bool, linkOn: Bool, peerWindows: Bool) -> Bool {
+        ownTalk || ownWindows || (linkOn && peerWindows)
+    }
+    /// OwnTalkLog.setHeld: `if held { if last?.end != -1 { append } } else if last open { close }`; keep 20.
+    static func talkLogStep(held: Bool, hasOpen: Bool) -> Int32 { held ? (hasOpen ? 0 : 1) : (hasOpen ? 2 : 0) }
+    static func talkLogForget(count: Int) -> Int { max(0, count - 20) }
+    /// `speechBacklog += 1`.
+    static func backlogAfterQueue(_ backlog: Int32) -> Int32 { backlog < 0 ? 1 : (backlog == .max ? backlog : backlog + 1) }
+    /// `if isRunning, launch.outgoingFile != nil { setTalkKey(true) }`.
+    static func testHoldsKey(running: Bool, hasTestFile: Bool) -> Bool { running && hasTestFile }
     /// Segment.append: 0 drop, 1 forward, 2 buffer; markClosed: 0 nothing, 1 finish now, 2 mark only.
     static func segmentAppend(started: Bool, closed: Bool) -> Int32 { closed ? 0 : (started ? 1 : 2) }
     static func segmentClose(started: Bool, closed: Bool) -> Int32 { closed ? 0 : (started ? 1 : 2) }

@@ -521,6 +521,37 @@ enum AppRules {
     static func playEndReports(action: Int32, generationCurrent: Bool) -> Bool { ln_play_end_reports(action, generationCurrent) }
     static func intakeForwards(hasSegment: Bool, echoBlocks: Bool) -> Bool { ln_intake_forwards(hasSegment, echoBlocks) }
 
+    /// AudioIntake: where a microphone buffer goes besides the transcriber (ROUTE_* bits).
+    static let ROUTE_RELAY: Int32 = LN_ROUTE_RELAY
+    static let ROUTE_PEERS: Int32 = LN_ROUTE_PEERS
+    static func intakeRoutes(hasRelay: Bool, hasPeers: Bool, callBlocks: Bool) -> Int32 {
+        ln_intake_routes(hasRelay, hasPeers, callBlocks)
+    }
+    /// EchoGuard: nothing from the microphone may go into the call or to the other Russians.
+    static func blocksCall(micBlocks: Bool, peerAudioBlocks: Bool) -> Bool { ln_blocks_call(micBlocks, peerAudioBlocks) }
+    /// «Свой голос»: a voice buffer is his last word; he talks while the gate is open; when a change is stamped.
+    static func ownVoiceMarks(voice: Bool, callBlocks: Bool) -> Bool { ln_own_voice_marks(voice, callBlocks) }
+    static func ownTalking(callBlocks: Bool, gateOpen: Bool) -> Bool { ln_own_talking(callBlocks, gateOpen) }
+    static func ownTalkChangeMs(talking: Bool, nowMs: Int64, lastVoiceMs: Int64?) -> Int64 {
+        ln_own_talk_change_ms(talking, nowMs, lastVoiceMs != nil, lastVoiceMs ?? 0)
+    }
+    /// When an incoming phrase started on the wall clock, from the transcriber's timing or its end.
+    static func phraseStartMs(endArrivedMs: Int64?, audioStartMs: Int64, audioEndMs: Int64, endMs: Int64) -> Int64 {
+        ln_phrase_start_ms(endArrivedMs != nil, endArrivedMs ?? 0, audioStartMs, audioEndMs, endMs)
+    }
+    /// Which incoming phrases are not translated.
+    static func phraseDropped(ownTalk: Bool, ownWindows: Bool, linkOn: Bool, peerWindows: Bool) -> Bool {
+        ln_phrase_dropped(ownTalk, ownWindows, linkOn, peerWindows)
+    }
+    /// OwnTalkLog: the talk key opens or closes an interval; the oldest are forgotten.
+    static let TALK_NONE: Int32 = LN_TALK_NONE
+    static let TALK_OPEN: Int32 = LN_TALK_OPEN
+    static let TALK_CLOSE: Int32 = LN_TALK_CLOSE
+    static func talkLogStep(held: Bool, hasOpen: Bool) -> Int32 { ln_talk_log_step(held, hasOpen) }
+    static func talkLogForget(count: Int) -> Int { Int(ln_talk_log_forget(Int64(count))) }
+    static func backlogAfterQueue(_ backlog: Int32) -> Int32 { ln_backlog_after_queue(backlog) }
+    static func testHoldsKey(running: Bool, hasTestFile: Bool) -> Bool { ln_test_holds_key(running, hasTestFile) }
+
     /// Segment: what an audio buffer does, and what closing does.
     static let SEG_DROP: Int32 = LN_SEG_DROP
     static let SEG_FORWARD: Int32 = LN_SEG_FORWARD

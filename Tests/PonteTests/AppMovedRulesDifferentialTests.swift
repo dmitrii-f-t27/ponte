@@ -269,6 +269,42 @@ private typealias L = AppRulesLegacy
         }
     }
 
+    @Test func intakeAndOwnTalk() {
+        let log = DiffLog("intakeRoutes, blocksCall, ownVoiceMarks, ownTalking, ownTalkChangeMs, phraseStartMs, phraseDropped, talkLog, backlogAfterQueue, testHoldsKey")
+        let bools = [false, true]
+        for a in bools { for b in bools { for c in bools {
+            log.check(F.intakeRoutes(hasRelay: a, hasPeers: b, callBlocks: c), L.intakeRoutes(hasRelay: a, hasPeers: b, callBlocks: c), "\(a) \(b) \(c)")
+            for d in bools {
+                log.check(F.phraseDropped(ownTalk: a, ownWindows: b, linkOn: c, peerWindows: d),
+                          L.phraseDropped(ownTalk: a, ownWindows: b, linkOn: c, peerWindows: d), "\(a) \(b) \(c) \(d)")
+            }
+        }
+            log.check(F.blocksCall(micBlocks: a, peerAudioBlocks: b), L.blocksCall(micBlocks: a, peerAudioBlocks: b), "\(a) \(b)")
+            log.check(F.ownVoiceMarks(voice: a, callBlocks: b), L.ownVoiceMarks(voice: a, callBlocks: b), "\(a) \(b)")
+            log.check(F.ownTalking(callBlocks: a, gateOpen: b), L.ownTalking(callBlocks: a, gateOpen: b), "\(a) \(b)")
+            log.check(F.talkLogStep(held: a, hasOpen: b), L.talkLogStep(held: a, hasOpen: b), "\(a) \(b)")
+            log.check(F.testHoldsKey(running: a, hasTestFile: b), L.testHoldsKey(running: a, hasTestFile: b), "\(a) \(b)")
+        } }
+        var r = DiffRandom(seed: 0x1D7A)
+        let clock: Int64 = 1_760_000_000_000
+        for _ in 0..<60_000 {
+            let now = clock + r.int64(-100_000...100_000)
+            let last: Int64? = r.bool() ? now - r.int64(-5000...20_000) : nil
+            let talking = r.bool()
+            log.check(F.ownTalkChangeMs(talking: talking, nowMs: now, lastVoiceMs: last),
+                      L.ownTalkChangeMs(talking: talking, nowMs: now, lastVoiceMs: last), "\(talking) \(now) \(String(describing: last))")
+            let arrived: Int64? = r.bool() ? now : nil
+            let a = r.int64(-10_000...600_000), b = r.int64(-10_000...600_000)
+            log.check(F.phraseStartMs(endArrivedMs: arrived, audioStartMs: a, audioEndMs: b, endMs: now + 50),
+                      L.phraseStartMs(endArrivedMs: arrived, audioStartMs: a, audioEndMs: b, endMs: now + 50), "\(String(describing: arrived)) \(a) \(b)")
+        }
+        for n in Array(-5...60) + [Int.min / 2, Int.max / 2] { log.check(F.talkLogForget(count: n), L.talkLogForget(count: n), "\(n)") }
+        for n in Array(Int32(-5)...Int32(40)) + [Int32.max, Int32.max - 1, Int32.min] {
+            log.check(F.backlogAfterQueue(n), L.backlogAfterQueue(n), "\(n)")
+        }
+        log.finish(minimumCases: 120_000)
+    }
+
     @Test func ownTalkGuard() {
         let log = DiffLog("ownTalkDrops")
         log.check(F.PHRASE_FALLBACK_MS, L.PHRASE_FALLBACK_MS, "PHRASE_FALLBACK_MS")

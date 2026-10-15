@@ -492,6 +492,94 @@ pub fn ln_intake_forwards(has_segment: bool, echo_blocks: bool) -> bool {
     return has_segment and echo_blocks == false;
 }
 
+; --- The microphone intake and the owner's own talk (moved out of Swift 2026-10-15) ------------------------------
+; Where a microphone buffer goes besides the transcriber (ROUTE_* bits): the "Svoi golos" relay into the call and the
+; other Russians (PeerMicGate), each when it exists and nothing the microphone may hear blocks the call.
+pub const LN_ROUTE_RELAY : i32 = 1;
+pub const LN_ROUTE_PEERS : i32 = 2;
+pub fn ln_intake_routes(has_relay: bool, has_peers: bool, call_blocks: bool) -> i32 {
+    var routes: i32 = 0;
+    if (call_blocks) { return routes; }
+    if (has_relay) { routes = routes | LN_ROUTE_RELAY; }
+    if (has_peers) { routes = routes | LN_ROUTE_PEERS; }
+    return routes;
+}
+
+; Nothing from the microphone may go into the call or to the other Russians: Ponte's own Russian voice where the
+; microphone may hear it (ln_echo_guard_blocks_mic), or another Russian's voice on an output that is not sealed
+; (ln_peer_audio_blocks_call).
+pub fn ln_blocks_call(mic_blocks: bool, peer_audio_blocks: bool) -> bool {
+    return mic_blocks or peer_audio_blocks;
+}
+
+; "Svoi golos": a buffer of the owner's voice (the transcriber's detector) is the time of his last word, unless a
+; Russian voice the microphone may hear blocks the call (that voice is not his).
+pub fn ln_own_voice_marks(voice: bool, call_blocks: bool) -> bool {
+    return voice and call_blocks == false;
+}
+
+; He talks while the voice gate is open (pe_vad_sends: a word, or its hangover) and nothing blocks the call.
+pub fn ln_own_talking(call_blocks: bool, gate_open: bool) -> bool {
+    return call_blocks == false and gate_open;
+}
+
+; The time a change of his talk carries: a start now; an end at his last word, so the other Pontes' windows end when
+; he stopped speaking and not when the hangover ran out (now when no word was heard).
+pub fn ln_own_talk_change_ms(talking: bool, now_ms: i64, has_last_voice: bool, last_voice_ms: i64) -> i64 {
+    if (talking or has_last_voice == false) { return now_ms; }
+    return last_voice_ms;
+}
+
+; When an incoming phrase started on the wall clock (ms): the length of its audio before the moment its end arrived,
+; or LN_PHRASE_FALLBACK_MS before its end without the transcriber's timing. A negative length counts as 0.
+; Times |t| < 2^62.
+pub fn ln_phrase_start_ms(has_timing: bool, end_arrived_ms: i64, audio_start_ms: i64, audio_end_ms: i64, end_ms: i64) -> i64 {
+    if (has_timing == false) { return end_ms - LN_PHRASE_FALLBACK_MS; }
+    var length: i64 = audio_end_ms - audio_start_ms;
+    if (length < 0) { length = 0; }
+    return end_arrived_ms - length;
+}
+
+; An incoming phrase is not translated when it is the owner's own voice back from the call (the talk key:
+; ln_own_talk_drops; his Ponte's own voice windows: pe_is_peer_voice) or, with the Russians' link on, another
+; Ponte's voice.
+pub fn ln_phrase_dropped(own_talk: bool, own_windows: bool, link_on: bool, peer_windows: bool) -> bool {
+    return own_talk or own_windows or (link_on and peer_windows);
+}
+
+; The talk-key log (OwnTalkLog): pressing opens an interval unless one is open, releasing closes the open one
+; (TALK_*); it keeps the last LN_TALK_LOG_KEEP intervals.
+pub const LN_TALK_NONE : i32 = 0;
+pub const LN_TALK_OPEN : i32 = 1;
+pub const LN_TALK_CLOSE : i32 = 2;
+pub const LN_TALK_LOG_KEEP : i64 = 20;
+pub fn ln_talk_log_step(held: bool, has_open: bool) -> i32 {
+    if (held) {
+        if (has_open) { return LN_TALK_NONE; }
+        return LN_TALK_OPEN;
+    }
+    if (has_open) { return LN_TALK_CLOSE; }
+    return LN_TALK_NONE;
+}
+
+; How many of the oldest intervals the log forgets.
+pub fn ln_talk_log_forget(count: i64) -> i64 {
+    if (count > LN_TALK_LOG_KEEP) { return count - LN_TALK_LOG_KEEP; }
+    return 0;
+}
+
+; The speech backlog after an automatic phrase is queued: one more (never past 2^31 - 1, never from below 0).
+pub fn ln_backlog_after_queue(backlog: i32) -> i32 {
+    if (backlog < 0) { return 1; }
+    if (backlog >= 2147483647) { return backlog; }
+    return backlog + 1;
+}
+
+; Test mode (an outgoing test file): the talk key is held for the whole run, so the file is spoken as a person would.
+pub fn ln_test_holds_key(running: bool, has_test_file: bool) -> bool {
+    return running and has_test_file;
+}
+
 ; Segment.append: dropped once closed, forwarded once started, kept until then.
 pub fn ln_segment_append(started: bool, closed: bool) -> i32 {
     if (closed) { return LN_SEG_DROP; }
@@ -912,4 +1000,44 @@ test ln_moved_rules {
     assert ln_sink_pace_step(0.02) == 0.02;
     assert LN_DEFAULT_MODE == LN_MODE_CONTINUOUS;
     assert LN_DEFAULT_PTT_KEY == LN_PTT_RIGHT_OPTION;
+}
+
+test ln_intake_rules {
+    assert ln_intake_routes(true, true, false) == LN_ROUTE_RELAY | LN_ROUTE_PEERS;
+    assert ln_intake_routes(true, false, false) == LN_ROUTE_RELAY;
+    assert ln_intake_routes(false, true, false) == LN_ROUTE_PEERS;
+    assert ln_intake_routes(true, true, true) == 0;
+    assert ln_intake_routes(false, false, false) == 0;
+    assert ln_blocks_call(false, false) == false;
+    assert ln_blocks_call(true, false) == true;
+    assert ln_blocks_call(false, true) == true;
+    assert ln_own_voice_marks(true, false) == true;
+    assert ln_own_voice_marks(true, true) == false;
+    assert ln_own_voice_marks(false, false) == false;
+    assert ln_own_talking(false, true) == true;
+    assert ln_own_talking(true, true) == false;
+    assert ln_own_talking(false, false) == false;
+    assert ln_own_talk_change_ms(true, 5000, true, 4000) == 5000;
+    assert ln_own_talk_change_ms(false, 5000, true, 4000) == 4000;
+    assert ln_own_talk_change_ms(false, 5000, false, 4000) == 5000;
+    assert ln_phrase_start_ms(true, 10000, 2000, 3500, 10100) == 8500;
+    assert ln_phrase_start_ms(true, 10000, 3500, 2000, 10100) == 10000;
+    assert ln_phrase_start_ms(false, 10000, 2000, 3500, 10100) == 7100;
+    assert ln_phrase_dropped(false, false, true, true) == true;
+    assert ln_phrase_dropped(false, false, false, true) == false;
+    assert ln_phrase_dropped(true, false, false, false) == true;
+    assert ln_phrase_dropped(false, true, false, false) == true;
+    assert ln_phrase_dropped(false, false, true, false) == false;
+    assert ln_talk_log_step(true, false) == LN_TALK_OPEN;
+    assert ln_talk_log_step(true, true) == LN_TALK_NONE;
+    assert ln_talk_log_step(false, true) == LN_TALK_CLOSE;
+    assert ln_talk_log_step(false, false) == LN_TALK_NONE;
+    assert ln_talk_log_forget(20) == 0;
+    assert ln_talk_log_forget(21) == 1;
+    assert ln_talk_log_forget(0 - 3) == 0;
+    assert ln_backlog_after_queue(0) == 1;
+    assert ln_backlog_after_queue(0 - 4) == 1;
+    assert ln_backlog_after_queue(2147483647) == 2147483647;
+    assert ln_test_holds_key(true, true) == true;
+    assert ln_test_holds_key(false, true) == false;
 }

@@ -53,20 +53,24 @@ final class OwnTalkLog: @unchecked Sendable {
     private var intervals: [(start: Int64, end: Int64)] = []
 
     func setHeld(_ held: Bool, at date: Date) {
-        let ms = Int64((date.timeIntervalSince1970 * 1000).rounded())
+        let ms = AppRules.millis(date.timeIntervalSince1970)
         lock.withLock {
-            if held {
-                if intervals.last?.end != -1 { intervals.append((ms, -1)) }
-                if intervals.count > 20 { intervals.removeFirst(intervals.count - 20) }
-            } else if let last = intervals.indices.last, intervals[last].end == -1 {
-                intervals[last].end = ms
+            let open = intervals.last?.end == -1
+            switch AppRules.talkLogStep(held: held, hasOpen: open) {
+            case AppRules.TALK_OPEN:
+                intervals.append((ms, -1))
+                intervals.removeFirst(AppRules.talkLogForget(count: intervals.count))
+            case AppRules.TALK_CLOSE:
+                intervals[intervals.count - 1].end = ms
+            default:
+                break
             }
         }
     }
 
     func drops(start: Date, end: Date) -> Bool {
-        let s = Int64((start.timeIntervalSince1970 * 1000).rounded())
-        let e = Int64((end.timeIntervalSince1970 * 1000).rounded())
+        let s = AppRules.millis(start.timeIntervalSince1970)
+        let e = AppRules.millis(end.timeIntervalSince1970)
         let snapshot = lock.withLock { intervals }
         return snapshot.contains { AppRules.ownTalkDrops(phraseStartMs: s, phraseEndMs: e, talkStartMs: $0.start, talkEndMs: $0.end) }
     }
@@ -141,7 +145,7 @@ final class EchoGuard: @unchecked Sendable {
             AppRules.peerAudioBlocksCall(outputSealed: outputSealed,
                                          msSincePeerAudio: lastPeerAt.map { millis(now.timeIntervalSince($0)) } ?? -1)
         }
-        return peer || blocksMic(at: now)
+        return AppRules.blocksCall(micBlocks: blocksMic(at: now), peerAudioBlocks: peer)
     }
 }
 
@@ -479,8 +483,11 @@ final class TranslationLane {
             let timing = transcriber.timing(for: id)
             let end = phraseEnd(timing: timing, lastPartialAt: partialAt)
             if let dropsPhrase {
-                let start = timing.map { $0.audioEndArrivedAt.addingTimeInterval(-max(0, $0.audioEnd - $0.audioStart)) }
-                    ?? end.addingTimeInterval(-Double(AppRules.PHRASE_FALLBACK_MS) / 1000)
+                let startMs = AppRules.phraseStartMs(endArrivedMs: timing.map { AppRules.millis($0.audioEndArrivedAt.timeIntervalSince1970) },
+                                                     audioStartMs: timing.map { AppRules.millis($0.audioStart) } ?? 0,
+                                                     audioEndMs: timing.map { AppRules.millis($0.audioEnd) } ?? 0,
+                                                     endMs: AppRules.millis(end.timeIntervalSince1970))
+                let start = Date(timeIntervalSince1970: Double(startMs) / 1000)
                 if dropsPhrase(phrase, start, end) {
                     log.info("dropped a phrase that was not the other side: \(phrase, privacy: .private)")
                     PonteDiagnostics.log("incoming phrase dropped (own voice from the call)")
@@ -633,7 +640,7 @@ final class TranslationLane {
                                                         speakRequested: pending.speak))
             onEvent(.translated(line))
             if AppRules.stepAction(step) == AppRules.PACT_SYNTHESIZE {
-                speechBacklog += 1
+                speechBacklog = AppRules.backlogAfterQueue(speechBacklog)
                 synthInput?.yield(SpeakRequest(text: text, generation: pending.generation, counted: true))
             }
         } catch {
@@ -741,7 +748,7 @@ final class AudioIntake: @unchecked Sendable {
             let ended = lock.withLock { () -> Date? in
                 relayGeneration += 1
                 defer { ownTalking = false; lastOwnSignalAt = nil }
-                return ownTalking ? (lastOwnSignalAt ?? clock()) : nil
+                return ownTalking ? Self.changeTime(talking: false, now: clock(), lastVoice: lastOwnSignalAt) : nil
             }
             if let ended { onOwnTalk?(false, ended) }
         } else {
@@ -778,19 +785,19 @@ final class AudioIntake: @unchecked Sendable {
         // A Russian voice the mic may hear (Ponte's own, or another Russian's, on an output that is not sealed) goes
         // nowhere: not into the call, and not back to the other Russians as an echo of themselves.
         let callBlocks = echo?.blocksCall(at: now) ?? false
-        if !callBlocks {
-            relay?.push(buffer)
-            peer?(buffer, voice)
-        }
+        let routes = AppRules.intakeRoutes(hasRelay: relay != nil, hasPeers: peer != nil, callBlocks: callBlocks)
+        if routes & AppRules.ROUTE_RELAY != 0 { relay?.push(buffer) }
+        if routes & AppRules.ROUTE_PEERS != 0 { peer?(buffer, voice) }
         if relay != nil {
             let change: (Bool, Date)? = lock.withLock {
                 guard generation == relayGeneration, self.relay === relay else { return nil }   // the relay changed meanwhile
-                if voice && !callBlocks { lastOwnSignalAt = now }
+                if AppRules.ownVoiceMarks(voice: voice, callBlocks: callBlocks) { lastOwnSignalAt = now }
                 let since = lastOwnSignalAt.map { millis(now.timeIntervalSince($0)) } ?? -1
-                let talking = !callBlocks && PeerRules.vadSends(hasSignal: voice, msSinceSignal: since)
+                let talking = AppRules.ownTalking(callBlocks: callBlocks,
+                                                  gateOpen: PeerRules.vadSends(hasSignal: voice, msSinceSignal: since))
                 guard talking != ownTalking else { return nil }
                 ownTalking = talking
-                return (talking, talking ? now : (lastOwnSignalAt ?? now))
+                return (talking, Self.changeTime(talking: talking, now: now, lastVoice: lastOwnSignalAt))
             }
             if let change { onOwnTalk?(change.0, change.1) }
         }
@@ -804,11 +811,19 @@ final class AudioIntake: @unchecked Sendable {
         let ended: Date? = lock.withLock {
             guard ownTalking else { return nil }
             let since = lastOwnSignalAt.map { millis(now.timeIntervalSince($0)) } ?? -1
-            guard !PeerRules.vadSends(hasSignal: false, msSinceSignal: since) else { return nil }
+            let gateOpen = PeerRules.vadSends(hasSignal: false, msSinceSignal: since)
+            guard !AppRules.ownTalking(callBlocks: false, gateOpen: gateOpen) else { return nil }
             ownTalking = false
-            return lastOwnSignalAt ?? now
+            return Self.changeTime(talking: false, now: now, lastVoice: lastOwnSignalAt)
         }
         if let ended { onOwnTalk?(false, ended) }
+    }
+
+    /// The time a change of the owner's talk carries (AppRules.ownTalkChangeMs).
+    private static func changeTime(talking: Bool, now: Date, lastVoice: Date?) -> Date {
+        let ms = AppRules.ownTalkChangeMs(talking: talking, nowMs: AppRules.millis(now.timeIntervalSince1970),
+                                          lastVoiceMs: lastVoice.map { AppRules.millis($0.timeIntervalSince1970) })
+        return Date(timeIntervalSince1970: Double(ms) / 1000)
     }
 }
 
