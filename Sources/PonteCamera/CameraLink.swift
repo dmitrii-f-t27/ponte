@@ -117,6 +117,10 @@ public final class CameraLink: @unchecked Sendable {
     }
 
     private func accept(_ connection: NWConnection) {
+        guard CameraRules.linkTakesConnection(clients.count) else {
+            connection.cancel()
+            return
+        }
         let client = Client(connection)
         let id = ObjectIdentifier(client)
         connection.stateUpdateHandler = { [weak self] state in
@@ -131,6 +135,14 @@ public final class CameraLink: @unchecked Sendable {
         clients[id] = client
         connection.start(queue: queue)
         receive(client)
+        // A handshake not finished in time closes the connection.
+        let accepted = Date()
+        queue.asyncAfter(deadline: .now() + .milliseconds(CameraRules.linkHandshakeMs)) { [weak self, weak client] in
+            guard let self, let client, !client.open, self.clients[id] != nil else { return }
+            if CameraRules.linkHandshakeExpired(msSinceAccept: AudioRules.millis(Date().timeIntervalSince(accepted))) {
+                self.drop(id)
+            }
+        }
     }
 
     private func drop(_ id: ObjectIdentifier) {

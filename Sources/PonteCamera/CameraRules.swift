@@ -116,6 +116,10 @@ public enum CameraRules {
     }
 
     public static func linkAccepts(openClients: Int) -> Bool { cm_link_accepts(Int64(openClients)) }
+    /// A new TCP connection is taken while fewer than CM_LINK_CONNECTIONS_MAX are open or shaking hands.
+    public static func linkTakesConnection(_ connections: Int) -> Bool { cm_link_takes_connection(Int64(connections)) }
+    public static let linkHandshakeMs = Int(CM_LINK_HANDSHAKE_MS)
+    public static func linkHandshakeExpired(msSinceAccept: Int64) -> Bool { cm_link_handshake_expired(msSinceAccept) }
     /// The processed cameras an extension reports, held to 0...CM_LINK_CAMERAS_MAX.
     public static func linkCameras(_ reported: Int) -> Int { Int(cm_link_cameras(Int64(reported))) }
 

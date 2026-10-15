@@ -133,7 +133,13 @@ private typealias L = CameraRulesLegacy
             log.check(F.originAllowed(utf8: bytes), L.originAllowed(utf8: bytes), "\(bytes)")
         }
         for n in -3...10 { log.check(F.linkAccepts(openClients: n), L.linkAccepts(openClients: n), "\(n)") }
-        for n in Array(-20...40) + [Int.min, Int.max] { log.check(F.linkCameras(n), L.linkCameras(n), "cameras \(n)") }
+        for n in Array(-20...40) + [Int.min, Int.max] {
+            log.check(F.linkCameras(n), L.linkCameras(n), "cameras \(n)")
+            log.check(F.linkTakesConnection(n), L.linkTakesConnection(n), "connections \(n)")
+        }
+        for ms: Int64 in Array(stride(from: -1000, through: 12_000, by: 250)) + [4999, 5000, 5001, .min, .max] {
+            log.check(F.linkHandshakeExpired(msSinceAccept: ms), L.linkHandshakeExpired(msSinceAccept: ms), "handshake \(ms)")
+        }
         for listening in [false, true] { for failed in [false, true] {
             for clients in -1...3 { for active in -1...3 {
                 log.check(F.linkStatus(listening: listening, failed: failed, clients: clients, activeCameras: active),

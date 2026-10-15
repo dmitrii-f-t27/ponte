@@ -65,14 +65,15 @@ DispatchQueue.global().async {
     if let path = options["--send"] {
         do {
             let buffer = try FileSource.readMono(url: URL(fileURLWithPath: path))
-            let chunk = Int(buffer.format.sampleRate * 0.04)
+            let frame = Double(PeerRules.frameMs) / 1000   // the link's frame (peer_rules.t27)
+            let chunk = Int(buffer.format.sampleRate * frame)
             var at = 0
             let total = Int(buffer.frameLength)
             print("sending \(path): \(String(format: "%.1f", Double(total) / buffer.format.sampleRate)) s")
             while at < total, let piece = PCM.slice(buffer, at ..< min(total, at + chunk)) {
                 link.sendMicrophone(piece)
                 at += chunk
-                Thread.sleep(forTimeInterval: 0.04)
+                Thread.sleep(forTimeInterval: frame)
             }
             print("sent")
         } catch {

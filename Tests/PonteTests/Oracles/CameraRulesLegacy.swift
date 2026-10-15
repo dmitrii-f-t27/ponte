@@ -103,6 +103,8 @@ enum CameraRulesLegacy {
 
     static func linkAccepts(openClients: Int) -> Bool { (0..<clientsMax).contains(openClients) }
     static func linkCameras(_ reported: Int) -> Int { min(max(reported, 0), 16) }
+    static func linkTakesConnection(_ connections: Int) -> Bool { (0..<8).contains(connections) }
+    static func linkHandshakeExpired(msSinceAccept: Int64) -> Bool { msSinceAccept >= 5000 }
 
     static func linkStatus(listening: Bool, failed: Bool, clients: Int, activeCameras: Int) -> Int {
         if failed { return 1 }

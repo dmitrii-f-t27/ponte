@@ -2,6 +2,7 @@
 // gets the settings at once and after every change, reports its cameras; any other origin, a page without an Origin
 // and an oversized message are refused; the model keeps its settings in range and between launches.
 import Foundation
+import Network
 import PonteCamera
 import Testing
 @testable import PonteApp
@@ -103,6 +104,39 @@ import Testing
         #expect(await Self.waitUntil { status.get.2 == 1 })
         try? await task.send(.string(String(repeating: "x", count: CameraRules.linkMessageMax + 1)))
         #expect(await Self.waitUntil { status.get.2 == 0 })
+        link.stop()
+    }
+
+    /// Connections that never finish their handshake cannot pile up: at most CM_LINK_CONNECTIONS_MAX are taken, and
+    /// each is closed CM_LINK_HANDSHAKE_MS after it came, so the extension gets in afterwards.
+    @Test func silentConnectionsAreCappedAndExpire() async throws {
+        let port = Self.port()
+        let link = CameraLink(port: port)
+        let status = Box((false, false, 0, 0))
+        link.onStatus = { status.set(($0, $1, $2, $3)) }
+        link.start()
+        #expect(await Self.waitUntil { status.get.0 })
+        link.publish(Data(#"{"type":"settings","v":1,"on":true,"s":[]}"#.utf8))
+        let queue = DispatchQueue(label: "silent")
+        var silent: [NWConnection] = []
+        for _ in 0..<12 {
+            let c = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: UInt16(port))!, using: .tcp)
+            c.start(queue: queue)
+            silent.append(c)
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        // While they hold every seat, the extension's handshake gets no answer...
+        let early = Self.socket(port, origin: Self.origin)
+        let earlyResult = Box<Bool?>(nil)
+        Task { earlyResult.set((try? await early.receive()) != nil) }
+        // ...and after the deadline they are gone and a new connection gets the settings.
+        try await Task.sleep(for: .milliseconds(CameraRules.linkHandshakeMs + 700))
+        let task = Self.socket(port, origin: Self.origin)
+        let message = try #require(Self.json(try await task.receive()))
+        #expect(message["type"] as? String == "settings")
+        for c in silent { c.cancel() }
+        early.cancel()
+        task.cancel()
         link.stop()
     }
 

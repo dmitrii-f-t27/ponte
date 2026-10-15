@@ -48,6 +48,8 @@
 #define CM_LINK_PING_MS 20000
 #define CM_LINK_MESSAGE_MAX 4096
 #define CM_LINK_CLIENTS_MAX 4
+#define CM_LINK_CONNECTIONS_MAX 8
+#define CM_LINK_HANDSHAKE_MS 5000
 #define CM_LINK_CAMERAS_MAX 16
 #define CM_LINK_OFF 0
 #define CM_LINK_FAILED 1
@@ -87,6 +89,8 @@ int64_t cm_crop(int64_t zoom, int64_t pan_x, int64_t pan_y, int64_t mirror, floa
 bool cm_needs_processing(bool on, bool color_identity, bool frame_identity);
 int64_t cm_row(int64_t row, uint8_t out[static 256]);
 bool cm_origin_allowed(uint8_t text[static 256], int64_t len);
+bool cm_link_takes_connection(int64_t connections);
+bool cm_link_handshake_expired(int64_t ms_since_accept);
 bool cm_link_accepts(int64_t open_clients);
 int64_t cm_link_cameras(int64_t reported);
 int64_t cm_link_status(bool listening, bool failed, int64_t clients, int64_t active_cameras);
@@ -354,6 +358,14 @@ bool cm_origin_allowed(uint8_t text[static 256], int64_t len) {
     return true;
 }
 
+bool cm_link_takes_connection(int64_t connections) {
+    return ((connections >= 0) && (connections < CM_LINK_CONNECTIONS_MAX));
+}
+
+bool cm_link_handshake_expired(int64_t ms_since_accept) {
+    return (ms_since_accept >= CM_LINK_HANDSHAKE_MS);
+}
+
 bool cm_link_accepts(int64_t open_clients) {
     return ((open_clients >= 0) && (open_clients < CM_LINK_CLIENTS_MAX));
 }
@@ -581,6 +593,11 @@ void test_cm_link_rules(void) {
     assert((cm_origin_allowed(t, n) == false));
     assert((cm_row(CM_ROW_COUNT, t) == 0));
     assert((cm_row((0 - 1), t) == 0));
+    assert((cm_link_takes_connection(7) == true));
+    assert((cm_link_takes_connection(8) == false));
+    assert((cm_link_takes_connection((0 - 1)) == false));
+    assert((cm_link_handshake_expired(4999) == false));
+    assert((cm_link_handshake_expired(5000) == true));
     assert((cm_link_cameras((0 - 3)) == 0));
     assert((cm_link_cameras(2) == 2));
     assert((cm_link_cameras(17) == 16));
