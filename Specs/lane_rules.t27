@@ -323,6 +323,9 @@ pub fn ln_ptt_scope(running: bool, mode: i32, accessibility_granted: bool) -> i3
 ; Directions: incoming (they speak pt-BR, Ponte shows Russian), outgoing (Russian into the call as pt-BR).
 pub const LN_DIR_INCOMING : i32 = 0;
 pub const LN_DIR_OUTGOING : i32 = 1;
+; Languages (the same codes as SG_LANG_* in segment_rules.t27 and VO_LANG_* in voice_rules.t27).
+pub const LN_LANG_PT_BR : i32 = 0;
+pub const LN_LANG_RU : i32 = 1;
 ; Defaults of the settings: the outgoing mode and the push-to-talk key.
 pub const LN_DEFAULT_MODE : i32 = 0;
 pub const LN_DEFAULT_PTT_KEY : i32 = 0;
@@ -616,6 +619,19 @@ pub fn ln_call_output(has_sink: bool, has_blackhole: bool) -> i32 {
     if (has_sink) { return LN_OUT_SINK; }
     if (has_blackhole) { return LN_OUT_DEVICE; }
     return LN_OUT_NONE;
+}
+
+; The language a direction listens to and the one it translates into (Direction.source and .target, moved from
+; Contracts.swift 2026-10-15): incoming hears pt-BR and gives Russian, outgoing hears Russian and gives pt-BR. An
+; unknown direction is the outgoing one (Swift has only the two).
+pub fn ln_dir_source(direction: i32) -> i32 {
+    if (direction == LN_DIR_INCOMING) { return LN_LANG_PT_BR; }
+    return LN_LANG_RU;
+}
+
+pub fn ln_dir_target(direction: i32) -> i32 {
+    if (direction == LN_DIR_INCOMING) { return LN_LANG_RU; }
+    return LN_LANG_PT_BR;
 }
 
 ; The incoming lane always transcribes everything. The outgoing lane is push-to-talk only: the owner
@@ -999,6 +1015,18 @@ test ln_moved_rules {
     assert ln_lane_voice_in_call(LN_DIR_INCOMING) == false;
     assert ln_glossary_source_is_pt(LN_DIR_INCOMING) == true;
     assert ln_glossary_source_is_pt(LN_DIR_OUTGOING) == false;
+    // Each direction translates between the two languages, and the two directions are each other's reverse.
+    assert ln_dir_source(LN_DIR_INCOMING) == LN_LANG_PT_BR;
+    assert ln_dir_target(LN_DIR_INCOMING) == LN_LANG_RU;
+    assert ln_dir_source(LN_DIR_OUTGOING) == LN_LANG_RU;
+    assert ln_dir_target(LN_DIR_OUTGOING) == LN_LANG_PT_BR;
+    assert ln_dir_source(LN_DIR_INCOMING) == ln_dir_target(LN_DIR_OUTGOING);
+    assert ln_dir_target(LN_DIR_INCOMING) == ln_dir_source(LN_DIR_OUTGOING);
+    assert ln_dir_source(LN_DIR_INCOMING) != ln_dir_target(LN_DIR_INCOMING);
+    // The glossary's Portuguese side is the side the direction listens to.
+    if (ln_glossary_source_is_pt(LN_DIR_INCOMING)) { assert ln_dir_source(LN_DIR_INCOMING) == LN_LANG_PT_BR; }
+    if (ln_glossary_source_is_pt(LN_DIR_OUTGOING) == false) { assert ln_dir_source(LN_DIR_OUTGOING) != LN_LANG_PT_BR; }
+    assert ln_dir_source(7) == LN_LANG_RU;
     assert ln_ptt_local(LN_PTT_SCOPE_WINDOW) == true;
     assert ln_ptt_local(LN_PTT_SCOPE_NONE) == false;
     assert ln_ptt_global(LN_PTT_SCOPE_GLOBAL) == true;

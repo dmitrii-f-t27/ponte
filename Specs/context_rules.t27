@@ -63,6 +63,9 @@ pub const CX_CLAUDE_MAX_TOKENS : i64 = 1024;
 pub const CX_CLAUDE_EFFORT_CODE : i64 = 0;
 ; claudeRequestTimeoutMs: the URLRequest timeout; the per-attempt limit above is shorter.
 pub const CX_CLAUDE_REQUEST_TIMEOUT_MS : i64 = 20000;
+; claudeErrorExcerptBytes: a failed request without an error message shows at most this many bytes of the reply
+; (ClaudeTranslator.parseResponse's 300 before 2026-10-15; the same length as AN_ERROR_EXCERPT_CHARS).
+pub const CX_CLAUDE_ERROR_EXCERPT_BYTES : i64 = 300;
 ; Room in the out-buffers of the two byte strings.
 pub const CX_TEXT_OUT_MAX : u32 = 64;
 
@@ -374,6 +377,7 @@ test cx_claude_request {
     assert CX_CLAUDE_MAX_TOKENS == 1024;
     assert CX_CLAUDE_EFFORT_CODE == 0;
     assert CX_CLAUDE_REQUEST_TIMEOUT_MS == 20000;
+    assert CX_CLAUDE_ERROR_EXCERPT_BYTES == 300;
 }
 
 test cx_moved_rules {

@@ -50,6 +50,7 @@ static const uint8_t CX_ANTHROPIC_VERSION[10] = { 50, 48, 50, 51, 45, 48, 54, 45
 #define CX_CLAUDE_MAX_TOKENS 1024
 #define CX_CLAUDE_EFFORT_CODE 0
 #define CX_CLAUDE_REQUEST_TIMEOUT_MS 20000
+#define CX_CLAUDE_ERROR_EXCERPT_BYTES 300
 #define CX_TEXT_OUT_MAX 64
 #define CX_ROW_EFFORT_LOW 0
 #define CX_ROW_EFFORT_MEDIUM 1
@@ -405,6 +406,7 @@ void test_cx_claude_request(void) {
     assert((CX_CLAUDE_MAX_TOKENS == 1024));
     assert((CX_CLAUDE_EFFORT_CODE == 0));
     assert((CX_CLAUDE_REQUEST_TIMEOUT_MS == 20000));
+    assert((CX_CLAUDE_ERROR_EXCERPT_BYTES == 300));
 }
 
 void test_cx_moved_rules(void) {

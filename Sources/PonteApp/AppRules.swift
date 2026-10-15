@@ -460,12 +460,7 @@ enum AppRules {
 
     static let DIR_INCOMING: Int32 = LN_DIR_INCOMING
     static let DIR_OUTGOING: Int32 = LN_DIR_OUTGOING
-    static func directionCode(_ direction: Direction) -> Int32 {
-        switch direction {
-        case .incoming: DIR_INCOMING
-        case .outgoing: DIR_OUTGOING
-        }
-    }
+    static func directionCode(_ direction: Direction) -> Int32 { direction.specCode }
 
     /// Defaults of the settings: «Авто» and the right Option key.
     static let DEFAULT_MODE: Int32 = LN_DEFAULT_MODE

@@ -4,6 +4,7 @@
 import Foundation
 import Network
 import PonteCamera
+import PonteSpecs
 import Testing
 @testable import PonteApp
 
@@ -45,10 +46,10 @@ import Testing
     @Test func theExtensionGetsTheSettingsAndReportsItsCameras() async throws {
         let port = Self.port()
         let link = CameraLink(port: port)
-        let status = Box((false, false, 0, 0))
-        link.onStatus = { status.set(($0, $1, $2, $3)) }
+        let status = Box(CameraLinkStatus())
+        link.onStatus = { status.set($0) }
         link.start()
-        #expect(await Self.waitUntil { status.get.0 })
+        #expect(await Self.waitUntil { status.get.listening })
         let first = Data(#"{"type":"settings","v":1,"on":true,"s":[10,0,0,0,0,100,0,0,0]}"#.utf8)
         link.publish(first)
 
@@ -56,7 +57,7 @@ import Testing
         let message = try #require(Self.json(try await task.receive()))
         #expect(message["type"] as? String == "settings")
         #expect((message["s"] as? [Int])?.first == 10)
-        #expect(await Self.waitUntil { status.get.2 == 1 })
+        #expect(await Self.waitUntil { status.get.clients == 1 })
 
         // A change reaches the connected extension.
         link.publish(Data(#"{"type":"settings","v":1,"on":false,"s":[0,0,0,0,0,200,0,0,1]}"#.utf8))
@@ -65,45 +66,82 @@ import Testing
 
         // Its Meet pages' cameras reach the panel, held to the spec's limit.
         try await task.send(.string(#"{"type":"status","v":1,"cameras":2}"#))
-        #expect(await Self.waitUntil { status.get.3 == 2 })
+        #expect(await Self.waitUntil { status.get.processed == 2 })
         try await task.send(.string(#"{"type":"status","v":1,"cameras":99}"#))
-        #expect(await Self.waitUntil { status.get.3 == CameraRules.linkCameras(99) })
-        #expect(CameraRules.linkStatus(listening: status.get.0, failed: status.get.1, clients: status.get.2,
-                                       activeCameras: status.get.3) == CameraRules.linkActive)
+        #expect(await Self.waitUntil { status.get.processed == CameraRules.linkCameras(99) })
+        #expect(status.get.code == CameraRules.linkActive)
 
         task.cancel(with: .goingAway, reason: nil)
-        #expect(await Self.waitUntil { status.get.2 == 0 && status.get.3 == 0 })
+        #expect(await Self.waitUntil { status.get.clients == 0 && status.get.processed == 0 })
+        link.stop()
+    }
+
+    /// Version 2 of the status: frames that pass as they came are not "processed", a camera in trouble is shown before
+    /// a processed one, and the page's error arrives cleaned (printable ASCII, the spec's limits).
+    @Test func passingAndTroubleAndTheErrorReachThePanel() async throws {
+        let port = Self.port()
+        let link = CameraLink(port: port)
+        let status = Box(CameraLinkStatus())
+        link.onStatus = { status.set($0) }
+        link.start()
+        #expect(await Self.waitUntil { status.get.listening })
+        link.publish(Data(#"{"type":"settings","v":1,"on":true,"s":[]}"#.utf8))
+        let task = Self.socket(port, origin: Self.origin)
+        _ = try await task.receive()
+
+        try await task.send(.string(#"{"type":"status","v":1,"cameras":0,"passing":1,"troubled":0,"error":null}"#))
+        #expect(await Self.waitUntil { status.get.passing == 1 })
+        #expect(status.get.code == CameraRules.linkPassing)
+
+        let longMessage = String(repeating: "m", count: 300)
+        let report = #"{"type":"status","v":1,"cameras":1,"passing":0,"troubled":1,"#
+            + #""error":{"stage":2,"renderer":0,"name":"InvalidStateError\u0007","message":"bad\nframe \#(longMessage)"}}"#
+        try await task.send(.string(report))
+        #expect(await Self.waitUntil { status.get.troubled == 1 })
+        #expect(status.get.code == CameraRules.linkTrouble)
+        let error = try #require(status.get.error)
+        #expect(error.stage == CameraRules.stageUpload && error.renderer == Int(CM_RV_WEBGL_BITMAP))
+        #expect(error.name == "InvalidStateError")
+        #expect(error.message.hasPrefix("badframe mmm") && error.message.utf8.count == Int(CM_REPORT_TEXT_MAX))
+
+        // An unknown stage and renderer are held to the known ones: no stage, and the first renderer tried
+        // (CM_RV_FIRST, WebGL2 from the canvas).
+        try await task.send(.string(#"{"type":"status","v":1,"cameras":0,"passing":0,"troubled":1,"error":{"stage":99,"renderer":-4,"name":"x","message":"y"}}"#))
+        #expect(await Self.waitUntil { status.get.error?.name == "x" })
+        #expect(status.get.error?.stage == CameraRules.stageNone && status.get.error?.renderer == Int(CM_RV_FIRST))
+        #expect(Int(CM_RV_FIRST) == Int(CM_RV_WEBGL_CANVAS) && CameraRules.reportRenderer(-4) == Int(CM_RV_FIRST))
+        task.cancel(with: .goingAway, reason: nil)
         link.stop()
     }
 
     @Test func otherOriginsAreRefused() async throws {
         let port = Self.port()
         let link = CameraLink(port: port)
-        let status = Box((false, false, 0, 0))
-        link.onStatus = { status.set(($0, $1, $2, $3)) }
+        let status = Box(CameraLinkStatus())
+        link.onStatus = { status.set($0) }
         link.start()
-        #expect(await Self.waitUntil { status.get.0 })
+        #expect(await Self.waitUntil { status.get.listening })
         link.publish(Data(#"{"type":"settings","v":1,"on":true,"s":[]}"#.utf8))
         for origin in ["https://meet.google.com", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Self.origin + "/", nil] {
             let task = Self.socket(port, origin: origin)
             await #expect(throws: (any Error).self, "origin \(origin ?? "none")") { _ = try await task.receive() }
         }
-        #expect(status.get.2 == 0)
+        #expect(status.get.clients == 0)
         link.stop()
     }
 
     @Test func anOversizedMessageClosesTheConnection() async throws {
         let port = Self.port()
         let link = CameraLink(port: port)
-        let status = Box((false, false, 0, 0))
-        link.onStatus = { status.set(($0, $1, $2, $3)) }
+        let status = Box(CameraLinkStatus())
+        link.onStatus = { status.set($0) }
         link.start()
-        #expect(await Self.waitUntil { status.get.0 })
+        #expect(await Self.waitUntil { status.get.listening })
         let task = Self.socket(port, origin: Self.origin)
         try await task.send(.string(#"{"type":"hello","v":1}"#))
-        #expect(await Self.waitUntil { status.get.2 == 1 })
+        #expect(await Self.waitUntil { status.get.clients == 1 })
         try? await task.send(.string(String(repeating: "x", count: CameraRules.linkMessageMax + 1)))
-        #expect(await Self.waitUntil { status.get.2 == 0 })
+        #expect(await Self.waitUntil { status.get.clients == 0 })
         link.stop()
     }
 
@@ -112,10 +150,10 @@ import Testing
     @Test func silentConnectionsAreCappedAndExpire() async throws {
         let port = Self.port()
         let link = CameraLink(port: port)
-        let status = Box((false, false, 0, 0))
-        link.onStatus = { status.set(($0, $1, $2, $3)) }
+        let status = Box(CameraLinkStatus())
+        link.onStatus = { status.set($0) }
         link.start()
-        #expect(await Self.waitUntil { status.get.0 })
+        #expect(await Self.waitUntil { status.get.listening })
         link.publish(Data(#"{"type":"settings","v":1,"on":true,"s":[]}"#.utf8))
         let queue = DispatchQueue(label: "silent")
         var silent: [NWConnection] = []

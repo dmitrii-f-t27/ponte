@@ -13,7 +13,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "PonteSpecs", cSettings: [.unsafeFlags(["-ffp-contract=off"])]),
-        .target(name: "PonteCore"),
+        .target(name: "PonteCore", dependencies: ["PonteSpecs"]),
         // Catches Objective-C exceptions AVAudioEngine raises (Swift cannot), so a device change never aborts the app.
         .target(name: "PonteObjC"),
         .target(name: "PonteAudio", dependencies: ["PonteCore", "PonteSpecs", "PonteObjC"]),

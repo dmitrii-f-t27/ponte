@@ -1,0 +1,347 @@
+// SPDX-License-Identifier: MIT
+; Specs/relay_rules.t27 -- Ponte: the blind relay of "Russkie v zvonke" (relay/server.js)
+; The relay forwards end-to-end encrypted binary frames between the members of a room and never reads them. Moved
+; out of relay/server.js on 2026-10-15 (before, every rule below was written in the JavaScript): which upgrade path
+; names a room, the health path and the methods it answers, who may join (room seats, the relay's own limits, connections from one address),
+; the frame rate a connection may send, which frames are forwarded and to whom (a receiver too far behind skips
+; frames), the ping round that drops a silent connection, what a room does when someone leaves, which hop of
+; X-Forwarded-For is the client, and every limit and timer. server.js runs this C, built to WebAssembly by
+; relay/build-wasm.sh (relay/rl.wasm is committed: Railway runs `npm start` and never needs t27c or zig).
+; The numbers the Pontes rely on agree with peer_rules.t27 (RL_CLOSE_ROOM_FULL = PE_CLOSE_ROOM_FULL; the room's
+; seats and the ping fit PE_ROOM_FULL_RETRY_MS), checked by Tests/PonteTests/SpecsTests.swift.
+; Paths are bytes in a buffer of RL_PATH_MAX with their length (a longer length is read as no match). Times are
+; milliseconds of one clock, within +-2^62. ASCII only.
+; Generated C: Sources/PonteSpecs/relay_rules.h (Specs/generate.sh).
+
+module PonteRelayRules;
+
+; --- Limits --------------------------------------------------------------------------------------------------------
+; The port when PORT is not set.
+pub const RL_PORT_DEFAULT : i64 = 8080;
+; Bytes in one message; a larger one closes its sender (the WebSocket library's 1009).
+pub const RL_MAX_PAYLOAD : i64 = 65536;
+; Members of one room; the next one is closed with RL_CLOSE_ROOM_FULL.
+pub const RL_ROOM_MEMBERS_MAX : i64 = 6;
+pub const RL_CLOSE_ROOM_FULL : i64 = 4001;
+; The relay itself is full: connections, rooms, or connections from one address.
+pub const RL_CLOSE_SERVER_FULL : i64 = 4002;
+pub const RL_CONNECTIONS_MAX : i64 = 1000;
+pub const RL_ROOMS_MAX : i64 = 300;
+pub const RL_PER_ADDRESS_MAX : i64 = 12;
+; Messages a connection may send in one window; the rest of the window's messages are dropped.
+pub const RL_RATE_LIMIT : i64 = 200;
+pub const RL_RATE_WINDOW_MS : i64 = 1000;
+; A ping round this often; a connection that did not answer the last one is terminated.
+pub const RL_PING_MS : i64 = 10000;
+; The log's "connections=N rooms=M" line at most this often, only when it changed.
+pub const RL_STATS_MS : i64 = 60000;
+; A receiver with more than this many bytes waiting (about 2 s of voice) skips frames: late audio is useless.
+pub const RL_MAX_BUFFERED : i64 = 65536;
+; A room is "/r/" and a SHA-256 digest as 64 lowercase hex characters.
+pub const RL_ROOM_HEX : i64 = 64;
+pub const RL_ROOM_PATH_BYTES : i64 = 67;
+pub const RL_PATH_MAX : i64 = 256;
+
+; The limits by key (K_*), so the server reads every number from here.
+pub const RL_K_PORT : i64 = 0;
+pub const RL_K_MAX_PAYLOAD : i64 = 1;
+pub const RL_K_ROOM_MEMBERS : i64 = 2;
+pub const RL_K_CLOSE_ROOM_FULL : i64 = 3;
+pub const RL_K_CLOSE_SERVER_FULL : i64 = 4;
+pub const RL_K_CONNECTIONS : i64 = 5;
+pub const RL_K_ROOMS : i64 = 6;
+pub const RL_K_PER_ADDRESS : i64 = 7;
+pub const RL_K_RATE_LIMIT : i64 = 8;
+pub const RL_K_RATE_WINDOW_MS : i64 = 9;
+pub const RL_K_PING_MS : i64 = 10;
+pub const RL_K_STATS_MS : i64 = 11;
+pub const RL_K_MAX_BUFFERED : i64 = 12;
+pub const RL_K_COUNT : i64 = 13;
+
+; Who may join (JOIN_*): the room takes the connection, or it is closed with one of the close codes.
+pub const RL_JOIN : i64 = 0;
+; The ping round (PING_*): terminate a connection that did not answer; mark it and ping it; mark it only (its socket
+; is not open, so no ping is sent).
+pub const RL_PING_TERMINATE : i64 = 0;
+pub const RL_PING_SEND : i64 = 1;
+pub const RL_PING_MARK : i64 = 2;
+; After someone left (LEFT_*): the empty room is deleted, or the members still there get the new count.
+pub const RL_LEFT_DELETE : i64 = 0;
+pub const RL_LEFT_ANNOUNCE : i64 = 1;
+; HTTP answers.
+pub const RL_HTTP_OK : i64 = 200;
+pub const RL_HTTP_BAD_REQUEST : i64 = 400;
+pub const RL_HTTP_NOT_FOUND : i64 = 404;
+; A plain HTTP request's method (METHOD_*): GET, HEAD, any other.
+pub const RL_METHOD_OTHER : i64 = 0;
+pub const RL_METHOD_GET : i64 = 1;
+pub const RL_METHOD_HEAD : i64 = 2;
+
+; A limit by key (an unknown key: 0).
+pub fn rl_limit(key: i64) -> i64 {
+    if (key == RL_K_PORT) { return RL_PORT_DEFAULT; }
+    if (key == RL_K_MAX_PAYLOAD) { return RL_MAX_PAYLOAD; }
+    if (key == RL_K_ROOM_MEMBERS) { return RL_ROOM_MEMBERS_MAX; }
+    if (key == RL_K_CLOSE_ROOM_FULL) { return RL_CLOSE_ROOM_FULL; }
+    if (key == RL_K_CLOSE_SERVER_FULL) { return RL_CLOSE_SERVER_FULL; }
+    if (key == RL_K_CONNECTIONS) { return RL_CONNECTIONS_MAX; }
+    if (key == RL_K_ROOMS) { return RL_ROOMS_MAX; }
+    if (key == RL_K_PER_ADDRESS) { return RL_PER_ADDRESS_MAX; }
+    if (key == RL_K_RATE_LIMIT) { return RL_RATE_LIMIT; }
+    if (key == RL_K_RATE_WINDOW_MS) { return RL_RATE_WINDOW_MS; }
+    if (key == RL_K_PING_MS) { return RL_PING_MS; }
+    if (key == RL_K_STATS_MS) { return RL_STATS_MS; }
+    if (key == RL_K_MAX_BUFFERED) { return RL_MAX_BUFFERED; }
+    return 0;
+}
+
+; --- Paths ---------------------------------------------------------------------------------------------------------
+; A lowercase hex digit: 0-9 or a-f.
+pub fn rl_hex_digit(b: u8) -> bool {
+    return (b >= 48 and b <= 57) or (b >= 97 and b <= 102);
+}
+
+; The upgrade path names a room: exactly "/r/" and RL_ROOM_HEX lowercase hex digits, nothing before or after (no
+; query, no slash, no upper case). The same as server.js's /^\/r\/([0-9a-f]{64})$/ before 2026-10-15.
+pub fn rl_room_path(text: [256]u8, len: i64) -> bool {
+    if (len != RL_ROOM_PATH_BYTES) { return false; }
+    if (text[0] != 47 or text[1] != 114 or text[2] != 47) { return false; }
+    var k: i64 = 3;
+    while (k < RL_ROOM_PATH_BYTES) {
+        if (rl_hex_digit(text[k]) == false) { return false; }
+        k = k + 1;
+    }
+    return true;
+}
+
+; The health path, exactly "/healthz".
+pub fn rl_health_path(text: [256]u8, len: i64) -> bool {
+    if (len != 8) { return false; }
+    return text[0] == 47 and text[1] == 104 and text[2] == 101 and text[3] == 97 and text[4] == 108
+        and text[5] == 116 and text[6] == 104 and text[7] == 122;
+}
+
+; A request's method from its bytes: exactly "GET" or "HEAD" (methods are case-sensitive, RFC 9110 9.1: "get" is
+; another method), else other. The same as server.js's req.method === 'GET' || req.method === 'HEAD' before
+; 2026-10-15.
+pub fn rl_http_method(text: [256]u8, len: i64) -> i64 {
+    if (len == 3 and text[0] == 71 and text[1] == 69 and text[2] == 84) { return RL_METHOD_GET; }
+    if (len == 4 and text[0] == 72 and text[1] == 69 and text[2] == 65 and text[3] == 68) { return RL_METHOD_HEAD; }
+    return RL_METHOD_OTHER;
+}
+
+; The answer to a plain HTTP request: the health check for GET or HEAD of the health path, else not found.
+pub fn rl_http_status(method: i64, health: bool) -> i64 {
+    if ((method == RL_METHOD_GET or method == RL_METHOD_HEAD) and health) { return RL_HTTP_OK; }
+    return RL_HTTP_NOT_FOUND;
+}
+
+; --- Joining ---------------------------------------------------------------------------------------------------------
+; Whether a connection to a room joins (RL_JOIN) or the close code it gets. `room_members`: members of its room
+; now (0 when the room does not exist yet); `connections` and `rooms`: the relay's totals; `from_address`:
+; connections now open from the client's address; `per_address_max` and `connections_max`: the limits in force
+; (RL_PER_ADDRESS_MAX and RL_CONNECTIONS_MAX unless a test sets others). A full room is told first.
+pub fn rl_admit(room_members: i64, room_exists: bool, connections: i64, rooms: i64, from_address: i64, per_address_max: i64, connections_max: i64) -> i64 {
+    if (room_exists and room_members >= RL_ROOM_MEMBERS_MAX) { return RL_CLOSE_ROOM_FULL; }
+    if (connections >= connections_max) { return RL_CLOSE_SERVER_FULL; }
+    if (room_exists == false and rooms >= RL_ROOMS_MAX) { return RL_CLOSE_SERVER_FULL; }
+    if (from_address >= per_address_max) { return RL_CLOSE_SERVER_FULL; }
+    return RL_JOIN;
+}
+
+; Which X-Forwarded-For entry is the client: the last one, the hop Railway's proxy added (-1: none, use the socket's
+; own address).
+pub fn rl_forwarded_hop(count: i64) -> i64 {
+    if (count <= 0) { return 0 - 1; }
+    return count - 1;
+}
+
+; --- Frames ------------------------------------------------------------------------------------------------------------
+; A message at now_ms starts a new rate window when the current one began RL_RATE_WINDOW_MS or more before.
+pub fn rl_window_restarts(now_ms: i64, window_start_ms: i64) -> bool {
+    return now_ms - window_start_ms >= RL_RATE_WINDOW_MS;
+}
+
+; A message is within the rate when it is at most the RL_RATE_LIMIT-th of its window (count includes it). Every
+; message counts, text too.
+pub fn rl_rate_allows(count: i64) -> bool {
+    return count <= RL_RATE_LIMIT;
+}
+
+; Only binary messages are forwarded: text from clients is ignored.
+pub fn rl_forwards(is_binary: bool) -> bool {
+    return is_binary;
+}
+
+; A forwarded message goes to a member when it is not the sender, its socket is open, and it has at most
+; RL_MAX_BUFFERED bytes waiting.
+pub fn rl_forward_to(is_sender: bool, open: bool, buffered: i64) -> bool {
+    return is_sender == false and open and buffered <= RL_MAX_BUFFERED;
+}
+
+; The ping round for one connection: it answered the last ping (alive) or not, and its socket is open or not.
+pub fn rl_ping_action(alive: bool, open: bool) -> i64 {
+    if (alive == false) { return RL_PING_TERMINATE; }
+    if (open) { return RL_PING_SEND; }
+    return RL_PING_MARK;
+}
+
+; After a member left, with members_after still in the room.
+pub fn rl_left_action(members_after: i64) -> i64 {
+    if (members_after <= 0) { return RL_LEFT_DELETE; }
+    return RL_LEFT_ANNOUNCE;
+}
+
+; Connections from an address after one closed (0: the address is forgotten).
+pub fn rl_address_after_leave(open: i64) -> i64 {
+    if (open <= 1) { return 0; }
+    return open - 1;
+}
+
+; --- Tests -------------------------------------------------------------------------------------------------------------
+test rl_limits_rules {
+    var k: i64 = 0;
+    while (k < RL_K_COUNT) {
+        assert rl_limit(k) > 0;
+        k = k + 1;
+    }
+    assert rl_limit(RL_K_COUNT) == 0;
+    assert rl_limit(0 - 1) == 0;
+    assert rl_limit(RL_K_MAX_PAYLOAD) == 65536;
+    assert rl_limit(RL_K_ROOM_MEMBERS) == 6;
+    assert rl_limit(RL_K_CLOSE_ROOM_FULL) == 4001;
+    assert rl_limit(RL_K_CLOSE_SERVER_FULL) == 4002;
+    assert rl_limit(RL_K_RATE_LIMIT) == 200;
+    assert rl_limit(RL_K_PING_MS) == 10000;
+    assert rl_limit(RL_K_PER_ADDRESS) == 12;
+    // A connection that stopped answering is gone within two ping rounds (peer_rules counts on 20 s).
+    assert RL_PING_MS * 2 <= 20000;
+    assert RL_ROOM_PATH_BYTES == RL_ROOM_HEX + 3;
+    assert RL_ROOM_PATH_BYTES <= RL_PATH_MAX;
+}
+
+test rl_path_rules {
+    var t: [256]u8 = [0; 256];
+    t[0] = 47;
+    t[1] = 114;
+    t[2] = 47;
+    var k: i64 = 3;
+    while (k < 67) {
+        t[k] = 97;
+        k = k + 1;
+    }
+    assert rl_room_path(t, 67) == true;
+    assert rl_room_path(t, 66) == false;
+    assert rl_room_path(t, 68) == false;
+    assert rl_room_path(t, 0 - 1) == false;
+    t[40] = 57;
+    assert rl_room_path(t, 67) == true;
+    t[40] = 65;
+    assert rl_room_path(t, 67) == false;
+    t[40] = 103;
+    assert rl_room_path(t, 67) == false;
+    t[40] = 102;
+    assert rl_room_path(t, 67) == true;
+    t[1] = 82;
+    assert rl_room_path(t, 67) == false;
+    t[1] = 114;
+    t[2] = 63;
+    assert rl_room_path(t, 67) == false;
+    // Every byte as a digit: only 0-9 and a-f.
+    var b: i64 = 0;
+    var digits: i64 = 0;
+    while (b < 256) {
+        var u: u8 = cast_u8(b);
+        if (rl_hex_digit(u)) { digits = digits + 1; }
+        b = b + 1;
+    }
+    assert digits == 16;
+    var h: [256]u8 = [0; 256];
+    h[0] = 47;
+    h[1] = 104;
+    h[2] = 101;
+    h[3] = 97;
+    h[4] = 108;
+    h[5] = 116;
+    h[6] = 104;
+    h[7] = 122;
+    assert rl_health_path(h, 8) == true;
+    assert rl_health_path(h, 7) == false;
+    h[7] = 90;
+    assert rl_health_path(h, 8) == false;
+    assert rl_http_status(RL_METHOD_GET, true) == RL_HTTP_OK;
+    assert rl_http_status(RL_METHOD_HEAD, true) == RL_HTTP_OK;
+    assert rl_http_status(RL_METHOD_OTHER, true) == RL_HTTP_NOT_FOUND;
+    assert rl_http_status(RL_METHOD_GET, false) == RL_HTTP_NOT_FOUND;
+    assert rl_http_status(RL_METHOD_HEAD, false) == RL_HTTP_NOT_FOUND;
+    assert rl_http_status(9, true) == RL_HTTP_NOT_FOUND;
+    // Methods: GET and HEAD exactly; lower case, a longer or shorter name, POST: other.
+    var m: [256]u8 = [0; 256];
+    m[0] = 71;
+    m[1] = 69;
+    m[2] = 84;
+    assert rl_http_method(m, 3) == RL_METHOD_GET;
+    assert rl_http_method(m, 2) == RL_METHOD_OTHER;
+    assert rl_http_method(m, 4) == RL_METHOD_OTHER;
+    assert rl_http_method(m, 0 - 1) == RL_METHOD_OTHER;
+    m[0] = 103;
+    assert rl_http_method(m, 3) == RL_METHOD_OTHER;
+    m[0] = 72;
+    m[1] = 69;
+    m[2] = 65;
+    m[3] = 68;
+    assert rl_http_method(m, 4) == RL_METHOD_HEAD;
+    assert rl_http_method(m, 3) == RL_METHOD_OTHER;
+    m[3] = 100;
+    assert rl_http_method(m, 4) == RL_METHOD_OTHER;
+    m[0] = 80;
+    m[1] = 79;
+    m[2] = 83;
+    m[3] = 84;
+    assert rl_http_method(m, 4) == RL_METHOD_OTHER;
+}
+
+test rl_admit_rules {
+    assert rl_admit(0, false, 0, 0, 0, 12, 1000) == RL_JOIN;
+    assert rl_admit(5, true, 5, 1, 0, 12, 1000) == RL_JOIN;
+    assert rl_admit(6, true, 6, 1, 0, 12, 1000) == RL_CLOSE_ROOM_FULL;
+    // A full room is told first, even when the relay is full too.
+    assert rl_admit(6, true, 1000, 300, 12, 12, 1000) == RL_CLOSE_ROOM_FULL;
+    assert rl_admit(1, true, 1000, 1, 0, 12, 1000) == RL_CLOSE_SERVER_FULL;
+    assert rl_admit(0, false, 10, 300, 0, 12, 1000) == RL_CLOSE_SERVER_FULL;
+    assert rl_admit(1, true, 10, 300, 0, 12, 1000) == RL_JOIN;
+    assert rl_admit(0, false, 10, 1, 12, 12, 1000) == RL_CLOSE_SERVER_FULL;
+    assert rl_admit(0, false, 10, 1, 2, 2, 1000) == RL_CLOSE_SERVER_FULL;
+    assert rl_admit(0, false, 10, 1, 1, 2, 1000) == RL_JOIN;
+    assert rl_admit(0, false, 10, 1, 1, 2, 10) == RL_CLOSE_SERVER_FULL;
+    assert rl_forwarded_hop(0) == 0 - 1;
+    assert rl_forwarded_hop(1) == 0;
+    assert rl_forwarded_hop(3) == 2;
+}
+
+test rl_frame_rules {
+    assert rl_window_restarts(1000, 0) == true;
+    assert rl_window_restarts(999, 0) == false;
+    assert rl_window_restarts(5000, 4001) == false;
+    // The first message of a connection (window start 0) always starts a window.
+    assert rl_window_restarts(1760000000000, 0) == true;
+    assert rl_rate_allows(1) == true;
+    assert rl_rate_allows(200) == true;
+    assert rl_rate_allows(201) == false;
+    assert rl_forwards(true) == true;
+    assert rl_forwards(false) == false;
+    assert rl_forward_to(false, true, 0) == true;
+    assert rl_forward_to(false, true, 65536) == true;
+    assert rl_forward_to(false, true, 65537) == false;
+    assert rl_forward_to(true, true, 0) == false;
+    assert rl_forward_to(false, false, 0) == false;
+    assert rl_ping_action(false, true) == RL_PING_TERMINATE;
+    assert rl_ping_action(false, false) == RL_PING_TERMINATE;
+    assert rl_ping_action(true, true) == RL_PING_SEND;
+    assert rl_ping_action(true, false) == RL_PING_MARK;
+    assert rl_left_action(0) == RL_LEFT_DELETE;
+    assert rl_left_action(1) == RL_LEFT_ANNOUNCE;
+    assert rl_address_after_leave(1) == 0;
+    assert rl_address_after_leave(0) == 0;
+    assert rl_address_after_leave(3) == 2;
+}

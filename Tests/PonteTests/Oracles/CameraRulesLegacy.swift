@@ -112,4 +112,56 @@ enum CameraRulesLegacy {
         if clients <= 0 { return 2 }
         return activeCameras <= 0 ? 3 : 4
     }
+
+    // MARK: CameraLink's own checks before 2026-10-15 (moved to cm_ws_*), as its Swift wrote them inline.
+
+    /// handshake(): `guard request.hasPrefix("GET "), upgrade == "websocket", key non-empty else 400`, then the
+    /// origin (403), then `linkAccepts(openClients:)` (503).
+    static func wsHandshakeStatus(isGet: Bool, upgrade: Bool, hasKey: Bool, originAllowed: Bool, openClients: Int) -> Int {
+        guard isGet, upgrade, hasKey else { return 400 }
+        guard originAllowed else { return 403 }
+        guard linkAccepts(openClients: openClients) else { return 503 }
+        return 101
+    }
+
+    /// `if client.buffer.count > CameraRules.linkMessageMax { refuse(431) }`.
+    static func wsHeadTooLarge(_ buffered: Int) -> Bool { buffered > linkMessageMax }
+
+    /// readFrames(): 2 header bytes, 4 with length 126; 127 closed at once with 1009; then
+    /// `guard fin, masked, length <= linkMessageMax else close(masked ? 1009 : 1002)`.
+    static func wsFrameClose(fin: Bool, masked: Bool, len7: Int, length: Int) -> Int {
+        if len7 == 127 { return 1009 }
+        guard fin, masked, length <= linkMessageMax else { return masked ? 1009 : 1002 }
+        return 0
+    }
+    static func wsHeaderBytes(len7: Int) -> Int { len7 == 126 ? 4 : len7 == 127 ? 10 : 2 }
+
+    /// `switch opcode { 0x1 message, 0x8 close(1000), 0x9 pong, 0xA ignore, default close(1003) }`: (action, code).
+    static func wsOpcode(_ opcode: Int) -> (Int, Int) {
+        switch opcode {
+        case 0x1: return (0, 0)
+        case 0x8: return (1, 1000)
+        case 0x9: return (2, 0)
+        case 0xA: return (3, 0)
+        default: return (4, 1003)
+        }
+    }
+
+    /// send(): `payload.count < 126 ? count : 126` with a 16-bit length after.
+    static func wsSendLen7(_ length: Int) -> Int { length >= 0 && length < 126 ? length : 126 }
+
+    // MARK: Moved to camera_rules in the 0.1.14 review (cm_link_version_taken, cm_report_error_rank,
+    // cm_panel_install_open), as the Swift wrote them inline.
+
+    /// message(): `object["v"] as? Int == CameraRules.linkVersion`.
+    static func linkVersionTaken(_ v: Int?) -> Bool { v == linkVersion }
+
+    /// report(): `open.first { $0.troubled > 0 && $0.error != nil }?.error ?? open.compactMap(\.error).first`, as the
+    /// index of the chosen client (nil: none) over (has error, troubled) pairs.
+    static func chosenError(_ clients: [(hasError: Bool, troubled: Bool)]) -> Int? {
+        clients.firstIndex { $0.troubled && $0.hasError } ?? clients.firstIndex { $0.hasError }
+    }
+
+    /// CameraPanel: `camera.status == linkNoExtension || camera.status == linkOff`.
+    static func panelInstallOpen(status: Int) -> Bool { status == 2 || status == 0 }
 }

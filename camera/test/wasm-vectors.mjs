@@ -46,6 +46,65 @@ for (let i = 0; i < 40000; i++) {
   const m = Number(x.cm_crop(...fr.map(big), x.cm_wasm_floats()));
   wasm.push(hex(m));
 }
+// The pipeline, the link and the report (version 2): every value of their small domains, with values just outside.
+const B = BigInt, n = Number;
+const around = (count) => Array.from({ length: count + 4 }, (_, i) => i - 2);
+for (const s of around(6)) for (let needs = 0; needs < 2; needs++) for (let due = 0; due < 2; due++) for (let z = 0; z < 2; z++) {
+  input.push(`r ${s} ${needs} ${due} ${z}`);
+  wasm.push(`${n(x.cm_trk_route(B(s), needs, due, z))}`);
+}
+for (const s of around(6)) for (const e of around(6)) for (let u = 0; u < 2; u++) {
+  input.push(`s ${s} ${e} ${u}`);
+  wasm.push(`${n(x.cm_trk_step_state(B(s), B(e), u))} ${n(x.cm_trk_step_action(B(s), B(e), u))}`);
+}
+for (const s of around(6)) {
+  input.push(`b ${s}`);
+  wasm.push(`${n(x.cm_trk_bucket(B(s)))}`);
+}
+for (const v of around(3)) for (let ci = 0; ci < 2; ci++) {
+  input.push(`u ${v} ${ci}`);
+  wasm.push(`${x.cm_render_usable(B(v), ci)} ${n(x.cm_render_variant_held(B(v)))} ${n(x.cm_render_first(B(v), ci))}`);
+}
+for (const v of around(3)) for (const f of around(3)) for (const st of around(8)) for (let pr = 0; pr < 2; pr++)
+  for (let ci = 0; ci < 2; ci++) {
+  input.push(`x ${v} ${f} ${st} ${pr} ${ci}`);
+  const a = [B(v), B(f), B(st), pr, ci];
+  wasm.push(`${n(x.cm_render_next_variant(...a))} ${n(x.cm_render_next_fails(...a))} ${n(x.cm_render_retry_ms(...a))} ${n(x.cm_render_next_state(...a))}`);
+}
+const sinces = [-5, -1, 0, 1, 499, 500, 999, 1000, 1001, 29999, 30000, 299999, 300000, 300001, 9007199254740991];
+for (const r of around(5)) for (const since of sinces) for (const f of [-3, -1, ...around(36), 1000, 9007199254740991]) for (const pages of [-1, 0, 1, 7]) {
+  input.push(`d ${r} ${since} ${f} ${pages}`);
+  wasm.push(`${n(x.cm_dial_wait_ms(B(r), B(since), B(f), B(pages)))} ${n(x.cm_dial_delay_ms(B(f), B(pages)))} ${n(x.cm_dial_failures_after(B(f), 0))} ${n(x.cm_dial_failures_after(B(f), 1))}`);
+}
+const counts = [-2, -1, 0, 1, 2, 16, 17, 99];
+for (let lis = 0; lis < 2; lis++) for (let fail = 0; fail < 2; fail++) for (const cl of [-1, 0, 1, 4])
+  for (const pr of counts) for (const pa of counts) for (const tr of counts) {
+    input.push(`l ${lis} ${fail} ${cl} ${pr} ${pa} ${tr}`);
+    wasm.push(`${n(x.cm_link_panel(lis, fail, B(cl), B(pr), B(pa), B(tr)))} ${n(x.cm_link_cameras(B(pr)))}`);
+  }
+const bytesBuffer = () => new Uint8Array(x.memory.buffer, x.cm_wasm_bytes(), 256);
+for (let i = 0; i < 3000; i++) {
+  const kind = int(-1, 2);
+  const len = i < 257 ? i : int(0, 256);
+  const text = Array.from({ length: len }, () => (int(0, 2) === 0 ? int(0, 255) : int(32, 126)));
+  input.push(`k ${kind} ${len}${text.map((v) => ` ${v.toString(16)}`).join('')}`);
+  bytesBuffer().fill(0);
+  bytesBuffer().set(text);
+  const m = n(x.cm_report_clean(x.cm_wasm_bytes(), B(len), B(kind)));
+  const kept = Array.from(bytesBuffer().slice(0, m), (v) => ` ${v.toString(16).padStart(2, '0')}`).join('');
+  wasm.push(`${m}${kept} ${n(x.cm_report_stage(B(len)))}`);
+}
+// The pages' lease: around 0, the lease and the ends of the range (wall-clock ages, so JavaScript's safe integers).
+for (const since of [-9007199254740991, -90001, -90000, -89999, -1, 0, 1, 19999, 20000, 89999, 90000, 90001,
+  9007199254740991, ...Array.from({ length: 200 }, () => int(-100000, 100000))]) {
+  input.push(`g ${since}`);
+  wasm.push(`${n(x.cm_page_lease_left_ms(B(since)))}`);
+}
+for (const v of [-1, 0, 1, 2, 3, 9007199254740991]) for (let has = 0; has < 2; has++) for (let tr = 0; tr < 2; tr++) {
+  input.push(`v ${v} ${has} ${tr}`);
+  wasm.push(`${x.cm_link_version_taken(B(v))} ${n(x.cm_report_error_rank(has, tr))}`);
+}
+
 writeFileSync(join(work, 'in.txt'), input.join('\n') + '\n');
 const native = execFileSync(join(work, 'vectors'), { input: readFileSync(join(work, 'in.txt')), maxBuffer: 1 << 28 })
   .toString().trim().split('\n');

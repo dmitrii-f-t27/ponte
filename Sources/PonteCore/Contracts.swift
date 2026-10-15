@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import PonteSpecs
 
 // Shared contracts between PonteAudio, PonteSpeech and PonteApp.
 // Changes are additive: new requirements come with a default implementation in a
@@ -12,15 +13,34 @@ public enum Lang: String, Sendable, CaseIterable, Codable {
     public var locale: Locale { Locale(identifier: rawValue) }
     public var language: Locale.Language { Locale.Language(identifier: rawValue) }
     public var title: String { self == .ru ? "Русский" : "Português (Brasil)" }
+
+    /// The spec's language code (LN_LANG_*, lane_rules.t27), and the language of a code.
+    public var specCode: Int32 {
+        switch self {
+        case .ptBR: return LN_LANG_PT_BR
+        case .ru: return LN_LANG_RU
+        }
+    }
+
+    public init(specCode: Int32) { self = specCode == LN_LANG_PT_BR ? .ptBR : .ru }
 }
 
 /// incoming: call participants (pt-BR) → me (ru). outgoing: me (ru) → call (pt-BR).
+/// Which language each direction hears and gives is lane_rules.t27's (ln_dir_source, ln_dir_target).
 public enum Direction: String, Sendable, CaseIterable, Codable {
     case incoming
     case outgoing
 
-    public var source: Lang { self == .incoming ? .ptBR : .ru }
-    public var target: Lang { self == .incoming ? .ru : .ptBR }
+    /// The spec's direction code (LN_DIR_*).
+    public var specCode: Int32 {
+        switch self {
+        case .incoming: return LN_DIR_INCOMING
+        case .outgoing: return LN_DIR_OUTGOING
+        }
+    }
+
+    public var source: Lang { Lang(specCode: ln_dir_source(specCode)) }
+    public var target: Lang { Lang(specCode: ln_dir_target(specCode)) }
 }
 
 // MARK: - Audio

@@ -99,6 +99,8 @@
 #define LN_PTT_SCOPE_GLOBAL 2
 #define LN_DIR_INCOMING 0
 #define LN_DIR_OUTGOING 1
+#define LN_LANG_PT_BR 0
+#define LN_LANG_RU 1
 #define LN_DEFAULT_MODE 0
 #define LN_DEFAULT_PTT_KEY 0
 #define LN_STOP_SEGMENT_WAIT_MS 3000
@@ -182,6 +184,8 @@ int32_t ln_segment_close(bool started, bool closed);
 int32_t ln_source_kind(bool has_test_file);
 bool ln_requests_mic_permission(bool mic_is_live, int64_t mic_decision);
 int32_t ln_call_output(bool has_sink, bool has_blackhole);
+int32_t ln_dir_source(int32_t direction);
+int32_t ln_dir_target(int32_t direction);
 int32_t ln_lane_mode(int32_t direction, int32_t outgoing_mode);
 bool ln_lane_speaks(int32_t direction, bool speak_russian);
 bool ln_own_voice_available(bool running, bool has_call_output);

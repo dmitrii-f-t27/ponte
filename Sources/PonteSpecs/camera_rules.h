@@ -56,6 +56,84 @@
 #define CM_LINK_NO_EXTENSION 2
 #define CM_LINK_WAITING 3
 #define CM_LINK_ACTIVE 4
+#define CM_LINK_PASSING 5
+#define CM_LINK_TROUBLE 6
+#define CM_LINK_READ_MAX 16384
+#define CM_DIAL_START 0
+#define CM_DIAL_INSTALL 1
+#define CM_DIAL_TIMER 2
+#define CM_DIAL_PAGE 3
+#define CM_DIAL_CLOSED 4
+#define CM_DIAL_FIRST_MS 1000
+#define CM_DIAL_MEET_MAX_MS 30000
+#define CM_DIAL_IDLE_MAX_MS 300000
+#define CM_DIAL_FAILURES_CAP 32
+#define CM_HTTP_SWITCHING 101
+#define CM_HTTP_BAD_REQUEST 400
+#define CM_HTTP_FORBIDDEN 403
+#define CM_HTTP_TOO_LARGE 431
+#define CM_HTTP_BUSY 503
+#define CM_WS_CLOSE_NORMAL 1000
+#define CM_WS_CLOSE_PROTOCOL 1002
+#define CM_WS_CLOSE_UNSUPPORTED 1003
+#define CM_WS_CLOSE_TOO_BIG 1009
+#define CM_WSA_MESSAGE 0
+#define CM_WSA_CLOSE 1
+#define CM_WSA_PONG 2
+#define CM_WSA_IGNORE 3
+#define CM_WSA_UNSUPPORTED 4
+#define CM_WS_SEND_MAX 65535
+#define CM_TRK_STARTING 0
+#define CM_TRK_PASSING 1
+#define CM_TRK_PROCESSED 2
+#define CM_TRK_RECOVERING 3
+#define CM_TRK_FAILED 4
+#define CM_TRK_ENDED 5
+#define CM_TRK_COUNT 6
+#define CM_TEV_PASSED 0
+#define CM_TEV_HELD 1
+#define CM_TEV_DRAWN 2
+#define CM_TEV_WRITE_FAILED 3
+#define CM_TEV_STOPPED 4
+#define CM_TEV_SETTINGS 5
+#define CM_TEV_COUNT 6
+#define CM_TACT_NONE 0
+#define CM_TACT_CLEAR 1
+#define CM_TACT_RESET 2
+#define CM_TACT_CLOSE 3
+#define CM_ROUTE_PASS 0
+#define CM_ROUTE_DRAW 1
+#define CM_ROUTE_STOP 2
+#define CM_RV_WEBGL_BITMAP 0
+#define CM_RV_WEBGL_CANVAS 1
+#define CM_RV_CANVAS2D 2
+#define CM_RV_COUNT 3
+#define CM_RV_FIRST 1
+#define CM_STAGE_NONE 0
+#define CM_STAGE_CREATE 1
+#define CM_STAGE_UPLOAD 2
+#define CM_STAGE_DRAW 3
+#define CM_STAGE_OUTPUT 4
+#define CM_STAGE_LOST 5
+#define CM_STAGE_WRITE 6
+#define CM_STAGE_READ 7
+#define CM_STAGE_COUNT 8
+#define CM_RENDER_TRIES 3
+#define CM_RENDER_RETRY_FIRST_MS 250
+#define CM_RENDER_LOST_RETRY_MS 1000
+#define CM_RENDER_FAILED_RETRY_MS 30000
+#define CM_BUCKET_NONE 0
+#define CM_BUCKET_PASSING 1
+#define CM_BUCKET_PROCESSED 2
+#define CM_BUCKET_TROUBLE 3
+#define CM_REPORT_NAME 0
+#define CM_REPORT_TEXT 1
+#define CM_REPORT_NAME_MAX 64
+#define CM_REPORT_TEXT_MAX 200
+#define CM_ERROR_RANK_NONE 0
+#define CM_ERROR_RANK_PAST 1
+#define CM_ERROR_RANK_TROUBLE 2
+#define CM_POLICY_REV 2
 #define CM_ROW_EXTENSION_ORIGIN 0
 #define CM_ROW_OTHER_EXTENSION 1
 #define CM_ROW_MEET_PAGE 2
@@ -65,6 +143,8 @@
 static const uint8_t CM_ROW_TEXT[228] = { 99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 106, 105, 110, 108, 100, 99, 107, 100, 99, 98, 101, 111, 106, 104, 112, 97, 104, 112, 107, 97, 103, 109, 97, 99, 102, 100, 97, 112, 102, 110, 108, 110, 99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 104, 116, 116, 112, 115, 58, 47, 47, 109, 101, 101, 116, 46, 103, 111, 111, 103, 108, 101, 46, 99, 111, 109, 99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 106, 105, 110, 108, 100, 99, 107, 100, 99, 98, 101, 111, 106, 104, 112, 97, 104, 112, 107, 97, 103, 109, 97, 99, 102, 100, 97, 112, 102, 110, 108, 110, 47, 99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 74, 73, 78, 76, 68, 67, 75, 68, 67, 66, 69, 79, 74, 72, 80, 65, 72, 80, 75, 65, 71, 77, 65, 67, 70, 68, 65, 80, 70, 78, 76, 78 };
 static const uint32_t CM_ROW_OFFSETS[5] = { 0, 51, 102, 125, 177 };
 static const uint32_t CM_ROW_LENGTHS[5] = { 51, 51, 23, 52, 51 };
+#define CM_PAGE_REPORT_MS 20000
+#define CM_PAGE_LEASE_MS 90000
 
 /* -------------------------------------------------------
    Function prototypes
@@ -73,6 +153,7 @@ static const uint32_t CM_ROW_LENGTHS[5] = { 51, 51, 23, 52, 51 };
 int64_t cm_setting_min(int64_t kind);
 int64_t cm_setting_max(int64_t kind);
 int64_t cm_setting_default(int64_t kind);
+bool cm_default_on(void);
 int64_t cm_clamp_setting(int64_t kind, int64_t value);
 bool cm_preset_sets(int64_t kind);
 int64_t cm_preset_value(int64_t preset, int64_t kind);
@@ -93,7 +174,46 @@ bool cm_link_takes_connection(int64_t connections);
 bool cm_link_handshake_expired(int64_t ms_since_accept);
 bool cm_link_accepts(int64_t open_clients);
 int64_t cm_link_cameras(int64_t reported);
+bool cm_panel_install_open(int64_t status);
+bool cm_link_version_taken(int64_t v);
+int64_t cm_report_error_rank(bool has_error, bool troubled);
 int64_t cm_link_status(bool listening, bool failed, int64_t clients, int64_t active_cameras);
+int64_t cm_link_panel(bool listening, bool failed, int64_t clients, int64_t processed, int64_t passing, int64_t troubled);
+int64_t cm_ws_handshake_status(bool is_get, bool upgrade, bool has_key, bool origin_allowed, int64_t open_clients);
+bool cm_ws_head_too_large(int64_t buffered);
+int64_t cm_ws_header_bytes(int64_t len7);
+int64_t cm_ws_frame_close(bool fin, bool masked, int64_t len7, int64_t length);
+int64_t cm_ws_opcode_action(int64_t opcode);
+int64_t cm_ws_action_close(int64_t action);
+int64_t cm_ws_send_len7(int64_t len);
+bool cm_ws_send_fits(int64_t len);
+int64_t cm_dial_delay_ms(int64_t failures, int64_t pages);
+int64_t cm_dial_wait_ms(int64_t reason, int64_t ms_since, int64_t failures, int64_t pages);
+int64_t cm_dial_failures_after(int64_t failures, bool opened);
+int64_t cm_page_lease_left_ms(int64_t ms_since);
+int64_t cm_trk_route(int64_t state, bool needs, bool due, bool sized);
+bool cm_render_usable(int64_t variant, bool color_identity);
+bool cm_trk_settings_restart(int64_t state, bool usable);
+int64_t cm_trk_step_state(int64_t state, int64_t event, bool usable);
+int64_t cm_trk_step_action(int64_t state, int64_t event, bool usable);
+int64_t cm_trk_bucket(int64_t state);
+int64_t cm_render_variant_held(int64_t variant);
+int64_t cm_render_fails_held(int64_t fails);
+int64_t cm_render_stage_held(int64_t stage);
+bool cm_render_gives_up(int64_t fails, int64_t stage, bool proven);
+int64_t cm_render_first(int64_t last_good, bool color_identity);
+int64_t cm_render_at(int64_t pos);
+int64_t cm_render_pos(int64_t variant);
+int64_t cm_render_after(int64_t variant, bool color_identity);
+bool cm_render_exhausted(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity);
+int64_t cm_render_next_variant(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity);
+int64_t cm_render_next_fails(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity);
+int64_t cm_render_retry_ms(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity);
+int64_t cm_render_next_state(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity);
+int64_t cm_report_stage(int64_t stage);
+int64_t cm_report_limit(int64_t kind);
+bool cm_report_byte_kept(uint8_t b);
+int64_t cm_report_clean(uint8_t text[static 256], int64_t len, int64_t kind);
 
 /* -------------------------------------------------------
    Function implementations
@@ -130,6 +250,10 @@ int64_t cm_setting_default(int64_t kind) {
         return CM_ZOOM_MIN;
     }
     return 0;
+}
+
+bool cm_default_on(void) {
+    return true;
 }
 
 int64_t cm_clamp_setting(int64_t kind, int64_t value) {
@@ -380,6 +504,24 @@ int64_t cm_link_cameras(int64_t reported) {
     return reported;
 }
 
+bool cm_panel_install_open(int64_t status) {
+    return ((status == CM_LINK_NO_EXTENSION) || (status == CM_LINK_OFF));
+}
+
+bool cm_link_version_taken(int64_t v) {
+    return (v == CM_LINK_VERSION);
+}
+
+int64_t cm_report_error_rank(bool has_error, bool troubled) {
+    if ((has_error == false)) {
+        return CM_ERROR_RANK_NONE;
+    }
+    if (troubled) {
+        return CM_ERROR_RANK_TROUBLE;
+    }
+    return CM_ERROR_RANK_PAST;
+}
+
 int64_t cm_link_status(bool listening, bool failed, int64_t clients, int64_t active_cameras) {
     if (failed) {
         return CM_LINK_FAILED;
@@ -394,6 +536,418 @@ int64_t cm_link_status(bool listening, bool failed, int64_t clients, int64_t act
         return CM_LINK_WAITING;
     }
     return CM_LINK_ACTIVE;
+}
+
+int64_t cm_link_panel(bool listening, bool failed, int64_t clients, int64_t processed, int64_t passing, int64_t troubled) {
+    if (failed) {
+        return CM_LINK_FAILED;
+    }
+    if ((listening == false)) {
+        return CM_LINK_OFF;
+    }
+    if ((clients <= 0)) {
+        return CM_LINK_NO_EXTENSION;
+    }
+    if ((troubled > 0)) {
+        return CM_LINK_TROUBLE;
+    }
+    if ((processed > 0)) {
+        return CM_LINK_ACTIVE;
+    }
+    if ((passing > 0)) {
+        return CM_LINK_PASSING;
+    }
+    return CM_LINK_WAITING;
+}
+
+int64_t cm_ws_handshake_status(bool is_get, bool upgrade, bool has_key, bool origin_allowed, int64_t open_clients) {
+    if ((((is_get == false) || (upgrade == false)) || (has_key == false))) {
+        return CM_HTTP_BAD_REQUEST;
+    }
+    if ((origin_allowed == false)) {
+        return CM_HTTP_FORBIDDEN;
+    }
+    if ((cm_link_accepts(open_clients) == false)) {
+        return CM_HTTP_BUSY;
+    }
+    return CM_HTTP_SWITCHING;
+}
+
+bool cm_ws_head_too_large(int64_t buffered) {
+    return (buffered > CM_LINK_MESSAGE_MAX);
+}
+
+int64_t cm_ws_header_bytes(int64_t len7) {
+    if ((len7 == 126)) {
+        return 4;
+    }
+    if ((len7 == 127)) {
+        return 10;
+    }
+    return 2;
+}
+
+int64_t cm_ws_frame_close(bool fin, bool masked, int64_t len7, int64_t length) {
+    if ((len7 == 127)) {
+        return CM_WS_CLOSE_TOO_BIG;
+    }
+    if ((((fin && masked) && (length >= 0)) && (length <= CM_LINK_MESSAGE_MAX))) {
+        return 0;
+    }
+    if (masked) {
+        return CM_WS_CLOSE_TOO_BIG;
+    }
+    return CM_WS_CLOSE_PROTOCOL;
+}
+
+int64_t cm_ws_opcode_action(int64_t opcode) {
+    if ((opcode == 1)) {
+        return CM_WSA_MESSAGE;
+    }
+    if ((opcode == 8)) {
+        return CM_WSA_CLOSE;
+    }
+    if ((opcode == 9)) {
+        return CM_WSA_PONG;
+    }
+    if ((opcode == 10)) {
+        return CM_WSA_IGNORE;
+    }
+    return CM_WSA_UNSUPPORTED;
+}
+
+int64_t cm_ws_action_close(int64_t action) {
+    if ((action == CM_WSA_CLOSE)) {
+        return CM_WS_CLOSE_NORMAL;
+    }
+    if ((action == CM_WSA_UNSUPPORTED)) {
+        return CM_WS_CLOSE_UNSUPPORTED;
+    }
+    return 0;
+}
+
+int64_t cm_ws_send_len7(int64_t len) {
+    if (((len >= 0) && (len < 126))) {
+        return len;
+    }
+    return 126;
+}
+
+bool cm_ws_send_fits(int64_t len) {
+    return ((len >= 0) && (len <= CM_WS_SEND_MAX));
+}
+
+int64_t cm_dial_delay_ms(int64_t failures, int64_t pages) {
+    if ((failures <= 0)) {
+        return 0;
+    }
+    int64_t cap = CM_DIAL_IDLE_MAX_MS;
+    if ((pages > 0)) {
+        cap = CM_DIAL_MEET_MAX_MS;
+    }
+    int64_t ms = CM_DIAL_FIRST_MS;
+    int64_t k = 1;
+    while (((k < failures) && (ms < cap))) {
+        ms = (ms * 2);
+        k = (k + 1);
+    }
+    if ((ms > cap)) {
+        return cap;
+    }
+    return ms;
+}
+
+int64_t cm_dial_wait_ms(int64_t reason, int64_t ms_since, int64_t failures, int64_t pages) {
+    if ((reason == CM_DIAL_INSTALL)) {
+        return 0;
+    }
+    if ((ms_since < 0)) {
+        return 0;
+    }
+    int64_t delay = cm_dial_delay_ms(failures, pages);
+    if ((ms_since >= delay)) {
+        return 0;
+    }
+    return (delay - ms_since);
+}
+
+int64_t cm_dial_failures_after(int64_t failures, bool opened) {
+    if (opened) {
+        return 0;
+    }
+    if ((failures < 0)) {
+        return 1;
+    }
+    if ((failures >= CM_DIAL_FAILURES_CAP)) {
+        return CM_DIAL_FAILURES_CAP;
+    }
+    return (failures + 1);
+}
+
+int64_t cm_page_lease_left_ms(int64_t ms_since) {
+    if (((ms_since >= CM_PAGE_LEASE_MS) || (ms_since <= (0 - CM_PAGE_LEASE_MS)))) {
+        return 0;
+    }
+    if ((ms_since < 0)) {
+        return CM_PAGE_LEASE_MS;
+    }
+    return (CM_PAGE_LEASE_MS - ms_since);
+}
+
+int64_t cm_trk_route(int64_t state, bool needs, bool due, bool sized) {
+    if ((state == CM_TRK_ENDED)) {
+        return CM_ROUTE_STOP;
+    }
+    if (((state < 0) || (state >= CM_TRK_COUNT))) {
+        return CM_ROUTE_PASS;
+    }
+    if (((needs == false) || (sized == false))) {
+        return CM_ROUTE_PASS;
+    }
+    if (((state == CM_TRK_RECOVERING) || (state == CM_TRK_FAILED))) {
+        if (due) {
+            return CM_ROUTE_DRAW;
+        }
+        return CM_ROUTE_PASS;
+    }
+    return CM_ROUTE_DRAW;
+}
+
+bool cm_render_usable(int64_t variant, bool color_identity) {
+    if (((variant == CM_RV_WEBGL_BITMAP) || (variant == CM_RV_WEBGL_CANVAS))) {
+        return true;
+    }
+    if ((variant == CM_RV_CANVAS2D)) {
+        return color_identity;
+    }
+    return false;
+}
+
+bool cm_trk_settings_restart(int64_t state, bool usable) {
+    return (((state == CM_TRK_FAILED) || (state == CM_TRK_RECOVERING)) || (usable == false));
+}
+
+int64_t cm_trk_step_state(int64_t state, int64_t event, bool usable) {
+    if (((state < 0) || (state >= CM_TRK_COUNT))) {
+        return CM_TRK_STARTING;
+    }
+    if ((state == CM_TRK_ENDED)) {
+        return CM_TRK_ENDED;
+    }
+    if (((event == CM_TEV_STOPPED) || (event == CM_TEV_WRITE_FAILED))) {
+        return CM_TRK_ENDED;
+    }
+    if ((event == CM_TEV_PASSED)) {
+        return CM_TRK_PASSING;
+    }
+    if ((event == CM_TEV_DRAWN)) {
+        return CM_TRK_PROCESSED;
+    }
+    if (((event == CM_TEV_SETTINGS) && cm_trk_settings_restart(state, usable))) {
+        return CM_TRK_STARTING;
+    }
+    return state;
+}
+
+int64_t cm_trk_step_action(int64_t state, int64_t event, bool usable) {
+    if ((((state < 0) || (state >= CM_TRK_COUNT)) || (state == CM_TRK_ENDED))) {
+        return CM_TACT_NONE;
+    }
+    if (((event == CM_TEV_STOPPED) || (event == CM_TEV_WRITE_FAILED))) {
+        return CM_TACT_CLOSE;
+    }
+    if ((event == CM_TEV_DRAWN)) {
+        return CM_TACT_CLEAR;
+    }
+    if (((event == CM_TEV_SETTINGS) && cm_trk_settings_restart(state, usable))) {
+        return CM_TACT_RESET;
+    }
+    return CM_TACT_NONE;
+}
+
+int64_t cm_trk_bucket(int64_t state) {
+    if (((state == CM_TRK_STARTING) || (state == CM_TRK_PASSING))) {
+        return CM_BUCKET_PASSING;
+    }
+    if ((state == CM_TRK_PROCESSED)) {
+        return CM_BUCKET_PROCESSED;
+    }
+    if (((state == CM_TRK_RECOVERING) || (state == CM_TRK_FAILED))) {
+        return CM_BUCKET_TROUBLE;
+    }
+    return CM_BUCKET_NONE;
+}
+
+int64_t cm_render_variant_held(int64_t variant) {
+    if (((variant < 0) || (variant >= CM_RV_COUNT))) {
+        return CM_RV_FIRST;
+    }
+    return variant;
+}
+
+int64_t cm_render_fails_held(int64_t fails) {
+    if ((fails < 0)) {
+        return 0;
+    }
+    if ((fails >= CM_RENDER_TRIES)) {
+        return (CM_RENDER_TRIES - 1);
+    }
+    return fails;
+}
+
+int64_t cm_render_stage_held(int64_t stage) {
+    if (((stage <= CM_STAGE_NONE) || (stage >= CM_STAGE_COUNT))) {
+        return CM_STAGE_DRAW;
+    }
+    return stage;
+}
+
+bool cm_render_gives_up(int64_t fails, int64_t stage, bool proven) {
+    int64_t st = cm_render_stage_held(stage);
+    if ((st == CM_STAGE_CREATE)) {
+        return true;
+    }
+    if (((proven == false) && (st != CM_STAGE_LOST))) {
+        return true;
+    }
+    return ((cm_render_fails_held(fails) + 1) >= CM_RENDER_TRIES);
+}
+
+int64_t cm_render_first(int64_t last_good, bool color_identity) {
+    if ((((last_good >= 0) && (last_good < CM_RV_COUNT)) && cm_render_usable(last_good, color_identity))) {
+        return last_good;
+    }
+    return CM_RV_FIRST;
+}
+
+int64_t cm_render_at(int64_t pos) {
+    if ((pos == 0)) {
+        return CM_RV_WEBGL_CANVAS;
+    }
+    if ((pos == 1)) {
+        return CM_RV_WEBGL_BITMAP;
+    }
+    if ((pos == 2)) {
+        return CM_RV_CANVAS2D;
+    }
+    return (0 - 1);
+}
+
+int64_t cm_render_pos(int64_t variant) {
+    int64_t v = cm_render_variant_held(variant);
+    int64_t pos = 0;
+    while ((pos < CM_RV_COUNT)) {
+        if ((cm_render_at(pos) == v)) {
+            return pos;
+        }
+        pos = (pos + 1);
+    }
+    return 0;
+}
+
+int64_t cm_render_after(int64_t variant, bool color_identity) {
+    int64_t pos = (cm_render_pos(variant) + 1);
+    while ((pos < CM_RV_COUNT)) {
+        int64_t v = cm_render_at(pos);
+        if (cm_render_usable(v, color_identity)) {
+            return v;
+        }
+        pos = (pos + 1);
+    }
+    return (0 - 1);
+}
+
+bool cm_render_exhausted(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity) {
+    return (cm_render_gives_up(fails, stage, proven) && (cm_render_after(variant, color_identity) < 0));
+}
+
+int64_t cm_render_next_variant(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity) {
+    int64_t v = cm_render_variant_held(variant);
+    if ((cm_render_gives_up(fails, stage, proven) == false)) {
+        return v;
+    }
+    int64_t after = cm_render_after(v, color_identity);
+    if ((after < 0)) {
+        return CM_RV_FIRST;
+    }
+    return after;
+}
+
+int64_t cm_render_next_fails(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity) {
+    if (cm_render_gives_up(fails, stage, proven)) {
+        return 0;
+    }
+    return (cm_render_fails_held(fails) + 1);
+}
+
+int64_t cm_render_retry_ms(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity) {
+    if (cm_render_gives_up(fails, stage, proven)) {
+        if ((cm_render_after(variant, color_identity) < 0)) {
+            return CM_RENDER_FAILED_RETRY_MS;
+        }
+        return 0;
+    }
+    if ((cm_render_stage_held(stage) == CM_STAGE_LOST)) {
+        return CM_RENDER_LOST_RETRY_MS;
+    }
+    int64_t ms = CM_RENDER_RETRY_FIRST_MS;
+    int64_t k = 0;
+    int64_t f = cm_render_fails_held(fails);
+    while ((k < f)) {
+        ms = (ms * 2);
+        k = (k + 1);
+    }
+    return ms;
+}
+
+int64_t cm_render_next_state(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity) {
+    if (cm_render_exhausted(variant, fails, stage, proven, color_identity)) {
+        return CM_TRK_FAILED;
+    }
+    return CM_TRK_RECOVERING;
+}
+
+int64_t cm_report_stage(int64_t stage) {
+    if (((stage < 0) || (stage >= CM_STAGE_COUNT))) {
+        return CM_STAGE_NONE;
+    }
+    return stage;
+}
+
+int64_t cm_report_limit(int64_t kind) {
+    if ((kind == CM_REPORT_NAME)) {
+        return CM_REPORT_NAME_MAX;
+    }
+    if ((kind == CM_REPORT_TEXT)) {
+        return CM_REPORT_TEXT_MAX;
+    }
+    return 0;
+}
+
+bool cm_report_byte_kept(uint8_t b) {
+    return ((b >= 32) && (b <= 126));
+}
+
+int64_t cm_report_clean(uint8_t text[static 256], int64_t len, int64_t kind) {
+    int64_t n = len;
+    if ((n < 0)) {
+        n = 0;
+    }
+    if ((n > 256)) {
+        n = 256;
+    }
+    int64_t limit = cm_report_limit(kind);
+    int64_t k = 0;
+    int64_t out = 0;
+    while (((k < n) && (out < limit))) {
+        uint8_t b = text[k];
+        if (cm_report_byte_kept(b)) {
+            text[out] = b;
+            out = (out + 1);
+        }
+        k = (k + 1);
+    }
+    return out;
 }
 
 /* -------------------------------------------------------
@@ -414,6 +968,8 @@ void test_cm_setting_rules(void) {
     assert((cm_setting_max((0 - 1)) == 0));
     assert((cm_setting_default(CM_SET_ZOOM) == 100));
     assert((cm_setting_default(CM_SET_WARMTH) == 0));
+    assert((cm_default_on() == true));
+    assert((cm_needs_processing(cm_default_on(), cm_color_identity(0, 0, 0, 0, 0), cm_frame_identity(100, 0, 0, 0)) == false));
     assert((cm_clamp_setting(CM_SET_ZOOM, 50) == 100));
     assert((cm_clamp_setting(CM_SET_ZOOM, 1000) == 300));
     assert((cm_clamp_setting(CM_SET_MIRROR, 7) == 1));
@@ -611,6 +1167,437 @@ void test_cm_link_rules(void) {
     assert((cm_link_status(true, false, 1, 0) == CM_LINK_WAITING));
     assert((cm_link_status(true, false, 1, 1) == CM_LINK_ACTIVE));
     assert((CM_LINK_PING_MS < 30000));
+    assert((cm_link_panel(false, false, 1, 1, 0, 0) == CM_LINK_OFF));
+    assert((cm_link_panel(true, true, 1, 1, 0, 0) == CM_LINK_FAILED));
+    assert((cm_link_panel(true, false, 0, 1, 1, 1) == CM_LINK_NO_EXTENSION));
+    assert((cm_link_panel(true, false, 1, 0, 0, 0) == CM_LINK_WAITING));
+    assert((cm_link_panel(true, false, 1, 0, 1, 0) == CM_LINK_PASSING));
+    assert((cm_link_panel(true, false, 1, 1, 1, 0) == CM_LINK_ACTIVE));
+    assert((cm_link_panel(true, false, 1, 1, 0, 1) == CM_LINK_TROUBLE));
+    assert((cm_link_panel(true, false, 1, 0, 0, 1) == CM_LINK_TROUBLE));
+    assert((cm_link_panel(true, false, 1, (0 - 1), (0 - 1), (0 - 1)) == CM_LINK_WAITING));
+    assert((cm_panel_install_open(CM_LINK_OFF) == true));
+    assert((cm_panel_install_open(CM_LINK_NO_EXTENSION) == true));
+    assert((cm_panel_install_open(CM_LINK_FAILED) == false));
+    assert((cm_panel_install_open(CM_LINK_WAITING) == false));
+    assert((cm_panel_install_open(CM_LINK_ACTIVE) == false));
+    assert((cm_panel_install_open(CM_LINK_PASSING) == false));
+    assert((cm_panel_install_open(CM_LINK_TROUBLE) == false));
+    assert((cm_link_version_taken(CM_LINK_VERSION) == true));
+    assert((cm_link_version_taken((CM_LINK_VERSION + 1)) == false));
+    assert((cm_link_version_taken(0) == false));
+    assert((cm_report_error_rank(true, true) > cm_report_error_rank(true, false)));
+    assert((cm_report_error_rank(true, false) > cm_report_error_rank(false, true)));
+    assert((cm_report_error_rank(false, true) == CM_ERROR_RANK_NONE));
+    assert((cm_report_error_rank(false, false) == CM_ERROR_RANK_NONE));
+}
+
+void test_cm_ws_rules(void) {
+    assert((cm_ws_handshake_status(true, true, true, true, 0) == CM_HTTP_SWITCHING));
+    assert((cm_ws_handshake_status(true, true, true, true, 3) == CM_HTTP_SWITCHING));
+    assert((cm_ws_handshake_status(true, true, true, true, 4) == CM_HTTP_BUSY));
+    assert((cm_ws_handshake_status(true, true, true, false, 0) == CM_HTTP_FORBIDDEN));
+    assert((cm_ws_handshake_status(true, true, true, false, 9) == CM_HTTP_FORBIDDEN));
+    assert((cm_ws_handshake_status(false, true, true, true, 0) == CM_HTTP_BAD_REQUEST));
+    assert((cm_ws_handshake_status(true, false, true, true, 0) == CM_HTTP_BAD_REQUEST));
+    assert((cm_ws_handshake_status(true, true, false, false, 9) == CM_HTTP_BAD_REQUEST));
+    assert((cm_ws_head_too_large(4096) == false));
+    assert((cm_ws_head_too_large(4097) == true));
+    assert((cm_ws_header_bytes(0) == 2));
+    assert((cm_ws_header_bytes(125) == 2));
+    assert((cm_ws_header_bytes(126) == 4));
+    assert((cm_ws_header_bytes(127) == 10));
+    assert((cm_ws_frame_close(true, true, 5, 5) == 0));
+    assert((cm_ws_frame_close(true, true, 126, 4096) == 0));
+    assert((cm_ws_frame_close(true, true, 126, 4097) == CM_WS_CLOSE_TOO_BIG));
+    assert((cm_ws_frame_close(true, true, 127, 10) == CM_WS_CLOSE_TOO_BIG));
+    assert((cm_ws_frame_close(true, false, 5, 5) == CM_WS_CLOSE_PROTOCOL));
+    assert((cm_ws_frame_close(false, true, 5, 5) == CM_WS_CLOSE_TOO_BIG));
+    assert((cm_ws_frame_close(false, false, 5, 5) == CM_WS_CLOSE_PROTOCOL));
+    int64_t op = 0;
+    while ((op < 16)) {
+        int64_t a = cm_ws_opcode_action(op);
+        assert((a >= CM_WSA_MESSAGE));
+        assert((a <= CM_WSA_UNSUPPORTED));
+        if ((op == 1)) {
+            assert((a == CM_WSA_MESSAGE));
+        }
+        if (((op == 0) || (op == 2))) {
+            assert((a == CM_WSA_UNSUPPORTED));
+        }
+        if ((a == CM_WSA_CLOSE)) {
+            assert((cm_ws_action_close(a) == CM_WS_CLOSE_NORMAL));
+        }
+        if ((a == CM_WSA_UNSUPPORTED)) {
+            assert((cm_ws_action_close(a) == CM_WS_CLOSE_UNSUPPORTED));
+        }
+        if ((((a == CM_WSA_MESSAGE) || (a == CM_WSA_PONG)) || (a == CM_WSA_IGNORE))) {
+            assert((cm_ws_action_close(a) == 0));
+        }
+        op = (op + 1);
+    }
+    assert((cm_ws_opcode_action(8) == CM_WSA_CLOSE));
+    assert((cm_ws_opcode_action(9) == CM_WSA_PONG));
+    assert((cm_ws_opcode_action(10) == CM_WSA_IGNORE));
+    assert((cm_ws_send_len7(0) == 0));
+    assert((cm_ws_send_len7(125) == 125));
+    assert((cm_ws_send_len7(126) == 126));
+    assert((cm_ws_send_len7(65535) == 126));
+    assert((cm_ws_send_fits(65535) == true));
+    assert((cm_ws_send_fits(65536) == false));
+    assert((cm_ws_send_fits((0 - 1)) == false));
+    assert((CM_LINK_MESSAGE_MAX < CM_LINK_READ_MAX));
+}
+
+void test_cm_dial_rules(void) {
+    assert((cm_dial_delay_ms(0, 1) == 0));
+    assert((cm_dial_delay_ms((0 - 4), 0) == 0));
+    assert((cm_dial_delay_ms(1, 1) == 1000));
+    assert((cm_dial_delay_ms(2, 1) == 2000));
+    assert((cm_dial_delay_ms(5, 1) == 16000));
+    assert((cm_dial_delay_ms(6, 1) == 30000));
+    assert((cm_dial_delay_ms(32, 1) == 30000));
+    assert((cm_dial_delay_ms(6, 0) == 32000));
+    assert((cm_dial_delay_ms(9, 0) == 256000));
+    assert((cm_dial_delay_ms(10, 0) == 300000));
+    assert((cm_dial_delay_ms(9223372036854775807, 0) == 300000));
+    int64_t f = 0;
+    int64_t last = 0;
+    while ((f <= CM_DIAL_FAILURES_CAP)) {
+        assert((cm_dial_delay_ms(f, 1) >= last));
+        assert((cm_dial_delay_ms(f, 1) <= cm_dial_delay_ms(f, 0)));
+        assert((cm_dial_delay_ms(f, 1) <= CM_DIAL_MEET_MAX_MS));
+        last = cm_dial_delay_ms(f, 1);
+        f = (f + 1);
+    }
+    assert((cm_dial_wait_ms(CM_DIAL_INSTALL, 10, 30, 0) == 0));
+    assert((cm_dial_wait_ms(CM_DIAL_START, (0 - 1), 30, 0) == 0));
+    assert((cm_dial_wait_ms(CM_DIAL_TIMER, 500, 1, 1) == 500));
+    assert((cm_dial_wait_ms(CM_DIAL_PAGE, 1000, 1, 1) == 0));
+    assert((cm_dial_wait_ms(CM_DIAL_CLOSED, 0, 0, 0) == 0));
+    assert((cm_dial_wait_ms(CM_DIAL_TIMER, 10000, 10, 1) == 20000));
+    assert((cm_dial_wait_ms(CM_DIAL_TIMER, 10000, 10, 0) == 290000));
+    assert((cm_dial_failures_after(7, true) == 0));
+    assert((cm_dial_failures_after(0, false) == 1));
+    assert((cm_dial_failures_after((0 - 5), false) == 1));
+    assert((cm_dial_failures_after(CM_DIAL_FAILURES_CAP, false) == CM_DIAL_FAILURES_CAP));
+}
+
+void test_cm_page_rules(void) {
+    assert((cm_page_lease_left_ms(0) == CM_PAGE_LEASE_MS));
+    assert((cm_page_lease_left_ms(1) == (CM_PAGE_LEASE_MS - 1)));
+    assert((cm_page_lease_left_ms((CM_PAGE_LEASE_MS - 1)) == 1));
+    assert((cm_page_lease_left_ms(CM_PAGE_LEASE_MS) == 0));
+    assert((cm_page_lease_left_ms(9223372036854775807) == 0));
+    assert((cm_page_lease_left_ms((0 - 1)) == CM_PAGE_LEASE_MS));
+    assert((cm_page_lease_left_ms(((0 - CM_PAGE_LEASE_MS) + 1)) == CM_PAGE_LEASE_MS));
+    assert((cm_page_lease_left_ms((0 - CM_PAGE_LEASE_MS)) == 0));
+    assert((cm_page_lease_left_ms((0 - 9223372036854775807)) == 0));
+    assert(((CM_PAGE_REPORT_MS * 3) < CM_PAGE_LEASE_MS));
+    assert(((60000 + CM_PAGE_REPORT_MS) < CM_PAGE_LEASE_MS));
+    assert((cm_page_lease_left_ms(CM_PAGE_REPORT_MS) > 0));
+    int64_t ms = 0;
+    int64_t last = CM_PAGE_LEASE_MS;
+    while ((ms <= (CM_PAGE_LEASE_MS + 1000))) {
+        assert((cm_page_lease_left_ms(ms) <= last));
+        last = cm_page_lease_left_ms(ms);
+        ms = (ms + 500);
+    }
+}
+
+void test_cm_pipeline_rules(void) {
+    int64_t s = 0;
+    while ((s < CM_TRK_COUNT)) {
+        int64_t n = 0;
+        while ((n < 8)) {
+            bool needs = ((n % 2) == 1);
+            bool due = (((n / 2) % 2) == 1);
+            bool sized = ((n / 4) == 1);
+            int64_t r = cm_trk_route(s, needs, due, sized);
+            if ((s == CM_TRK_ENDED)) {
+                assert((r == CM_ROUTE_STOP));
+            }
+            if (((s != CM_TRK_ENDED) && ((needs == false) || (sized == false)))) {
+                assert((r == CM_ROUTE_PASS));
+            }
+            if (((((s != CM_TRK_ENDED) && needs) && sized) && ((s == CM_TRK_RECOVERING) || (s == CM_TRK_FAILED)))) {
+                if (due) {
+                    assert((r == CM_ROUTE_DRAW));
+                }
+                if ((due == false)) {
+                    assert((r == CM_ROUTE_PASS));
+                }
+            }
+            if (((needs && sized) && (((s == CM_TRK_STARTING) || (s == CM_TRK_PASSING)) || (s == CM_TRK_PROCESSED)))) {
+                assert((r == CM_ROUTE_DRAW));
+            }
+            n = (n + 1);
+        }
+        s = (s + 1);
+    }
+    assert((cm_trk_route((0 - 1), true, true, true) == CM_ROUTE_PASS));
+    assert((cm_trk_route(CM_TRK_COUNT, true, true, true) == CM_ROUTE_PASS));
+    s = 0;
+    while ((s < CM_TRK_COUNT)) {
+        int64_t e = 0;
+        while ((e < CM_TEV_COUNT)) {
+            int64_t u = 0;
+            while ((u < 2)) {
+                bool usable = (u == 1);
+                int64_t next = cm_trk_step_state(s, e, usable);
+                int64_t act = cm_trk_step_action(s, e, usable);
+                assert((next >= 0));
+                assert((next < CM_TRK_COUNT));
+                assert((act >= CM_TACT_NONE));
+                assert((act <= CM_TACT_CLOSE));
+                if ((s == CM_TRK_ENDED)) {
+                    assert((next == CM_TRK_ENDED));
+                    assert((act == CM_TACT_NONE));
+                }
+                if (((s != CM_TRK_ENDED) && ((e == CM_TEV_STOPPED) || (e == CM_TEV_WRITE_FAILED)))) {
+                    assert((next == CM_TRK_ENDED));
+                    assert((act == CM_TACT_CLOSE));
+                }
+                if (((next == CM_TRK_PROCESSED) && (s != CM_TRK_PROCESSED))) {
+                    assert((e == CM_TEV_DRAWN));
+                }
+                if (((e == CM_TEV_DRAWN) && (s != CM_TRK_ENDED))) {
+                    assert((next == CM_TRK_PROCESSED));
+                    assert((act == CM_TACT_CLEAR));
+                }
+                if (((e == CM_TEV_PASSED) && (s != CM_TRK_ENDED))) {
+                    assert((cm_trk_bucket(next) == CM_BUCKET_PASSING));
+                }
+                if ((e == CM_TEV_HELD)) {
+                    assert((next == s));
+                    assert((act == CM_TACT_NONE));
+                }
+                if ((act == CM_TACT_RESET)) {
+                    assert((next == CM_TRK_STARTING));
+                }
+                if (((e == CM_TEV_SETTINGS) && (s != CM_TRK_ENDED))) {
+                    if (((s == CM_TRK_RECOVERING) || (s == CM_TRK_FAILED))) {
+                        assert((act == CM_TACT_RESET));
+                    }
+                    if (cm_trk_settings_restart(s, usable)) {
+                        assert((act == CM_TACT_RESET));
+                    }
+                    if ((cm_trk_settings_restart(s, usable) == false)) {
+                        assert((act == CM_TACT_NONE));
+                        assert((next == s));
+                    }
+                }
+                u = (u + 1);
+            }
+            e = (e + 1);
+        }
+        s = (s + 1);
+    }
+    assert((cm_trk_step_action(CM_TRK_PROCESSED, CM_TEV_SETTINGS, true) == CM_TACT_NONE));
+    assert((cm_trk_step_state(CM_TRK_PROCESSED, CM_TEV_SETTINGS, true) == CM_TRK_PROCESSED));
+    assert((cm_trk_step_action(CM_TRK_PROCESSED, CM_TEV_SETTINGS, false) == CM_TACT_RESET));
+    assert((cm_trk_step_action(CM_TRK_FAILED, CM_TEV_SETTINGS, true) == CM_TACT_RESET));
+    assert((cm_trk_step_action(CM_TRK_RECOVERING, CM_TEV_SETTINGS, true) == CM_TACT_RESET));
+    assert((cm_trk_step_state(CM_TRK_RECOVERING, CM_TEV_SETTINGS, true) == CM_TRK_STARTING));
+    assert((cm_trk_step_action(CM_TRK_RECOVERING, CM_TEV_SETTINGS, false) == CM_TACT_RESET));
+    assert((cm_trk_step_action(CM_TRK_PASSING, CM_TEV_SETTINGS, true) == CM_TACT_NONE));
+    assert((cm_trk_step_action(CM_TRK_STARTING, CM_TEV_SETTINGS, true) == CM_TACT_NONE));
+    assert((cm_trk_step_action(CM_TRK_RECOVERING, CM_TEV_HELD, true) == CM_TACT_NONE));
+    assert((cm_trk_settings_restart(CM_TRK_PROCESSED, true) == false));
+    assert((cm_trk_settings_restart(CM_TRK_RECOVERING, true) == true));
+    assert((cm_trk_settings_restart(CM_TRK_FAILED, true) == true));
+    assert((cm_trk_settings_restart(CM_TRK_PROCESSED, false) == true));
+    assert((cm_trk_step_action(CM_TRK_RECOVERING, CM_TEV_SETTINGS, cm_render_usable(CM_RV_WEBGL_BITMAP, false)) == CM_TACT_RESET));
+    assert((cm_render_first(CM_RV_CANVAS2D, false) == CM_RV_WEBGL_CANVAS));
+    assert((cm_trk_step_state((0 - 1), CM_TEV_DRAWN, true) == CM_TRK_STARTING));
+    assert((cm_trk_bucket(CM_TRK_RECOVERING) == CM_BUCKET_TROUBLE));
+    assert((cm_trk_bucket(CM_TRK_FAILED) == CM_BUCKET_TROUBLE));
+    assert((cm_trk_bucket(CM_TRK_ENDED) == CM_BUCKET_NONE));
+    assert((cm_trk_bucket(CM_TRK_STARTING) == CM_BUCKET_PASSING));
+    assert((cm_render_usable(CM_RV_WEBGL_BITMAP, false) == true));
+    assert((cm_render_usable(CM_RV_WEBGL_CANVAS, false) == true));
+    assert((cm_render_usable(CM_RV_CANVAS2D, false) == false));
+    assert((cm_render_usable(CM_RV_CANVAS2D, true) == true));
+    assert((cm_render_usable(CM_RV_COUNT, true) == false));
+    assert((CM_RV_FIRST == CM_RV_WEBGL_CANVAS));
+    assert((cm_render_at(0) == CM_RV_FIRST));
+    assert((cm_render_at(1) == CM_RV_WEBGL_BITMAP));
+    assert((cm_render_at(2) == CM_RV_CANVAS2D));
+    assert((cm_render_at(CM_RV_COUNT) == (0 - 1)));
+    assert((cm_render_at((0 - 1)) == (0 - 1)));
+    int64_t pp = 0;
+    while ((pp < CM_RV_COUNT)) {
+        assert((cm_render_pos(cm_render_at(pp)) == pp));
+        pp = (pp + 1);
+    }
+    assert((cm_render_pos(9) == 0));
+    assert((cm_render_after(CM_RV_WEBGL_CANVAS, false) == CM_RV_WEBGL_BITMAP));
+    assert((cm_render_after(CM_RV_WEBGL_BITMAP, false) == (0 - 1)));
+    assert((cm_render_after(CM_RV_WEBGL_BITMAP, true) == CM_RV_CANVAS2D));
+    assert((cm_render_after(CM_RV_CANVAS2D, true) == (0 - 1)));
+    assert((cm_render_after(CM_RV_CANVAS2D, false) == (0 - 1)));
+    assert((cm_render_next_variant(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_CREATE, true, false) == CM_RV_WEBGL_BITMAP));
+    assert((cm_render_next_fails(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_CREATE, true, false) == 0));
+    assert((cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_CREATE, true, false) == 0));
+    assert((cm_render_next_state(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_CREATE, true, false) == CM_TRK_RECOVERING));
+    assert((cm_render_next_variant(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_LOST, true, false) == CM_RV_WEBGL_CANVAS));
+    assert((cm_render_next_fails(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_LOST, true, false) == 1));
+    assert((cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_LOST, true, false) == CM_RENDER_LOST_RETRY_MS));
+    assert((cm_render_next_variant(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_LOST, false, false) == CM_RV_WEBGL_CANVAS));
+    assert((cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_LOST, false, false) == CM_RENDER_LOST_RETRY_MS));
+    assert((cm_render_gives_up(0, CM_STAGE_OUTPUT, false) == true));
+    assert((cm_render_gives_up(0, CM_STAGE_OUTPUT, true) == false));
+    assert((cm_render_next_variant(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_OUTPUT, false, false) == CM_RV_WEBGL_BITMAP));
+    assert((cm_render_next_fails(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_OUTPUT, false, false) == 0));
+    assert((cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_OUTPUT, false, false) == 0));
+    assert((cm_render_next_state(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_OUTPUT, false, false) == CM_TRK_RECOVERING));
+    assert((cm_render_next_state(CM_RV_WEBGL_BITMAP, 0, CM_STAGE_UPLOAD, false, false) == CM_TRK_FAILED));
+    assert((cm_render_next_variant(CM_RV_WEBGL_BITMAP, 0, CM_STAGE_UPLOAD, false, true) == CM_RV_CANVAS2D));
+    assert((cm_render_next_state(CM_RV_CANVAS2D, 0, CM_STAGE_UPLOAD, false, true) == CM_TRK_FAILED));
+    assert((cm_render_next_variant(CM_RV_CANVAS2D, 0, CM_STAGE_UPLOAD, false, true) == CM_RV_FIRST));
+    assert((cm_render_first((0 - 1), false) == CM_RV_FIRST));
+    assert((cm_render_first(CM_RV_WEBGL_CANVAS, false) == CM_RV_WEBGL_CANVAS));
+    assert((cm_render_first(CM_RV_WEBGL_BITMAP, false) == CM_RV_WEBGL_BITMAP));
+    assert((cm_render_first(CM_RV_CANVAS2D, false) == CM_RV_FIRST));
+    assert((cm_render_first(CM_RV_CANVAS2D, true) == CM_RV_CANVAS2D));
+    assert((cm_render_first(CM_RV_COUNT, true) == CM_RV_FIRST));
+    int64_t lg = (0 - 2);
+    while ((lg <= CM_RV_COUNT)) {
+        assert(cm_render_usable(cm_render_first(lg, false), false));
+        assert(cm_render_usable(cm_render_first(lg, true), true));
+        lg = (lg + 1);
+    }
+    assert((cm_render_retry_ms(9, 0, 99, true, false) == CM_RENDER_RETRY_FIRST_MS));
+    assert((cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 1, CM_STAGE_NONE, true, false) == 500));
+    assert((cm_render_next_variant(9, 0, CM_STAGE_CREATE, true, false) == CM_RV_WEBGL_BITMAP));
+    assert((cm_report_stage(99) == CM_STAGE_NONE));
+    assert((cm_report_stage(CM_STAGE_OUTPUT) == CM_STAGE_OUTPUT));
+    int64_t pr = 0;
+    while ((pr < 2)) {
+        bool proven = (pr == 1);
+        int64_t ci = 0;
+        while ((ci < 2)) {
+            bool colour_kept = (ci == 1);
+            int64_t stage = CM_STAGE_UPLOAD;
+            while ((stage <= CM_STAGE_OUTPUT)) {
+                int64_t v = CM_RV_FIRST;
+                int64_t fails = 0;
+                int64_t failures = 0;
+                bool gave_up = false;
+                int64_t tried = 1;
+                bool seen_canvas = (v == CM_RV_WEBGL_CANVAS);
+                bool seen_bitmap = (v == CM_RV_WEBGL_BITMAP);
+                bool seen_2d = (v == CM_RV_CANVAS2D);
+                while (((gave_up == false) && (failures < 20))) {
+                    int64_t nv = cm_render_next_variant(v, fails, stage, proven, colour_kept);
+                    int64_t nf = cm_render_next_fails(v, fails, stage, proven, colour_kept);
+                    int64_t wait = cm_render_retry_ms(v, fails, stage, proven, colour_kept);
+                    int64_t st = cm_render_next_state(v, fails, stage, proven, colour_kept);
+                    assert(cm_render_usable(nv, colour_kept));
+                    assert((nf >= 0));
+                    assert((nf < CM_RENDER_TRIES));
+                    assert((wait <= CM_RENDER_FAILED_RETRY_MS));
+                    if (((nv == v) && (st == CM_TRK_RECOVERING))) {
+                        assert((wait > 0));
+                    }
+                    if ((nv != v)) {
+                        assert((nf == 0));
+                    }
+                    if (((proven == false) && (st == CM_TRK_RECOVERING))) {
+                        assert((nv != v));
+                    }
+                    if (((nv != v) && (st == CM_TRK_RECOVERING))) {
+                        assert((cm_render_pos(nv) > cm_render_pos(v)));
+                        if ((nv == CM_RV_WEBGL_CANVAS)) {
+                            assert((seen_canvas == false));
+                            seen_canvas = true;
+                        }
+                        if ((nv == CM_RV_WEBGL_BITMAP)) {
+                            assert((seen_bitmap == false));
+                            seen_bitmap = true;
+                        }
+                        if ((nv == CM_RV_CANVAS2D)) {
+                            assert((seen_2d == false));
+                            seen_2d = true;
+                        }
+                        tried = (tried + 1);
+                    }
+                    failures = (failures + 1);
+                    if ((st == CM_TRK_FAILED)) {
+                        gave_up = true;
+                        assert((nv == CM_RV_FIRST));
+                        assert((nf == 0));
+                        assert((wait == CM_RENDER_FAILED_RETRY_MS));
+                    }
+                    v = nv;
+                    fails = nf;
+                }
+                assert(gave_up);
+                assert(seen_canvas);
+                assert(seen_bitmap);
+                if (colour_kept) {
+                    assert(seen_2d);
+                    assert((tried == 3));
+                }
+                if ((colour_kept == false)) {
+                    assert((seen_2d == false));
+                    assert((tried == 2));
+                }
+                if ((proven && colour_kept)) {
+                    assert((failures == 9));
+                }
+                if ((proven && (colour_kept == false))) {
+                    assert((failures == 6));
+                }
+                if (((proven == false) && colour_kept)) {
+                    assert((failures == 3));
+                }
+                if (((proven == false) && (colour_kept == false))) {
+                    assert((failures == 2));
+                }
+                stage = (stage + 1);
+            }
+            ci = (ci + 1);
+        }
+        pr = (pr + 1);
+    }
+    assert((cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_DRAW, true, false) == 250));
+    assert((cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 1, CM_STAGE_DRAW, true, false) == 500));
+    assert((cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 2, CM_STAGE_DRAW, true, false) == 0));
+    assert((cm_render_retry_ms(CM_RV_WEBGL_BITMAP, 2, CM_STAGE_DRAW, true, false) == CM_RENDER_FAILED_RETRY_MS));
+    assert((cm_render_fails_held((0 - 3)) == 0));
+    assert((cm_render_fails_held(99) == (CM_RENDER_TRIES - 1)));
+}
+
+void test_cm_report_rules(void) {
+    uint8_t t[256] = { [0 ... (256) - 1] = 0 };
+    t[0] = 65;
+    t[1] = 98;
+    t[2] = 10;
+    t[3] = 99;
+    t[4] = 127;
+    t[5] = 195;
+    t[6] = 169;
+    t[7] = 100;
+    assert((cm_report_clean(t, 8, CM_REPORT_TEXT) == 4));
+    assert((t[0] == 65));
+    assert((t[1] == 98));
+    assert((t[2] == 99));
+    assert((t[3] == 100));
+    assert((cm_report_clean(t, (0 - 1), CM_REPORT_TEXT) == 0));
+    assert((cm_report_clean(t, 4, 99) == 0));
+    int64_t k = 0;
+    while ((k < 256)) {
+        t[k] = 120;
+        k = (k + 1);
+    }
+    assert((cm_report_clean(t, 256, CM_REPORT_NAME) == CM_REPORT_NAME_MAX));
+    assert((cm_report_clean(t, 9999, CM_REPORT_TEXT) == CM_REPORT_TEXT_MAX));
+    assert((cm_report_byte_kept(32) == true));
+    assert((cm_report_byte_kept(126) == true));
+    assert((cm_report_byte_kept(31) == false));
+    assert((cm_report_byte_kept(200) == false));
+    assert((cm_report_limit(CM_REPORT_NAME) == 64));
 }
 
 
@@ -625,7 +1612,12 @@ int main(void) {
     test_cm_color_rules();
     test_cm_frame_rules();
     test_cm_link_rules();
-    printf("All %d tests passed.\n", 4);
+    test_cm_ws_rules();
+    test_cm_dial_rules();
+    test_cm_page_rules();
+    test_cm_pipeline_rules();
+    test_cm_report_rules();
+    printf("All %d tests passed.\n", 9);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

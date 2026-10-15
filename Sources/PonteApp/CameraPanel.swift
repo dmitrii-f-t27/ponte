@@ -59,7 +59,7 @@ struct CameraPanel: View {
 
             // Open by itself while the extension is not connected.
             DisclosureGroup("Как установить расширение (один раз)", isExpanded: Binding(
-                get: { installShown ?? (camera.status == CameraRules.linkNoExtension || camera.status == CameraRules.linkOff) },
+                get: { installShown ?? CameraRules.panelInstallOpen(status: camera.status) },
                 set: { installShown = $0 })) {
                 InstallSteps()
             }
@@ -110,18 +110,40 @@ struct CameraPanel: View {
     private func statusText(_ camera: CameraModel) -> String {
         switch camera.status {
         case CameraRules.linkActive: return "Meet получает обработанную картинку."
+        case CameraRules.linkPassing:
+            return camera.on ? "Камера в Meet открыта. Настройки не меняют картинку — кадры идут как есть."
+                             : "Обработка выключена: Meet получает камеру как есть."
+        case CameraRules.linkTrouble:
+            let reason = camera.link.error.map { " Сбой: \(stageText($0.stage)) — \($0.name): \($0.message)." } ?? ""
+            return "Meet получает картинку без обработки.\(reason) Ponte Camera пробует снова сама."
         case CameraRules.linkWaiting: return "Расширение подключено. Включите камеру в Meet."
-        case CameraRules.linkNoExtension: return "Расширение Ponte Camera не подключено. Установите его один раз (ниже)."
+        case CameraRules.linkNoExtension:
+            return "Расширение Ponte Camera не подключено. Если оно уже установлено, оно подключится само в течение "
+                + "полуминуты после открытия Meet; иначе установите его один раз (ниже)."
         case CameraRules.linkFailed: return "Порт \(CameraRules.linkPort) занят: закройте второй Ponte и откройте этот снова."
         default: return "Связь с расширением выключена."
+        }
+    }
+
+    /// Where a page's renderer failed (CM_STAGE_*).
+    private func stageText(_ stage: Int) -> String {
+        switch stage {
+        case CameraRules.stageCreate: return "не удалось подготовить рисование"
+        case CameraRules.stageUpload: return "кадр камеры не принят видеокартой"
+        case CameraRules.stageDraw: return "ошибка рисования"
+        case CameraRules.stageOutput: return "не удалось собрать новый кадр"
+        case CameraRules.stageLost: return "видеокарта сбросила контекст"
+        case CameraRules.stageWrite: return "Meet не принял кадр"
+        case CameraRules.stageRead: return "камера перестала отдавать кадры"
+        default: return "неизвестный этап"
         }
     }
 
     private func statusIcon(_ camera: CameraModel) -> String {
         switch camera.status {
         case CameraRules.linkActive: return "video.fill"
-        case CameraRules.linkWaiting: return "video"
-        case CameraRules.linkFailed: return "exclamationmark.triangle.fill"
+        case CameraRules.linkWaiting, CameraRules.linkPassing: return "video"
+        case CameraRules.linkFailed, CameraRules.linkTrouble: return "exclamationmark.triangle.fill"
         default: return "video.slash"
         }
     }
@@ -130,7 +152,7 @@ struct CameraPanel: View {
         switch camera.status {
         case CameraRules.linkActive: return .green
         case CameraRules.linkFailed: return .red
-        case CameraRules.linkNoExtension: return .orange
+        case CameraRules.linkNoExtension, CameraRules.linkTrouble: return .orange
         default: return .secondary
         }
     }
