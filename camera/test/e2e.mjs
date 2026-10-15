@@ -59,13 +59,13 @@ if (PONTE) {
     out += d;
     let i;
     while ((i = out.indexOf('\n')) >= 0) {
-      const [word, listening, failed, clients, cameras] = out.slice(0, i).split(' ');
+      const [word, listening, failed, clients, processed, passing, troubled] = out.slice(0, i).split(' ');
       out = out.slice(i + 1);
       if (word !== 'status') continue;
       if (failed === '1') { console.error('FAIL the link failed to listen'); process.exit(1); }
       // A connected extension passed the link's own origin check (camera_rules.t27, cm_origin_allowed).
       if (clients !== '0') { link = true; origin = 'chrome-extension://jinldckdcbeojhpahpkagmacfdapfnln (checked by Ponte)'; }
-      if (link) statuses.push(Number(cameras));
+      if (link) statuses.push({ processed: Number(processed), passing: Number(passing), troubled: Number(troubled) });
     }
   });
   sendSettings = (s, on = true) => probe.stdin.write(`publish ${JSON.stringify({ type: 'settings', v: 1, on, s })}\n`);
@@ -79,7 +79,7 @@ if (PONTE) {
     link = socket;
     socket.on('message', (data) => {
       const m = JSON.parse(String(data));
-      if (m.type === 'status') statuses.push(m.cameras);
+      if (m.type === 'status') statuses.push({ processed: m.cameras, passing: m.passing, troubled: m.troubled });
     });
   });
   sendSettings = (s, on = true) => link.send(JSON.stringify({ type: 'settings', v: 1, on, s }));
@@ -174,14 +174,27 @@ try {
   await sleep(500);
   const opened = await evaluate('openCamera()');
   console.log(`ok   camera opened through the wrapper: ${opened.settings.width}x${opened.settings.height}`);
-  await until('status 1 camera', () => statuses.at(-1) === 1);
-  console.log('ok   the link reports 1 processed camera');
+  // The settings change nothing yet: the camera's frames pass as they came, and the link says so (not "processed").
+  const last = (key) => statuses.at(-1)?.[key];
+  await until('status 1 camera passing', () => last('passing') === 1 && last('processed') === 0);
+  console.log('ok   the link reports 1 camera passing as it came, 0 processed');
 
   const centres = [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
   sendSettings([0, 0, 0, 0, 0, 100, 0, 0, 0]);
   await sleep(700);
   const before = await evaluate(`sample(${JSON.stringify(centres)}, 6)`);
   console.log(`ok   colours as they come: ${JSON.stringify(before)}`);
+  const near = (a, b) => Math.max(...a.map((v, c) => Math.abs(v - b[c]))) <= TOLERANCE;
+  // New settings reach the page over the link and then the next drawn frame: frames are read until the colours at
+  // `points` are `want`, for at most SETTLE_MS (a fixed sleep raced the renderer). The last colours read are
+  // returned either way, and the caller compares them.
+  const SETTLE_MS = 5000;
+  const settle = async (points, want) => {
+    for (const end = Date.now() + SETTLE_MS; ;) {
+      const got = await evaluate(`sample(${JSON.stringify(points)}, 1)`);
+      if (got.every((rgb, i) => near(rgb, want[i])) || Date.now() >= end) return got;
+    }
+  };
 
   // The spec's own transform of those colours.
   const { instance } = await WebAssembly.instantiate(readFileSync(join(root, 'camera', 'extension', 'cm.wasm')), {});
@@ -195,36 +208,40 @@ try {
   for (const s of [[40, 30, 0, 0, 0], [0, 0, 80, 0, 0], [0, 0, 0, 100, 0], [0, 0, 0, 0, -100], [-30, -40, 30, -60, 60],
                    [100, 100, 100, 100, 100]]) {
     sendSettings([...s, 100, 0, 0, 0]);
-    await sleep(700);
-    const after = await evaluate(`sample(${JSON.stringify(centres)}, 6)`);
+    const wants = before.map((rgb) => expect(s, rgb));
+    const after = await settle(centres, wants);
     for (let i = 0; i < 4; i++) {
-      const want = expect(s, before[i]);
+      const want = wants[i];
       const diff = Math.max(...want.map((v, c) => Math.abs(v - after[i][c])));
       worst = Math.max(worst, diff);
       if (diff > TOLERANCE) fail(`settings ${s} block ${i}: shader ${after[i]}, spec ${want} (from ${before[i]})`);
     }
     console.log(`ok   colour ${JSON.stringify(s)}: ${JSON.stringify(after)}`);
+    await until('status 1 processed camera', () => last('processed') === 1 && last('troubled') === 0);
   }
+  console.log('ok   the link reports 1 processed camera while the shader draws');
   console.log(`ok   shader = cm_apply_pixel within ${worst} of 255 (limit ${TOLERANCE})`);
+  // The first renderer (WebGL2 from the canvas) drew from the first frame: no camera was ever reported in trouble.
+  const trouble = statuses.find((s) => s.troubled > 0);
+  if (statuses.findIndex((s) => s.processed > 0) < 0 || trouble) fail(`a camera was reported in trouble: ${JSON.stringify(trouble)}`);
+  console.log('ok   no camera reported in trouble while drawing');
 
   // Zoom 200 and mirror: (0.1, 0.1) shows u = 0.75 - 0.05 = 0.70, v = 0.30: the top right block; (0.9, 0.9) the
   // bottom left one.
   sendSettings([0, 0, 0, 0, 0, 200, 0, 0, 1]);
-  await sleep(700);
-  const framed = await evaluate(`sample([[0.1, 0.1], [0.9, 0.9]], 6)`);
-  const near = (a, b) => Math.max(...a.map((v, c) => Math.abs(v - b[c]))) <= TOLERANCE;
+  const framed = await settle([[0.1, 0.1], [0.9, 0.9]], [before[1], before[2]]);
   if (!near(framed[0], before[1]) || !near(framed[1], before[2])) fail(`zoom+mirror ${JSON.stringify(framed)}`);
   console.log(`ok   zoom 200 + mirror: ${JSON.stringify(framed)} = top right, bottom left`);
 
   // Off: frames pass as they came.
   sendSettings([60, 60, 60, 60, 60, 200, 0, 0, 1], false);
-  await sleep(700);
-  const off = await evaluate(`sample(${JSON.stringify(centres)}, 6)`);
+  const off = await settle(centres, before);
   for (let i = 0; i < 4; i++) if (!near(off[i], before[i])) fail(`off: ${off[i]} vs ${before[i]}`);
-  console.log('ok   off: frames pass unchanged');
+  await until('status passing after off', () => last('passing') === 1 && last('processed') === 0);
+  console.log('ok   off: frames pass unchanged, reported as passing');
 
   await evaluate('closeCamera()');
-  await until('status 0 cameras', () => statuses.at(-1) === 0);
+  await until('status 0 cameras', () => last('processed') === 0 && last('passing') === 0 && last('troubled') === 0);
   console.log('ok   stopping the track reports 0 cameras');
   console.log('PASS');
 } catch (error) {

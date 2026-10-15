@@ -3,6 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import WebSocket from 'ws';
 import relayModule from './server.js';
+import rules from './rules.js';
 
 const { start } = relayModule;
 
@@ -49,7 +50,82 @@ function connect(port, path, options = {}) {
 
 const tagged = (clientObj, tag) => clientObj.msgs.filter((m) => m.data[0] === tag);
 
+// The rules server.js ran in JavaScript until 2026-10-15, kept here as the oracle of Specs/relay_rules.t27 (rl.wasm).
+const legacy = {
+  roomPath: (url) => /^\/r\/([0-9a-f]{64})$/.test(url),
+  admit(members, exists, connections, roomCount, fromAddress, perAddressMax, connectionsMax) {
+    if (exists && members >= 6) return 4001;
+    if (connections >= connectionsMax || (!exists && roomCount >= 300) || fromAddress >= perAddressMax) return 4002;
+    return 0;
+  },
+};
+
+function rulesAgainstLegacy() {
+  check('limits come from the spec', JSON.stringify(rules.limits) === JSON.stringify({
+    PORT: 8080, MAX_PAYLOAD: 65536, ROOM_MEMBERS: 6, CLOSE_ROOM_FULL: 4001, CLOSE_SERVER_FULL: 4002,
+    CONNECTIONS: 1000, ROOMS: 300, PER_ADDRESS: 12, RATE_LIMIT: 200, RATE_WINDOW_MS: 1000, PING_MS: 10000,
+    STATS_MS: 60000, MAX_BUFFERED: 65536,
+  }), JSON.stringify(rules.limits));
+  // Room paths: hand cases and seeded random paths near the rule (one byte changed, cut, lengthened, upper case).
+  const hexChars = '0123456789abcdef';
+  let seed = 0x5eed;
+  const rand = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const id = () => Array.from({ length: 64 }, () => hexChars[rand(16)]).join('');
+  const paths = ['', '/', '/r/', '/healthz', `/r/${'A'.repeat(64)}`, `/r/${'é'.repeat(64)}`, `/r/${id()}\n`,
+    `//r/${id()}`, `/r/${id()}#`, `/R/${id()}`];
+  for (let i = 0; i < 20000; i++) {
+    let p = `/r/${id()}`;
+    switch (rand(6)) {
+      case 0: { const k = rand(p.length); p = p.slice(0, k) + String.fromCharCode(rand(256)) + p.slice(k + 1); break; }
+      case 1: p = p.slice(0, rand(p.length)); break;
+      case 2: p += String.fromCharCode(32 + rand(95)); break;
+      case 3: p = p.toUpperCase(); break;
+      case 4: p = p.repeat(1 + rand(5)); break;
+      default: break;
+    }
+    paths.push(p);
+  }
+  const badPaths = paths.filter((p) => rules.roomPath(p) !== legacy.roomPath(p));
+  check(`room paths agree with the old rule (${paths.length} paths)`, badPaths.length === 0, JSON.stringify(badPaths.slice(0, 3)));
+  // Admission over a grid around every limit.
+  let admitBad = 0;
+  let admitCases = 0;
+  for (const members of [0, 1, 5, 6, 7]) for (const exists of [false, true]) for (const connections of [0, 999, 1000, 1001])
+    for (const roomCount of [0, 299, 300, 301]) for (const fromAddress of [0, 1, 2, 11, 12, 13])
+      for (const perAddressMax of [2, 12, 100]) for (const connectionsMax of [10, 1000]) {
+        admitCases += 1;
+        if (rules.admit(members, exists, connections, roomCount, fromAddress, perAddressMax, connectionsMax) !==
+            legacy.admit(members, exists, connections, roomCount, fromAddress, perAddressMax, connectionsMax)) admitBad += 1;
+      }
+  check(`admission agrees with the old rule (${admitCases} cases)`, admitBad === 0, `${admitBad} differ`);
+  // Rate, forwarding and the ping round, as the old inline conditions.
+  let frameBad = 0;
+  for (let count = 0; count <= 400; count++) if (rules.rateAllows(count) !== !(count > 200)) frameBad += 1;
+  for (const [now, start] of [[0, 0], [999, 0], [1000, 0], [5000, 4001], [5001, 4001], [1760000000000, 0]]) {
+    if (rules.windowRestarts(now, start) !== (now - start >= 1000)) frameBad += 1;
+  }
+  for (const sender of [false, true]) for (const open of [false, true]) for (const buffered of [0, 65535, 65536, 65537]) {
+    if (rules.forwardTo(sender, open, buffered) !== (!sender && open && !(buffered > 65536))) frameBad += 1;
+  }
+  for (const alive of [false, true]) for (const open of [false, true]) {
+    const want = !alive ? rules.PING_TERMINATE : open ? rules.PING_SEND : 2;
+    if (rules.pingAction(alive, open) !== want) frameBad += 1;
+  }
+  check('rate, forwarding and pings agree with the old rules', frameBad === 0, `${frameBad} differ`);
+  // HTTP answers: the old `req.method === 'GET' || req.method === 'HEAD'` and the health path, every pair.
+  const methods = ['GET', 'HEAD', 'POST', 'PUT', 'OPTIONS', 'get', 'head', 'Get', 'GE', 'GETX', 'HEADS', 'HEA', '',
+    ' GET', 'GET ', 'ÉGET', undefined];
+  const urls = ['/healthz', '/healthz/', '/healthz?x', '/HEALTHZ', '/', '', `/r/${'a'.repeat(64)}`];
+  let httpBad = 0;
+  for (const method of methods) for (const url of urls) {
+    const want = (method === 'GET' || method === 'HEAD') && url === '/healthz' ? 200 : 404;
+    if (rules.httpStatus(method ?? '', url) !== want) httpBad += 1;
+  }
+  check(`HTTP answers agree with the old rule (${methods.length * urls.length} cases)`, httpBad === 0, `${httpBad} differ`);
+}
+
 async function main() {
+  rulesAgainstLegacy();
   const relay = await start(0, { log: () => {}, maxPerAddress: 100 });
   const { port } = relay;
 
@@ -59,6 +135,11 @@ async function main() {
   const other = await fetch(`http://127.0.0.1:${port}/`);
   await other.text();
   check('GET / -> 404', other.status === 404);
+  const head = await fetch(`http://127.0.0.1:${port}/healthz`, { method: 'HEAD' });
+  check('HEAD /healthz -> 200', head.status === 200);
+  const post = await fetch(`http://127.0.0.1:${port}/healthz`, { method: 'POST', body: 'x' });
+  await post.text();
+  check('POST /healthz -> 404', post.status === 404);
 
   // Bad upgrade paths
   const hex = room();

@@ -9,6 +9,7 @@
 #include "device_rules.h"
 #include "lane_rules.h"
 #include "peer_rules.h"
+#include "relay_rules.h"
 #include "segment_rules.h"
 #include "text_rules.h"
 #include "transcript_rules.h"

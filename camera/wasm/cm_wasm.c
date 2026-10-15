@@ -6,6 +6,7 @@
 static float cm_wasm_f32[16];
 static uint8_t cm_wasm_u8[256];
 
-// The scratch buffers the extension reads and writes (out arrays of cm_color_params, cm_crop, cm_apply_pixel).
+// The scratch buffers the extension reads and writes (out arrays of cm_color_params, cm_crop, cm_apply_pixel; the
+// text cm_report_clean cleans in place).
 float *cm_wasm_floats(void) { return cm_wasm_f32; }
 uint8_t *cm_wasm_bytes(void) { return cm_wasm_u8; }

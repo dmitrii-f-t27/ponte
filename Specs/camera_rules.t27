@@ -8,6 +8,12 @@
 ; a shadow lift, and the same transform for one pixel (the oracle the shader is tested against); the part of
 ; the frame shown (zoom, pan, mirror) in texture coordinates; when a frame is processed at all; and the link
 ; (its port, the only origin it accepts, keepalive, message limit, the panel's status).
+; Version 2 (2026-10-15, after the extension's errors "passing frames unchanged [object DOMException]" and
+; ERR_CONNECTION_REFUSED on the owner's Mac): the frame pipeline in a Meet page (what each frame does, which renderer
+; draws it, what a failure of a renderer or of Meet's side of the track does, how long until the next try, what the
+; page reports), when the extension dials Ponte again, the WebSocket decisions of Ponte's side of the link (handshake
+; status, frame header checks, opcodes), the cleaned error text a page reports, and the panel's status with frames
+; that pass unprocessed.
 ; The extension runs this same C, built to WebAssembly by camera/build-wasm.sh, so the numbers the shader gets
 ; are the numbers the tests check. Settings are integers (sliders), the transform is f32. ASCII only.
 ; Facade: PonteApp/CameraRules.swift. Oracle: Tests/PonteTests/Oracles/CameraRulesLegacy.swift.
@@ -85,6 +91,150 @@ pub const CM_LINK_NO_EXTENSION : i64 = 2;
 pub const CM_LINK_WAITING : i64 = 3;
 ; A Meet page sends the processed picture.
 pub const CM_LINK_ACTIVE : i64 = 4;
+; A Meet page has the camera open and its frames pass as they came, because the settings change nothing (or
+; "Obrabatyvat' kameru" is off): the picture is the right one, but no frame is drawn.
+pub const CM_LINK_PASSING : i64 = 5;
+; A Meet page should process its camera but cannot draw right now (a renderer failed): its frames pass as they
+; came, unprocessed, while the extension tries again by itself. Shown with the page's last error.
+pub const CM_LINK_TROUBLE : i64 = 6;
+; Ponte reads a socket in pieces of at most this many bytes.
+pub const CM_LINK_READ_MAX : i64 = 16384;
+
+; --- The extension dials Ponte (camera/extension/sw.js) -------------------------------------------------------------
+; Ponte may be closed or start after the browser: a refused connection is normal then, and the browser logs each
+; refused attempt in chrome://extensions by itself (no script can stop that), so the attempts are spaced. Why the
+; service worker dials (DIAL_*): it started (browser start, a wake-up), the extension was installed or updated,
+; its timer or alarm fired, a Meet page reported, the socket closed.
+pub const CM_DIAL_START : i64 = 0;
+pub const CM_DIAL_INSTALL : i64 = 1;
+pub const CM_DIAL_TIMER : i64 = 2;
+pub const CM_DIAL_PAGE : i64 = 3;
+pub const CM_DIAL_CLOSED : i64 = 4;
+; After failures in a row the wait doubles from CM_DIAL_FIRST_MS: up to CM_DIAL_MEET_MAX_MS while a Meet page is
+; open (Ponte started late connects within that), else up to CM_DIAL_IDLE_MAX_MS. The service worker's alarm
+; (every 30 s, Chromium's shortest) wakes it to look again.
+pub const CM_DIAL_FIRST_MS : i64 = 1000;
+pub const CM_DIAL_MEET_MAX_MS : i64 = 30000;
+pub const CM_DIAL_IDLE_MAX_MS : i64 = 300000;
+pub const CM_DIAL_FAILURES_CAP : i64 = 32;
+
+; --- Ponte's side of the WebSocket (PonteCamera/CameraLink.swift) ------------------------------------------------
+; HTTP answers to a handshake.
+pub const CM_HTTP_SWITCHING : i64 = 101;
+pub const CM_HTTP_BAD_REQUEST : i64 = 400;
+pub const CM_HTTP_FORBIDDEN : i64 = 403;
+pub const CM_HTTP_TOO_LARGE : i64 = 431;
+pub const CM_HTTP_BUSY : i64 = 503;
+; Close codes (RFC 6455).
+pub const CM_WS_CLOSE_NORMAL : i64 = 1000;
+pub const CM_WS_CLOSE_PROTOCOL : i64 = 1002;
+pub const CM_WS_CLOSE_UNSUPPORTED : i64 = 1003;
+pub const CM_WS_CLOSE_TOO_BIG : i64 = 1009;
+; What a received frame does (WSA_*): a text message, the peer closes, a ping to answer, a pong, anything else.
+pub const CM_WSA_MESSAGE : i64 = 0;
+pub const CM_WSA_CLOSE : i64 = 1;
+pub const CM_WSA_PONG : i64 = 2;
+pub const CM_WSA_IGNORE : i64 = 3;
+pub const CM_WSA_UNSUPPORTED : i64 = 4;
+; Ponte's own messages are sent with a 7-bit or a 16-bit length.
+pub const CM_WS_SEND_MAX : i64 = 65535;
+
+; --- The frame pipeline in a Meet page (camera/extension/page.js) -------------------------------------------------
+; page.js runs in Meet's own world, where the extension's WebAssembly is not at hand and Meet's content security
+; policy decides what may be compiled; so the service worker evaluates the functions of this section over their whole
+; (small) domains and hands the page the tables (camera/extension/policy.js); the page only looks the answers up.
+; A camera track Meet asks for is wrapped. Each frame either passes as it came (the original frame goes to Meet) or
+; is drawn by a renderer into a new frame that goes to Meet instead (the original is released once the new one
+; exists). A renderer that fails is released and tried again later, or replaced by the next one; frames meanwhile pass
+; as they came, so the picture never goes black, and the status says that they are not processed.
+; Track states (TRK_*): wrapped with no frame yet; frames pass because nothing changes the picture; the last frame
+; was drawn and went to Meet; a renderer failed and frames pass until the next try; every renderer failed and frames
+; pass until CM_RENDER_FAILED_RETRY_MS or new settings; the track ended.
+pub const CM_TRK_STARTING : i64 = 0;
+pub const CM_TRK_PASSING : i64 = 1;
+pub const CM_TRK_PROCESSED : i64 = 2;
+pub const CM_TRK_RECOVERING : i64 = 3;
+pub const CM_TRK_FAILED : i64 = 4;
+pub const CM_TRK_ENDED : i64 = 5;
+pub const CM_TRK_COUNT : i64 = 6;
+; Events (TEV_*): a frame passed because nothing needs processing; a frame passed while a try is not due (or the
+; frame had no size); a drawn frame went to Meet; Meet's side refused a frame while the track was not being stopped
+; (the generator's stream is broken: nothing more can be written); the track was stopped or ended; new settings.
+pub const CM_TEV_PASSED : i64 = 0;
+pub const CM_TEV_HELD : i64 = 1;
+pub const CM_TEV_DRAWN : i64 = 2;
+pub const CM_TEV_WRITE_FAILED : i64 = 3;
+pub const CM_TEV_STOPPED : i64 = 4;
+pub const CM_TEV_SETTINGS : i64 = 5;
+pub const CM_TEV_COUNT : i64 = 6;
+; What the page does after an event (TACT_*): nothing; the failure count back to 0; release the renderer and start
+; again from the first renderer with no failures, at once; release the renderer, the reader and the writer and stop
+; both tracks (the camera is released; Meet sees its track end and may ask for the camera again).
+pub const CM_TACT_NONE : i64 = 0;
+pub const CM_TACT_CLEAR : i64 = 1;
+pub const CM_TACT_RESET : i64 = 2;
+pub const CM_TACT_CLOSE : i64 = 3;
+; Where a frame goes (ROUTE_*): to Meet as it came, through the renderer, nowhere (the track ended: released).
+pub const CM_ROUTE_PASS : i64 = 0;
+pub const CM_ROUTE_DRAW : i64 = 1;
+pub const CM_ROUTE_STOP : i64 = 2;
+; Renderers (RV_*; the codes are stable, the order they are tried is cm_render_at). WebGL2 draws the colour and the
+; frame; its new frame is taken straight from the canvas with a preserved drawing buffer (tried first), or as an
+; ImageBitmap of the drawing buffer (tried second). The 2D canvas draws only the part of the frame shown (zoom, pan,
+; mirror), so it is used only while the colour settings change nothing (tried last).
+; The order, by the checks of 2026-10-15: on the owner's Apple M4 (ANGLE Metal, BrowserOS neo, real camera NV12
+; 640x480) the final diagnose run made a VideoFrame from the WebGL2 canvas (BGRX) and drew 30 frames/s processed,
+; while VideoFrame(ImageBitmap) threw "OperationError: Failed to construct 'VideoFrame': Failed to create video
+; frame"; headless Chrome with SwiftShader (the fake-camera tests) behaves the same. (An earlier diagnose run with the
+; first patch reported the ImageBitmap renderer as drawing; the final run, with a probe of each path on its own,
+; did not confirm it.) A path that does not work costs one frame: an unproven renderer is left at its first failure,
+; and later tracks start with the one that drew (see CM_RENDER_TRIES).
+pub const CM_RV_WEBGL_BITMAP : i64 = 0;
+pub const CM_RV_WEBGL_CANVAS : i64 = 1;
+pub const CM_RV_CANVAS2D : i64 = 2;
+pub const CM_RV_COUNT : i64 = 3;
+pub const CM_RV_FIRST : i64 = 1;
+; Where a failure happened (STAGE_*): none known; making the context, shaders or program; taking the camera frame
+; in (texImage2D, drawImage); drawing; making the new frame (ImageBitmap, VideoFrame); the context was lost; Meet's
+; side refused a frame; reading the camera failed.
+pub const CM_STAGE_NONE : i64 = 0;
+pub const CM_STAGE_CREATE : i64 = 1;
+pub const CM_STAGE_UPLOAD : i64 = 2;
+pub const CM_STAGE_DRAW : i64 = 3;
+pub const CM_STAGE_OUTPUT : i64 = 4;
+pub const CM_STAGE_LOST : i64 = 5;
+pub const CM_STAGE_WRITE : i64 = 6;
+pub const CM_STAGE_READ : i64 = 7;
+pub const CM_STAGE_COUNT : i64 = 8;
+; A renderer is tried this many times in a row before the next one; the waits between are CM_RENDER_RETRY_FIRST_MS,
+; doubling; after a lost context CM_RENDER_LOST_RETRY_MS (the GPU process may be restarting); after every renderer
+; failed, CM_RENDER_FAILED_RETRY_MS. Only a proven renderer gets the tries: one that has drawn a frame on this page.
+; One that has not is left at its first failure (except a lost context, which says nothing about the renderer): a way
+; of making frames this browser and GPU do not support costs one frame, not a second of retries. A new track starts
+; with the renderer that last drew on the page (cm_render_first).
+pub const CM_RENDER_TRIES : i64 = 3;
+pub const CM_RENDER_RETRY_FIRST_MS : i64 = 250;
+pub const CM_RENDER_LOST_RETRY_MS : i64 = 1000;
+pub const CM_RENDER_FAILED_RETRY_MS : i64 = 30000;
+; What a track counts as in the page's report (BUCKET_*): nothing (ended); a camera whose frames pass as they came;
+; a processed camera; a camera that should be processed and is not.
+pub const CM_BUCKET_NONE : i64 = 0;
+pub const CM_BUCKET_PASSING : i64 = 1;
+pub const CM_BUCKET_PROCESSED : i64 = 2;
+pub const CM_BUCKET_TROUBLE : i64 = 3;
+; The error a page reports: the DOMException's name and its message, printable ASCII only, at most this many bytes
+; (no frames, no page content).
+pub const CM_REPORT_NAME : i64 = 0;
+pub const CM_REPORT_TEXT : i64 = 1;
+pub const CM_REPORT_NAME_MAX : i64 = 64;
+pub const CM_REPORT_TEXT_MAX : i64 = 200;
+; How much a reported error counts when the panel shows one of several (cm_report_error_rank).
+pub const CM_ERROR_RANK_NONE : i64 = 0;
+pub const CM_ERROR_RANK_PAST : i64 = 1;
+pub const CM_ERROR_RANK_TROUBLE : i64 = 2;
+; The tables the service worker hands the page change shape (or the meaning of their codes) with this number.
+; 2 (0.1.14): the failure tables by proven renderer, the first renderer by the last one that drew, the error ranks.
+pub const CM_POLICY_REV : i64 = 2;
 
 ; >>> generated by Specs/tables/camera_tables.py -- edit the list there, not here
 ; Texts
@@ -127,6 +277,12 @@ pub fn cm_setting_max(kind: i64) -> i64 {
 pub fn cm_setting_default(kind: i64) -> i64 {
     if (kind == CM_SET_ZOOM) { return CM_ZOOM_MIN; }
     return 0;
+}
+
+; "Obrabatyvat' kameru" before the owner ever set it (Ponte's stored settings, the extension's storage): on. The
+; defaults of every setting change nothing, so "on" alone never alters the picture.
+pub fn cm_default_on() -> bool {
+    return true;
 }
 
 ; A value from the panel, from storage or from the link, held to the setting's range.
@@ -376,6 +532,28 @@ pub fn cm_link_cameras(reported: i64) -> i64 {
     return reported;
 }
 
+; The panel's install steps open by themselves while no extension is connected (the link is off or nobody
+; connected); the owner can still open or close them (CameraPanel before 2026-10-15).
+pub fn cm_panel_install_open(status: i64) -> bool {
+    return status == CM_LINK_NO_EXTENSION or status == CM_LINK_OFF;
+}
+
+; A link message (settings, status) is read only in this version of the protocol; one of another version is
+; ignored, by Ponte and by the extension alike (CameraLink and sw.js before 2026-10-15, each by itself).
+pub fn cm_link_version_taken(v: i64) -> bool {
+    return v == CM_LINK_VERSION;
+}
+
+; Which reported error the panel shows when several reports carry one: the error of a camera in trouble now before
+; the error of one that is not (a track that ended, a camera that recovered); among equal ranks the newest where the
+; reports have times (the service worker's pages), else the first (Ponte's connected extensions, in order). 0: no
+; error. (sw.js took the newest and CameraLink the first troubled one, each by itself, before 2026-10-15.)
+pub fn cm_report_error_rank(has_error: bool, troubled: bool) -> i64 {
+    if (has_error == false) { return CM_ERROR_RANK_NONE; }
+    if (troubled) { return CM_ERROR_RANK_TROUBLE; }
+    return CM_ERROR_RANK_PAST;
+}
+
 ; The panel's status: the listener, the connected extensions, and the Meet pages they report with a camera
 ; through the extension.
 pub fn cm_link_status(listening: bool, failed: bool, clients: i64, active_cameras: i64) -> i64 {
@@ -384,6 +562,343 @@ pub fn cm_link_status(listening: bool, failed: bool, clients: i64, active_camera
     if (clients <= 0) { return CM_LINK_NO_EXTENSION; }
     if (active_cameras <= 0) { return CM_LINK_WAITING; }
     return CM_LINK_ACTIVE;
+}
+
+; The panel's status from the pages' reports (version 2): processed cameras, cameras whose frames pass as they came,
+; and cameras that should be processed and are not. A camera in trouble is shown before a processed one, so the panel
+; never says "processed" while some camera is not.
+pub fn cm_link_panel(listening: bool, failed: bool, clients: i64, processed: i64, passing: i64, troubled: i64) -> i64 {
+    if (failed) { return CM_LINK_FAILED; }
+    if (listening == false) { return CM_LINK_OFF; }
+    if (clients <= 0) { return CM_LINK_NO_EXTENSION; }
+    if (troubled > 0) { return CM_LINK_TROUBLE; }
+    if (processed > 0) { return CM_LINK_ACTIVE; }
+    if (passing > 0) { return CM_LINK_PASSING; }
+    return CM_LINK_WAITING;
+}
+
+; --- Ponte's side of the WebSocket ----------------------------------------------------------------------------------
+; The answer to a handshake: a GET with "Upgrade: websocket" and a key, from the extension's own origin, while fewer
+; than CM_LINK_CLIENTS_MAX are open. Checked in this order (CameraLink before 2026-10-15).
+pub fn cm_ws_handshake_status(is_get: bool, upgrade: bool, has_key: bool, origin_allowed: bool, open_clients: i64) -> i64 {
+    if (is_get == false or upgrade == false or has_key == false) { return CM_HTTP_BAD_REQUEST; }
+    if (origin_allowed == false) { return CM_HTTP_FORBIDDEN; }
+    if (cm_link_accepts(open_clients) == false) { return CM_HTTP_BUSY; }
+    return CM_HTTP_SWITCHING;
+}
+
+; Request headers still without their end after this many bytes are refused (CM_HTTP_TOO_LARGE).
+pub fn cm_ws_head_too_large(buffered: i64) -> bool {
+    return buffered > CM_LINK_MESSAGE_MAX;
+}
+
+; The bytes before a client frame's mask, by its 7-bit length field: 2, 4 with a 16-bit length, 10 with a 64-bit one.
+pub fn cm_ws_header_bytes(len7: i64) -> i64 {
+    if (len7 == 126) { return 4; }
+    if (len7 == 127) { return 10; }
+    return 2;
+}
+
+; Whether a client frame's header is taken (0) or the close code it gets: a 64-bit length is never this small a
+; message; a frame must be final (no fragments), masked (every client frame is) and at most CM_LINK_MESSAGE_MAX bytes.
+; A masked frame that breaks a rule closes as too big, an unmasked one as a protocol error (CameraLink before
+; 2026-10-15).
+pub fn cm_ws_frame_close(fin: bool, masked: bool, len7: i64, length: i64) -> i64 {
+    if (len7 == 127) { return CM_WS_CLOSE_TOO_BIG; }
+    if (fin and masked and length >= 0 and length <= CM_LINK_MESSAGE_MAX) { return 0; }
+    if (masked) { return CM_WS_CLOSE_TOO_BIG; }
+    return CM_WS_CLOSE_PROTOCOL;
+}
+
+; What a received frame's opcode does: text 1 is a message, close 8 closes, ping 9 is answered with a pong, pong 10
+; is ignored; any other (binary, continuation, reserved) closes as unsupported.
+pub fn cm_ws_opcode_action(opcode: i64) -> i64 {
+    if (opcode == 1) { return CM_WSA_MESSAGE; }
+    if (opcode == 8) { return CM_WSA_CLOSE; }
+    if (opcode == 9) { return CM_WSA_PONG; }
+    if (opcode == 10) { return CM_WSA_IGNORE; }
+    return CM_WSA_UNSUPPORTED;
+}
+
+; The close code Ponte sends after an action (0: none).
+pub fn cm_ws_action_close(action: i64) -> i64 {
+    if (action == CM_WSA_CLOSE) { return CM_WS_CLOSE_NORMAL; }
+    if (action == CM_WSA_UNSUPPORTED) { return CM_WS_CLOSE_UNSUPPORTED; }
+    return 0;
+}
+
+; Ponte's own frame: the 7-bit length field for a payload of len bytes (126: a 16-bit length follows), and whether
+; such a payload can be sent at all.
+pub fn cm_ws_send_len7(len: i64) -> i64 {
+    if (len >= 0 and len < 126) { return len; }
+    return 126;
+}
+
+pub fn cm_ws_send_fits(len: i64) -> bool {
+    return len >= 0 and len <= CM_WS_SEND_MAX;
+}
+
+; --- The extension dials Ponte --------------------------------------------------------------------------------------
+; The wait after `failures` refused or broken attempts in a row (0: none), with `pages` Meet pages open.
+pub fn cm_dial_delay_ms(failures: i64, pages: i64) -> i64 {
+    if (failures <= 0) { return 0; }
+    var cap: i64 = CM_DIAL_IDLE_MAX_MS;
+    if (pages > 0) { cap = CM_DIAL_MEET_MAX_MS; }
+    var ms: i64 = CM_DIAL_FIRST_MS;
+    var k: i64 = 1;
+    while (k < failures and ms < cap) {
+        ms = ms * 2;
+        k = k + 1;
+    }
+    if (ms > cap) { return cap; }
+    return ms;
+}
+
+; How long until the next attempt (0: dial now). `ms_since` is the time since the last attempt (negative: none
+; yet, or the clock went back). An install or update dials at once.
+pub fn cm_dial_wait_ms(reason: i64, ms_since: i64, failures: i64, pages: i64) -> i64 {
+    if (reason == CM_DIAL_INSTALL) { return 0; }
+    if (ms_since < 0) { return 0; }
+    var delay: i64 = cm_dial_delay_ms(failures, pages);
+    if (ms_since >= delay) { return 0; }
+    return delay - ms_since;
+}
+
+; The failure count after an attempt: back to 0 once the socket opened, else one more (at most CM_DIAL_FAILURES_CAP).
+pub fn cm_dial_failures_after(failures: i64, opened: bool) -> i64 {
+    if (opened) { return 0; }
+    if (failures < 0) { return 1; }
+    if (failures >= CM_DIAL_FAILURES_CAP) { return CM_DIAL_FAILURES_CAP; }
+    return failures + 1;
+}
+
+; --- The pages' reports ----------------------------------------------------------------------------------------------
+; The service worker counts each Meet tab's cameras from the tab's last report. A page that goes away normally (it
+; navigates elsewhere or reloads) says so on pagehide and is forgotten at once; one that cannot say it (its renderer
+; crashed or was killed, the message was lost) is forgotten when its lease runs out: every page repeats its report
+; each CM_PAGE_REPORT_MS, and a report is good for CM_PAGE_LEASE_MS. The lease outlasts Chrome's slowest timer in a
+; hidden tab (once a minute under intensive throttling), so a live page is never dropped between two reports. Before
+; 2026-10-15 an entry stayed until the tab was closed, and a tab that left Meet kept its "processed" camera.
+pub const CM_PAGE_REPORT_MS : i64 = 20000;
+pub const CM_PAGE_LEASE_MS : i64 = 90000;
+
+; How long a page's last report, `ms_since` old, is still good (0: the page is gone). A clock that went back keeps
+; the report a whole lease, never longer.
+pub fn cm_page_lease_left_ms(ms_since: i64) -> i64 {
+    if (ms_since >= CM_PAGE_LEASE_MS or ms_since <= 0 - CM_PAGE_LEASE_MS) { return 0; }
+    if (ms_since < 0) { return CM_PAGE_LEASE_MS; }
+    return CM_PAGE_LEASE_MS - ms_since;
+}
+
+; --- The frame pipeline ---------------------------------------------------------------------------------------------
+; Where a frame goes. `needs`: the settings change the picture (cm_needs_processing); `due`: the time of the next
+; try has come (the page compares its clock with the time the failure tables set); `sized`: the frame has a width
+; and a height. An ended track takes no frame; an unknown state passes it.
+pub fn cm_trk_route(state: i64, needs: bool, due: bool, sized: bool) -> i64 {
+    if (state == CM_TRK_ENDED) { return CM_ROUTE_STOP; }
+    if (state < 0 or state >= CM_TRK_COUNT) { return CM_ROUTE_PASS; }
+    if (needs == false or sized == false) { return CM_ROUTE_PASS; }
+    if (state == CM_TRK_RECOVERING or state == CM_TRK_FAILED) {
+        if (due) { return CM_ROUTE_DRAW; }
+        return CM_ROUTE_PASS;
+    }
+    return CM_ROUTE_DRAW;
+}
+
+; Whether a renderer can show settings whose colour is (color_identity) or is not the identity.
+pub fn cm_render_usable(variant: i64, color_identity: bool) -> bool {
+    if (variant == CM_RV_WEBGL_BITMAP or variant == CM_RV_WEBGL_CANVAS) { return true; }
+    if (variant == CM_RV_CANVAS2D) { return color_identity; }
+    return false;
+}
+
+; Whether new settings start a track again (CM_TACT_RESET): one that gave up (FAILED), one still in a failed round
+; (RECOVERING: its renderer, count and wait belong to the failure, and the renderer that last drew may work again,
+; as when a lost WebGL2 comes back), or one whose renderer cannot show them. A healthy track whose renderer can show
+; them keeps it (no new context per slider step). (Before 2026-10-15 a RECOVERING track kept its round: new settings
+; could end in FAILED for 30 s while the renderer that drew last was available again.)
+pub fn cm_trk_settings_restart(state: i64, usable: bool) -> bool {
+    return state == CM_TRK_FAILED or state == CM_TRK_RECOVERING or usable == false;
+}
+
+; The state after an event. `usable`: the current renderer can show the settings now in force (cm_render_usable).
+; New settings give a track a fresh start as cm_trk_settings_restart says.
+pub fn cm_trk_step_state(state: i64, event: i64, usable: bool) -> i64 {
+    if (state < 0 or state >= CM_TRK_COUNT) { return CM_TRK_STARTING; }
+    if (state == CM_TRK_ENDED) { return CM_TRK_ENDED; }
+    if (event == CM_TEV_STOPPED or event == CM_TEV_WRITE_FAILED) { return CM_TRK_ENDED; }
+    if (event == CM_TEV_PASSED) { return CM_TRK_PASSING; }
+    if (event == CM_TEV_DRAWN) { return CM_TRK_PROCESSED; }
+    if (event == CM_TEV_SETTINGS and cm_trk_settings_restart(state, usable)) { return CM_TRK_STARTING; }
+    return state;
+}
+
+; What the page does after an event (TACT_*), with the same arguments as cm_trk_step_state.
+pub fn cm_trk_step_action(state: i64, event: i64, usable: bool) -> i64 {
+    if (state < 0 or state >= CM_TRK_COUNT or state == CM_TRK_ENDED) { return CM_TACT_NONE; }
+    if (event == CM_TEV_STOPPED or event == CM_TEV_WRITE_FAILED) { return CM_TACT_CLOSE; }
+    if (event == CM_TEV_DRAWN) { return CM_TACT_CLEAR; }
+    if (event == CM_TEV_SETTINGS and cm_trk_settings_restart(state, usable)) { return CM_TACT_RESET; }
+    return CM_TACT_NONE;
+}
+
+; What a track counts as in the page's report.
+pub fn cm_trk_bucket(state: i64) -> i64 {
+    if (state == CM_TRK_STARTING or state == CM_TRK_PASSING) { return CM_BUCKET_PASSING; }
+    if (state == CM_TRK_PROCESSED) { return CM_BUCKET_PROCESSED; }
+    if (state == CM_TRK_RECOVERING or state == CM_TRK_FAILED) { return CM_BUCKET_TROUBLE; }
+    return CM_BUCKET_NONE;
+}
+
+; A renderer, a failure count and a stage held to their ranges (an unknown renderer is the first; an unknown stage,
+; or none, is a drawing failure; the count is 0...CM_RENDER_TRIES - 1).
+pub fn cm_render_variant_held(variant: i64) -> i64 {
+    if (variant < 0 or variant >= CM_RV_COUNT) { return CM_RV_FIRST; }
+    return variant;
+}
+
+pub fn cm_render_fails_held(fails: i64) -> i64 {
+    if (fails < 0) { return 0; }
+    if (fails >= CM_RENDER_TRIES) { return CM_RENDER_TRIES - 1; }
+    return fails;
+}
+
+pub fn cm_render_stage_held(stage: i64) -> i64 {
+    if (stage <= CM_STAGE_NONE or stage >= CM_STAGE_COUNT) { return CM_STAGE_DRAW; }
+    return stage;
+}
+
+; Whether a renderer that failed at `stage` after `fails` failures in a row is given up: it could not be made at all;
+; it never drew a frame on this page (`proven` false) and the failure is not a lost context; or this was its
+; CM_RENDER_TRIES-th failure in a row.
+pub fn cm_render_gives_up(fails: i64, stage: i64, proven: bool) -> bool {
+    var st: i64 = cm_render_stage_held(stage);
+    if (st == CM_STAGE_CREATE) { return true; }
+    if (proven == false and st != CM_STAGE_LOST) { return true; }
+    return cm_render_fails_held(fails) + 1 >= CM_RENDER_TRIES;
+}
+
+; The renderer a track starts with (a new track, or new settings that start it again): the one that last drew a frame
+; on this page (`last_good`, -1: none yet) when it can show the settings, else the first.
+pub fn cm_render_first(last_good: i64, color_identity: bool) -> i64 {
+    if (last_good >= 0 and last_good < CM_RV_COUNT and cm_render_usable(last_good, color_identity)) { return last_good; }
+    return CM_RV_FIRST;
+}
+
+; The renderer tried at position `pos` (0 first): WebGL2 from the canvas, WebGL2 as an ImageBitmap, the 2D canvas;
+; -1 outside.
+pub fn cm_render_at(pos: i64) -> i64 {
+    if (pos == 0) { return CM_RV_WEBGL_CANVAS; }
+    if (pos == 1) { return CM_RV_WEBGL_BITMAP; }
+    if (pos == 2) { return CM_RV_CANVAS2D; }
+    return 0 - 1;
+}
+
+; The position of a renderer in that order (an unknown renderer: the first's).
+pub fn cm_render_pos(variant: i64) -> i64 {
+    var v: i64 = cm_render_variant_held(variant);
+    var pos: i64 = 0;
+    while (pos < CM_RV_COUNT) {
+        if (cm_render_at(pos) == v) { return pos; }
+        pos = pos + 1;
+    }
+    return 0;
+}
+
+; The next renderer after `variant`, in the order tried, that can show the settings, or -1 when none is left.
+pub fn cm_render_after(variant: i64, color_identity: bool) -> i64 {
+    var pos: i64 = cm_render_pos(variant) + 1;
+    while (pos < CM_RV_COUNT) {
+        var v: i64 = cm_render_at(pos);
+        if (cm_render_usable(v, color_identity)) { return v; }
+        pos = pos + 1;
+    }
+    return 0 - 1;
+}
+
+; Every renderer has failed: the track gives up until CM_RENDER_FAILED_RETRY_MS or new settings.
+pub fn cm_render_exhausted(variant: i64, fails: i64, stage: i64, proven: bool, color_identity: bool) -> bool {
+    return cm_render_gives_up(fails, stage, proven) and cm_render_after(variant, color_identity) < 0;
+}
+
+; After a renderer failed (it is always released): the renderer tried next. After every renderer failed, the first
+; one again, when the wait is over.
+pub fn cm_render_next_variant(variant: i64, fails: i64, stage: i64, proven: bool, color_identity: bool) -> i64 {
+    var v: i64 = cm_render_variant_held(variant);
+    if (cm_render_gives_up(fails, stage, proven) == false) { return v; }
+    var after: i64 = cm_render_after(v, color_identity);
+    if (after < 0) { return CM_RV_FIRST; }
+    return after;
+}
+
+; The failure count of the renderer tried next: one more for the same renderer, 0 for another one.
+pub fn cm_render_next_fails(variant: i64, fails: i64, stage: i64, proven: bool, color_identity: bool) -> i64 {
+    if (cm_render_gives_up(fails, stage, proven)) { return 0; }
+    return cm_render_fails_held(fails) + 1;
+}
+
+; The wait before the next try, while frames pass as they came: none before another renderer;
+; CM_RENDER_FAILED_RETRY_MS after the last one; CM_RENDER_LOST_RETRY_MS after a lost context; else
+; CM_RENDER_RETRY_FIRST_MS doubled per earlier failure in a row.
+pub fn cm_render_retry_ms(variant: i64, fails: i64, stage: i64, proven: bool, color_identity: bool) -> i64 {
+    if (cm_render_gives_up(fails, stage, proven)) {
+        if (cm_render_after(variant, color_identity) < 0) { return CM_RENDER_FAILED_RETRY_MS; }
+        return 0;
+    }
+    if (cm_render_stage_held(stage) == CM_STAGE_LOST) { return CM_RENDER_LOST_RETRY_MS; }
+    var ms: i64 = CM_RENDER_RETRY_FIRST_MS;
+    var k: i64 = 0;
+    var f: i64 = cm_render_fails_held(fails);
+    while (k < f) {
+        ms = ms * 2;
+        k = k + 1;
+    }
+    return ms;
+}
+
+; The track's state after a renderer failed: recovering, or failed once every renderer has.
+pub fn cm_render_next_state(variant: i64, fails: i64, stage: i64, proven: bool, color_identity: bool) -> i64 {
+    if (cm_render_exhausted(variant, fails, stage, proven, color_identity)) { return CM_TRK_FAILED; }
+    return CM_TRK_RECOVERING;
+}
+
+; --- The error a page reports -----------------------------------------------------------------------------------------
+; A stage from a report, held to the known ones (else CM_STAGE_NONE).
+pub fn cm_report_stage(stage: i64) -> i64 {
+    if (stage < 0 or stage >= CM_STAGE_COUNT) { return CM_STAGE_NONE; }
+    return stage;
+}
+
+; The most bytes a reported name (CM_REPORT_NAME) or message (CM_REPORT_TEXT) keeps.
+pub fn cm_report_limit(kind: i64) -> i64 {
+    if (kind == CM_REPORT_NAME) { return CM_REPORT_NAME_MAX; }
+    if (kind == CM_REPORT_TEXT) { return CM_REPORT_TEXT_MAX; }
+    return 0;
+}
+
+; A byte a report keeps: printable ASCII (no control characters, no line breaks, no UTF-8).
+pub fn cm_report_byte_kept(b: u8) -> bool {
+    return b >= 32 and b <= 126;
+}
+
+; Cleans a reported text in place: the kept bytes of the first len (at most 256; negative: none), in order, up to
+; the limit of its kind. Returns the new length.
+pub fn cm_report_clean(text: [256]u8, len: i64, kind: i64) -> i64 {
+    var n: i64 = len;
+    if (n < 0) { n = 0; }
+    if (n > 256) { n = 256; }
+    var limit: i64 = cm_report_limit(kind);
+    var k: i64 = 0;
+    var out: i64 = 0;
+    while (k < n and out < limit) {
+        var b: u8 = text[k];
+        if (cm_report_byte_kept(b)) {
+            text[out] = b;
+            out = out + 1;
+        }
+        k = k + 1;
+    }
+    return out;
 }
 
 ; --- Tests ----------------------------------------------------------------------------------------------------------
@@ -401,6 +916,9 @@ test cm_setting_rules {
     assert cm_setting_max(0 - 1) == 0;
     assert cm_setting_default(CM_SET_ZOOM) == 100;
     assert cm_setting_default(CM_SET_WARMTH) == 0;
+    // On by default, and the default settings need no processing even when on.
+    assert cm_default_on() == true;
+    assert cm_needs_processing(cm_default_on(), cm_color_identity(0, 0, 0, 0, 0), cm_frame_identity(100, 0, 0, 0)) == false;
     assert cm_clamp_setting(CM_SET_ZOOM, 50) == 100;
     assert cm_clamp_setting(CM_SET_ZOOM, 1000) == 300;
     assert cm_clamp_setting(CM_SET_MIRROR, 7) == 1;
@@ -614,4 +1132,418 @@ test cm_link_rules {
     assert cm_link_status(true, false, 1, 0) == CM_LINK_WAITING;
     assert cm_link_status(true, false, 1, 1) == CM_LINK_ACTIVE;
     assert CM_LINK_PING_MS < 30000;
+    // Version 2: the panel never says "processed" while a camera is in trouble, and says "passing" when frames pass.
+    assert cm_link_panel(false, false, 1, 1, 0, 0) == CM_LINK_OFF;
+    assert cm_link_panel(true, true, 1, 1, 0, 0) == CM_LINK_FAILED;
+    assert cm_link_panel(true, false, 0, 1, 1, 1) == CM_LINK_NO_EXTENSION;
+    assert cm_link_panel(true, false, 1, 0, 0, 0) == CM_LINK_WAITING;
+    assert cm_link_panel(true, false, 1, 0, 1, 0) == CM_LINK_PASSING;
+    assert cm_link_panel(true, false, 1, 1, 1, 0) == CM_LINK_ACTIVE;
+    assert cm_link_panel(true, false, 1, 1, 0, 1) == CM_LINK_TROUBLE;
+    assert cm_link_panel(true, false, 1, 0, 0, 1) == CM_LINK_TROUBLE;
+    assert cm_link_panel(true, false, 1, 0 - 1, 0 - 1, 0 - 1) == CM_LINK_WAITING;
+    assert cm_panel_install_open(CM_LINK_OFF) == true;
+    assert cm_panel_install_open(CM_LINK_NO_EXTENSION) == true;
+    assert cm_panel_install_open(CM_LINK_FAILED) == false;
+    assert cm_panel_install_open(CM_LINK_WAITING) == false;
+    assert cm_panel_install_open(CM_LINK_ACTIVE) == false;
+    assert cm_panel_install_open(CM_LINK_PASSING) == false;
+    assert cm_panel_install_open(CM_LINK_TROUBLE) == false;
+    assert cm_link_version_taken(CM_LINK_VERSION) == true;
+    assert cm_link_version_taken(CM_LINK_VERSION + 1) == false;
+    assert cm_link_version_taken(0) == false;
+    // A camera in trouble now: its error first; no error never outranks one.
+    assert cm_report_error_rank(true, true) > cm_report_error_rank(true, false);
+    assert cm_report_error_rank(true, false) > cm_report_error_rank(false, true);
+    assert cm_report_error_rank(false, true) == CM_ERROR_RANK_NONE;
+    assert cm_report_error_rank(false, false) == CM_ERROR_RANK_NONE;
+}
+
+test cm_ws_rules {
+    // The handshake, in CameraLink's order: request, origin, room.
+    assert cm_ws_handshake_status(true, true, true, true, 0) == CM_HTTP_SWITCHING;
+    assert cm_ws_handshake_status(true, true, true, true, 3) == CM_HTTP_SWITCHING;
+    assert cm_ws_handshake_status(true, true, true, true, 4) == CM_HTTP_BUSY;
+    assert cm_ws_handshake_status(true, true, true, false, 0) == CM_HTTP_FORBIDDEN;
+    assert cm_ws_handshake_status(true, true, true, false, 9) == CM_HTTP_FORBIDDEN;
+    assert cm_ws_handshake_status(false, true, true, true, 0) == CM_HTTP_BAD_REQUEST;
+    assert cm_ws_handshake_status(true, false, true, true, 0) == CM_HTTP_BAD_REQUEST;
+    assert cm_ws_handshake_status(true, true, false, false, 9) == CM_HTTP_BAD_REQUEST;
+    assert cm_ws_head_too_large(4096) == false;
+    assert cm_ws_head_too_large(4097) == true;
+    // Frame headers.
+    assert cm_ws_header_bytes(0) == 2;
+    assert cm_ws_header_bytes(125) == 2;
+    assert cm_ws_header_bytes(126) == 4;
+    assert cm_ws_header_bytes(127) == 10;
+    assert cm_ws_frame_close(true, true, 5, 5) == 0;
+    assert cm_ws_frame_close(true, true, 126, 4096) == 0;
+    assert cm_ws_frame_close(true, true, 126, 4097) == CM_WS_CLOSE_TOO_BIG;
+    assert cm_ws_frame_close(true, true, 127, 10) == CM_WS_CLOSE_TOO_BIG;
+    assert cm_ws_frame_close(true, false, 5, 5) == CM_WS_CLOSE_PROTOCOL;
+    assert cm_ws_frame_close(false, true, 5, 5) == CM_WS_CLOSE_TOO_BIG;
+    assert cm_ws_frame_close(false, false, 5, 5) == CM_WS_CLOSE_PROTOCOL;
+    // Every opcode has one action; only close and the unsupported ones close.
+    var op: i64 = 0;
+    while (op < 16) {
+        var a: i64 = cm_ws_opcode_action(op);
+        assert a >= CM_WSA_MESSAGE;
+        assert a <= CM_WSA_UNSUPPORTED;
+        if (op == 1) { assert a == CM_WSA_MESSAGE; }
+        if (op == 0 or op == 2) { assert a == CM_WSA_UNSUPPORTED; }
+        if (a == CM_WSA_CLOSE) { assert cm_ws_action_close(a) == CM_WS_CLOSE_NORMAL; }
+        if (a == CM_WSA_UNSUPPORTED) { assert cm_ws_action_close(a) == CM_WS_CLOSE_UNSUPPORTED; }
+        if (a == CM_WSA_MESSAGE or a == CM_WSA_PONG or a == CM_WSA_IGNORE) { assert cm_ws_action_close(a) == 0; }
+        op = op + 1;
+    }
+    assert cm_ws_opcode_action(8) == CM_WSA_CLOSE;
+    assert cm_ws_opcode_action(9) == CM_WSA_PONG;
+    assert cm_ws_opcode_action(10) == CM_WSA_IGNORE;
+    assert cm_ws_send_len7(0) == 0;
+    assert cm_ws_send_len7(125) == 125;
+    assert cm_ws_send_len7(126) == 126;
+    assert cm_ws_send_len7(65535) == 126;
+    assert cm_ws_send_fits(65535) == true;
+    assert cm_ws_send_fits(65536) == false;
+    assert cm_ws_send_fits(0 - 1) == false;
+    assert CM_LINK_MESSAGE_MAX < CM_LINK_READ_MAX;
+}
+
+test cm_dial_rules {
+    // No failure: dial now; then 1, 2, 4 ... s, up to 30 s with a Meet page open and 5 min without.
+    assert cm_dial_delay_ms(0, 1) == 0;
+    assert cm_dial_delay_ms(0 - 4, 0) == 0;
+    assert cm_dial_delay_ms(1, 1) == 1000;
+    assert cm_dial_delay_ms(2, 1) == 2000;
+    assert cm_dial_delay_ms(5, 1) == 16000;
+    assert cm_dial_delay_ms(6, 1) == 30000;
+    assert cm_dial_delay_ms(32, 1) == 30000;
+    assert cm_dial_delay_ms(6, 0) == 32000;
+    assert cm_dial_delay_ms(9, 0) == 256000;
+    assert cm_dial_delay_ms(10, 0) == 300000;
+    assert cm_dial_delay_ms(9223372036854775807, 0) == 300000;
+    // The waits never shrink with more failures, and a Meet page never waits longer than no page.
+    var f: i64 = 0;
+    var last: i64 = 0;
+    while (f <= CM_DIAL_FAILURES_CAP) {
+        assert cm_dial_delay_ms(f, 1) >= last;
+        assert cm_dial_delay_ms(f, 1) <= cm_dial_delay_ms(f, 0);
+        assert cm_dial_delay_ms(f, 1) <= CM_DIAL_MEET_MAX_MS;
+        last = cm_dial_delay_ms(f, 1);
+        f = f + 1;
+    }
+    assert cm_dial_wait_ms(CM_DIAL_INSTALL, 10, 30, 0) == 0;
+    assert cm_dial_wait_ms(CM_DIAL_START, 0 - 1, 30, 0) == 0;
+    assert cm_dial_wait_ms(CM_DIAL_TIMER, 500, 1, 1) == 500;
+    assert cm_dial_wait_ms(CM_DIAL_PAGE, 1000, 1, 1) == 0;
+    assert cm_dial_wait_ms(CM_DIAL_CLOSED, 0, 0, 0) == 0;
+    assert cm_dial_wait_ms(CM_DIAL_TIMER, 10000, 10, 1) == 20000;
+    assert cm_dial_wait_ms(CM_DIAL_TIMER, 10000, 10, 0) == 290000;
+    assert cm_dial_failures_after(7, true) == 0;
+    assert cm_dial_failures_after(0, false) == 1;
+    assert cm_dial_failures_after(0 - 5, false) == 1;
+    assert cm_dial_failures_after(CM_DIAL_FAILURES_CAP, false) == CM_DIAL_FAILURES_CAP;
+}
+
+test cm_page_rules {
+    // A fresh report holds a whole lease, an old one less, an expired one nothing.
+    assert cm_page_lease_left_ms(0) == CM_PAGE_LEASE_MS;
+    assert cm_page_lease_left_ms(1) == CM_PAGE_LEASE_MS - 1;
+    assert cm_page_lease_left_ms(CM_PAGE_LEASE_MS - 1) == 1;
+    assert cm_page_lease_left_ms(CM_PAGE_LEASE_MS) == 0;
+    assert cm_page_lease_left_ms(9223372036854775807) == 0;
+    // The clock went back: a lease at most, then gone.
+    assert cm_page_lease_left_ms(0 - 1) == CM_PAGE_LEASE_MS;
+    assert cm_page_lease_left_ms(0 - CM_PAGE_LEASE_MS + 1) == CM_PAGE_LEASE_MS;
+    assert cm_page_lease_left_ms(0 - CM_PAGE_LEASE_MS) == 0;
+    assert cm_page_lease_left_ms(0 - 9223372036854775807) == 0;
+    // A live page reports at least three times per lease, and the lease outlasts a minute's throttled timer twice
+    // over a report.
+    assert CM_PAGE_REPORT_MS * 3 < CM_PAGE_LEASE_MS;
+    assert 60000 + CM_PAGE_REPORT_MS < CM_PAGE_LEASE_MS;
+    // A page still reporting is never dropped: just before its next report, it still has time left.
+    assert cm_page_lease_left_ms(CM_PAGE_REPORT_MS) > 0;
+    // The lease never grows with age.
+    var ms: i64 = 0;
+    var last: i64 = CM_PAGE_LEASE_MS;
+    while (ms <= CM_PAGE_LEASE_MS + 1000) {
+        assert cm_page_lease_left_ms(ms) <= last;
+        last = cm_page_lease_left_ms(ms);
+        ms = ms + 500;
+    }
+}
+
+test cm_pipeline_rules {
+    // Routes: an ended track takes no frame; with nothing to change, a frame without a size, or a try not due yet,
+    // the frame passes as it came.
+    var s: i64 = 0;
+    while (s < CM_TRK_COUNT) {
+        var n: i64 = 0;
+        while (n < 8) {
+            var needs: bool = n % 2 == 1;
+            var due: bool = (n / 2) % 2 == 1;
+            var sized: bool = n / 4 == 1;
+            var r: i64 = cm_trk_route(s, needs, due, sized);
+            if (s == CM_TRK_ENDED) { assert r == CM_ROUTE_STOP; }
+            if (s != CM_TRK_ENDED and (needs == false or sized == false)) { assert r == CM_ROUTE_PASS; }
+            if (s != CM_TRK_ENDED and needs and sized and (s == CM_TRK_RECOVERING or s == CM_TRK_FAILED)) {
+                if (due) { assert r == CM_ROUTE_DRAW; }
+                if (due == false) { assert r == CM_ROUTE_PASS; }
+            }
+            if (needs and sized and (s == CM_TRK_STARTING or s == CM_TRK_PASSING or s == CM_TRK_PROCESSED)) {
+                assert r == CM_ROUTE_DRAW;
+            }
+            n = n + 1;
+        }
+        s = s + 1;
+    }
+    assert cm_trk_route(0 - 1, true, true, true) == CM_ROUTE_PASS;
+    assert cm_trk_route(CM_TRK_COUNT, true, true, true) == CM_ROUTE_PASS;
+    // Every state and event: the state stays known, an ended track stays ended, a stop or a refused frame ends the
+    // track and closes it, and only a drawn frame makes a camera "processed" (the honest status).
+    s = 0;
+    while (s < CM_TRK_COUNT) {
+        var e: i64 = 0;
+        while (e < CM_TEV_COUNT) {
+            var u: i64 = 0;
+            while (u < 2) {
+                var usable: bool = u == 1;
+                var next: i64 = cm_trk_step_state(s, e, usable);
+                var act: i64 = cm_trk_step_action(s, e, usable);
+                assert next >= 0;
+                assert next < CM_TRK_COUNT;
+                assert act >= CM_TACT_NONE;
+                assert act <= CM_TACT_CLOSE;
+                if (s == CM_TRK_ENDED) {
+                    assert next == CM_TRK_ENDED;
+                    assert act == CM_TACT_NONE;
+                }
+                if (s != CM_TRK_ENDED and (e == CM_TEV_STOPPED or e == CM_TEV_WRITE_FAILED)) {
+                    assert next == CM_TRK_ENDED;
+                    assert act == CM_TACT_CLOSE;
+                }
+                if (next == CM_TRK_PROCESSED and s != CM_TRK_PROCESSED) { assert e == CM_TEV_DRAWN; }
+                if (e == CM_TEV_DRAWN and s != CM_TRK_ENDED) {
+                    assert next == CM_TRK_PROCESSED;
+                    assert act == CM_TACT_CLEAR;
+                }
+                if (e == CM_TEV_PASSED and s != CM_TRK_ENDED) { assert cm_trk_bucket(next) == CM_BUCKET_PASSING; }
+                if (e == CM_TEV_HELD) {
+                    assert next == s;
+                    assert act == CM_TACT_NONE;
+                }
+                if (act == CM_TACT_RESET) { assert next == CM_TRK_STARTING; }
+                if (e == CM_TEV_SETTINGS and s != CM_TRK_ENDED) {
+                    // New settings never leave a failed round or a gave-up track as it was.
+                    if (s == CM_TRK_RECOVERING or s == CM_TRK_FAILED) { assert act == CM_TACT_RESET; }
+                    if (cm_trk_settings_restart(s, usable)) { assert act == CM_TACT_RESET; }
+                    if (cm_trk_settings_restart(s, usable) == false) {
+                        assert act == CM_TACT_NONE;
+                        assert next == s;
+                    }
+                }
+                u = u + 1;
+            }
+            e = e + 1;
+        }
+        s = s + 1;
+    }
+    // New settings: a working renderer that can show them is kept (no new context per slider step); one that cannot,
+    // a track that gave up, or a track in a failed round (RECOVERING) starts again from cm_render_first.
+    assert cm_trk_step_action(CM_TRK_PROCESSED, CM_TEV_SETTINGS, true) == CM_TACT_NONE;
+    assert cm_trk_step_state(CM_TRK_PROCESSED, CM_TEV_SETTINGS, true) == CM_TRK_PROCESSED;
+    assert cm_trk_step_action(CM_TRK_PROCESSED, CM_TEV_SETTINGS, false) == CM_TACT_RESET;
+    assert cm_trk_step_action(CM_TRK_FAILED, CM_TEV_SETTINGS, true) == CM_TACT_RESET;
+    assert cm_trk_step_action(CM_TRK_RECOVERING, CM_TEV_SETTINGS, true) == CM_TACT_RESET;
+    assert cm_trk_step_state(CM_TRK_RECOVERING, CM_TEV_SETTINGS, true) == CM_TRK_STARTING;
+    assert cm_trk_step_action(CM_TRK_RECOVERING, CM_TEV_SETTINGS, false) == CM_TACT_RESET;
+    assert cm_trk_step_action(CM_TRK_PASSING, CM_TEV_SETTINGS, true) == CM_TACT_NONE;
+    assert cm_trk_step_action(CM_TRK_STARTING, CM_TEV_SETTINGS, true) == CM_TACT_NONE;
+    // A frame held while a failed round waits does not restart it; only new settings do.
+    assert cm_trk_step_action(CM_TRK_RECOVERING, CM_TEV_HELD, true) == CM_TACT_NONE;
+    assert cm_trk_settings_restart(CM_TRK_PROCESSED, true) == false;
+    assert cm_trk_settings_restart(CM_TRK_RECOVERING, true) == true;
+    assert cm_trk_settings_restart(CM_TRK_FAILED, true) == true;
+    assert cm_trk_settings_restart(CM_TRK_PROCESSED, false) == true;
+    // The faults scenario (camera/test/faults.mjs, WebGL2 back): the 2D canvas drew last, colour came with no WebGL2,
+    // the round is at the bitmap, WebGL2 is back and new settings come: the track starts again with the canvas.
+    assert cm_trk_step_action(CM_TRK_RECOVERING, CM_TEV_SETTINGS, cm_render_usable(CM_RV_WEBGL_BITMAP, false)) == CM_TACT_RESET;
+    assert cm_render_first(CM_RV_CANVAS2D, false) == CM_RV_WEBGL_CANVAS;
+    assert cm_trk_step_state(0 - 1, CM_TEV_DRAWN, true) == CM_TRK_STARTING;
+    assert cm_trk_bucket(CM_TRK_RECOVERING) == CM_BUCKET_TROUBLE;
+    assert cm_trk_bucket(CM_TRK_FAILED) == CM_BUCKET_TROUBLE;
+    assert cm_trk_bucket(CM_TRK_ENDED) == CM_BUCKET_NONE;
+    assert cm_trk_bucket(CM_TRK_STARTING) == CM_BUCKET_PASSING;
+    // Renderers: WebGL2 for any settings, the 2D canvas only when the colour is unchanged.
+    assert cm_render_usable(CM_RV_WEBGL_BITMAP, false) == true;
+    assert cm_render_usable(CM_RV_WEBGL_CANVAS, false) == true;
+    assert cm_render_usable(CM_RV_CANVAS2D, false) == false;
+    assert cm_render_usable(CM_RV_CANVAS2D, true) == true;
+    assert cm_render_usable(CM_RV_COUNT, true) == false;
+    // The canvas first, the bitmap second, the 2D canvas last (and only for frame-only settings); the codes stay.
+    assert CM_RV_FIRST == CM_RV_WEBGL_CANVAS;
+    assert cm_render_at(0) == CM_RV_FIRST;
+    assert cm_render_at(1) == CM_RV_WEBGL_BITMAP;
+    assert cm_render_at(2) == CM_RV_CANVAS2D;
+    assert cm_render_at(CM_RV_COUNT) == 0 - 1;
+    assert cm_render_at(0 - 1) == 0 - 1;
+    // The order is a permutation of the codes.
+    var pp: i64 = 0;
+    while (pp < CM_RV_COUNT) {
+        assert cm_render_pos(cm_render_at(pp)) == pp;
+        pp = pp + 1;
+    }
+    assert cm_render_pos(9) == 0;
+    assert cm_render_after(CM_RV_WEBGL_CANVAS, false) == CM_RV_WEBGL_BITMAP;
+    assert cm_render_after(CM_RV_WEBGL_BITMAP, false) == 0 - 1;
+    assert cm_render_after(CM_RV_WEBGL_BITMAP, true) == CM_RV_CANVAS2D;
+    assert cm_render_after(CM_RV_CANVAS2D, true) == 0 - 1;
+    assert cm_render_after(CM_RV_CANVAS2D, false) == 0 - 1;
+    // A context that cannot be made: the next renderer at once, proven or not.
+    assert cm_render_next_variant(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_CREATE, true, false) == CM_RV_WEBGL_BITMAP;
+    assert cm_render_next_fails(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_CREATE, true, false) == 0;
+    assert cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_CREATE, true, false) == 0;
+    assert cm_render_next_state(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_CREATE, true, false) == CM_TRK_RECOVERING;
+    // A lost context: the same renderer, made anew a second later, proven or not.
+    assert cm_render_next_variant(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_LOST, true, false) == CM_RV_WEBGL_CANVAS;
+    assert cm_render_next_fails(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_LOST, true, false) == 1;
+    assert cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_LOST, true, false) == CM_RENDER_LOST_RETRY_MS;
+    assert cm_render_next_variant(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_LOST, false, false) == CM_RV_WEBGL_CANVAS;
+    assert cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_LOST, false, false) == CM_RENDER_LOST_RETRY_MS;
+    // A renderer that never drew on this page and cannot make its frame (the bitmap on the M4 and under SwiftShader):
+    // the next one at once, for the very next frame; with nothing left, the track gives up.
+    assert cm_render_gives_up(0, CM_STAGE_OUTPUT, false) == true;
+    assert cm_render_gives_up(0, CM_STAGE_OUTPUT, true) == false;
+    assert cm_render_next_variant(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_OUTPUT, false, false) == CM_RV_WEBGL_BITMAP;
+    assert cm_render_next_fails(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_OUTPUT, false, false) == 0;
+    assert cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_OUTPUT, false, false) == 0;
+    assert cm_render_next_state(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_OUTPUT, false, false) == CM_TRK_RECOVERING;
+    assert cm_render_next_state(CM_RV_WEBGL_BITMAP, 0, CM_STAGE_UPLOAD, false, false) == CM_TRK_FAILED;
+    assert cm_render_next_variant(CM_RV_WEBGL_BITMAP, 0, CM_STAGE_UPLOAD, false, true) == CM_RV_CANVAS2D;
+    assert cm_render_next_state(CM_RV_CANVAS2D, 0, CM_STAGE_UPLOAD, false, true) == CM_TRK_FAILED;
+    assert cm_render_next_variant(CM_RV_CANVAS2D, 0, CM_STAGE_UPLOAD, false, true) == CM_RV_FIRST;
+    // A track starts with the renderer that last drew, when it can show the settings.
+    assert cm_render_first(0 - 1, false) == CM_RV_FIRST;
+    assert cm_render_first(CM_RV_WEBGL_CANVAS, false) == CM_RV_WEBGL_CANVAS;
+    assert cm_render_first(CM_RV_WEBGL_BITMAP, false) == CM_RV_WEBGL_BITMAP;
+    assert cm_render_first(CM_RV_CANVAS2D, false) == CM_RV_FIRST;
+    assert cm_render_first(CM_RV_CANVAS2D, true) == CM_RV_CANVAS2D;
+    assert cm_render_first(CM_RV_COUNT, true) == CM_RV_FIRST;
+    var lg: i64 = 0 - 2;
+    while (lg <= CM_RV_COUNT) {
+        assert cm_render_usable(cm_render_first(lg, false), false);
+        assert cm_render_usable(cm_render_first(lg, true), true);
+        lg = lg + 1;
+    }
+    // An unknown stage counts as drawing; an unknown renderer as the first.
+    assert cm_render_retry_ms(9, 0, 99, true, false) == CM_RENDER_RETRY_FIRST_MS;
+    assert cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 1, CM_STAGE_NONE, true, false) == 500;
+    assert cm_render_next_variant(9, 0, CM_STAGE_CREATE, true, false) == CM_RV_WEBGL_BITMAP;
+    assert cm_report_stage(99) == CM_STAGE_NONE;
+    assert cm_report_stage(CM_STAGE_OUTPUT) == CM_STAGE_OUTPUT;
+    // A renderer that always fails while it draws. Proven renderers: with a colour change, WebGL2 as a canvas 3 times,
+    // as a bitmap 3 times, then the track gives up for CM_RENDER_FAILED_RETRY_MS and starts from the first renderer
+    // again; without one, also the 2D canvas 3 times. Renderers that never drew: once each. Every renderer that can
+    // show the settings is tried before giving up, none twice in a round. Waits are never 0 before the same renderer
+    // (no busy loop).
+    var pr: i64 = 0;
+    while (pr < 2) {
+        var proven: bool = pr == 1;
+        var ci: i64 = 0;
+        while (ci < 2) {
+            var colour_kept: bool = ci == 1;
+            var stage: i64 = CM_STAGE_UPLOAD;
+            while (stage <= CM_STAGE_OUTPUT) {
+                var v: i64 = CM_RV_FIRST;
+                var fails: i64 = 0;
+                var failures: i64 = 0;
+                var gave_up: bool = false;
+                var tried: i64 = 1;
+                var seen_canvas: bool = v == CM_RV_WEBGL_CANVAS;
+                var seen_bitmap: bool = v == CM_RV_WEBGL_BITMAP;
+                var seen_2d: bool = v == CM_RV_CANVAS2D;
+                while (gave_up == false and failures < 20) {
+                    var nv: i64 = cm_render_next_variant(v, fails, stage, proven, colour_kept);
+                    var nf: i64 = cm_render_next_fails(v, fails, stage, proven, colour_kept);
+                    var wait: i64 = cm_render_retry_ms(v, fails, stage, proven, colour_kept);
+                    var st: i64 = cm_render_next_state(v, fails, stage, proven, colour_kept);
+                    assert cm_render_usable(nv, colour_kept);
+                    assert nf >= 0;
+                    assert nf < CM_RENDER_TRIES;
+                    assert wait <= CM_RENDER_FAILED_RETRY_MS;
+                    if (nv == v and st == CM_TRK_RECOVERING) { assert wait > 0; }
+                    if (nv != v) { assert nf == 0; }
+                    if (proven == false and st == CM_TRK_RECOVERING) { assert nv != v; }
+                    if (nv != v and st == CM_TRK_RECOVERING) {
+                        // A renderer not yet tried in this round, later in the order.
+                        assert cm_render_pos(nv) > cm_render_pos(v);
+                        if (nv == CM_RV_WEBGL_CANVAS) { assert seen_canvas == false; seen_canvas = true; }
+                        if (nv == CM_RV_WEBGL_BITMAP) { assert seen_bitmap == false; seen_bitmap = true; }
+                        if (nv == CM_RV_CANVAS2D) { assert seen_2d == false; seen_2d = true; }
+                        tried = tried + 1;
+                    }
+                    failures = failures + 1;
+                    if (st == CM_TRK_FAILED) {
+                        gave_up = true;
+                        assert nv == CM_RV_FIRST;
+                        assert nf == 0;
+                        assert wait == CM_RENDER_FAILED_RETRY_MS;
+                    }
+                    v = nv;
+                    fails = nf;
+                }
+                assert gave_up;
+                assert seen_canvas;
+                assert seen_bitmap;
+                if (colour_kept) { assert seen_2d; assert tried == 3; }
+                if (colour_kept == false) { assert seen_2d == false; assert tried == 2; }
+                if (proven and colour_kept) { assert failures == 9; }
+                if (proven and colour_kept == false) { assert failures == 6; }
+                if (proven == false and colour_kept) { assert failures == 3; }
+                if (proven == false and colour_kept == false) { assert failures == 2; }
+                stage = stage + 1;
+            }
+            ci = ci + 1;
+        }
+        pr = pr + 1;
+    }
+    assert cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 0, CM_STAGE_DRAW, true, false) == 250;
+    assert cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 1, CM_STAGE_DRAW, true, false) == 500;
+    assert cm_render_retry_ms(CM_RV_WEBGL_CANVAS, 2, CM_STAGE_DRAW, true, false) == 0;
+    assert cm_render_retry_ms(CM_RV_WEBGL_BITMAP, 2, CM_STAGE_DRAW, true, false) == CM_RENDER_FAILED_RETRY_MS;
+    assert cm_render_fails_held(0 - 3) == 0;
+    assert cm_render_fails_held(99) == CM_RENDER_TRIES - 1;
+}
+
+test cm_report_rules {
+    var t: [256]u8 = [0; 256];
+    // "Ab\nc" + DEL + 0xC3 0xA9 ("e" with an accent) + "d": the line feed, DEL and UTF-8 bytes go.
+    t[0] = 65;
+    t[1] = 98;
+    t[2] = 10;
+    t[3] = 99;
+    t[4] = 127;
+    t[5] = 195;
+    t[6] = 169;
+    t[7] = 100;
+    assert cm_report_clean(t, 8, CM_REPORT_TEXT) == 4;
+    assert t[0] == 65;
+    assert t[1] == 98;
+    assert t[2] == 99;
+    assert t[3] == 100;
+    assert cm_report_clean(t, 0 - 1, CM_REPORT_TEXT) == 0;
+    assert cm_report_clean(t, 4, 99) == 0;
+    // A long text is cut at the limit of its kind.
+    var k: i64 = 0;
+    while (k < 256) {
+        t[k] = 120;
+        k = k + 1;
+    }
+    assert cm_report_clean(t, 256, CM_REPORT_NAME) == CM_REPORT_NAME_MAX;
+    assert cm_report_clean(t, 9999, CM_REPORT_TEXT) == CM_REPORT_TEXT_MAX;
+    assert cm_report_byte_kept(32) == true;
+    assert cm_report_byte_kept(126) == true;
+    assert cm_report_byte_kept(31) == false;
+    assert cm_report_byte_kept(200) == false;
+    assert cm_report_limit(CM_REPORT_NAME) == 64;
 }

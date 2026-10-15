@@ -52,6 +52,84 @@
 #define CM_LINK_NO_EXTENSION 2
 #define CM_LINK_WAITING 3
 #define CM_LINK_ACTIVE 4
+#define CM_LINK_PASSING 5
+#define CM_LINK_TROUBLE 6
+#define CM_LINK_READ_MAX 16384
+#define CM_DIAL_START 0
+#define CM_DIAL_INSTALL 1
+#define CM_DIAL_TIMER 2
+#define CM_DIAL_PAGE 3
+#define CM_DIAL_CLOSED 4
+#define CM_DIAL_FIRST_MS 1000
+#define CM_DIAL_MEET_MAX_MS 30000
+#define CM_DIAL_IDLE_MAX_MS 300000
+#define CM_DIAL_FAILURES_CAP 32
+#define CM_HTTP_SWITCHING 101
+#define CM_HTTP_BAD_REQUEST 400
+#define CM_HTTP_FORBIDDEN 403
+#define CM_HTTP_TOO_LARGE 431
+#define CM_HTTP_BUSY 503
+#define CM_WS_CLOSE_NORMAL 1000
+#define CM_WS_CLOSE_PROTOCOL 1002
+#define CM_WS_CLOSE_UNSUPPORTED 1003
+#define CM_WS_CLOSE_TOO_BIG 1009
+#define CM_WSA_MESSAGE 0
+#define CM_WSA_CLOSE 1
+#define CM_WSA_PONG 2
+#define CM_WSA_IGNORE 3
+#define CM_WSA_UNSUPPORTED 4
+#define CM_WS_SEND_MAX 65535
+#define CM_TRK_STARTING 0
+#define CM_TRK_PASSING 1
+#define CM_TRK_PROCESSED 2
+#define CM_TRK_RECOVERING 3
+#define CM_TRK_FAILED 4
+#define CM_TRK_ENDED 5
+#define CM_TRK_COUNT 6
+#define CM_TEV_PASSED 0
+#define CM_TEV_HELD 1
+#define CM_TEV_DRAWN 2
+#define CM_TEV_WRITE_FAILED 3
+#define CM_TEV_STOPPED 4
+#define CM_TEV_SETTINGS 5
+#define CM_TEV_COUNT 6
+#define CM_TACT_NONE 0
+#define CM_TACT_CLEAR 1
+#define CM_TACT_RESET 2
+#define CM_TACT_CLOSE 3
+#define CM_ROUTE_PASS 0
+#define CM_ROUTE_DRAW 1
+#define CM_ROUTE_STOP 2
+#define CM_RV_WEBGL_BITMAP 0
+#define CM_RV_WEBGL_CANVAS 1
+#define CM_RV_CANVAS2D 2
+#define CM_RV_COUNT 3
+#define CM_RV_FIRST 1
+#define CM_STAGE_NONE 0
+#define CM_STAGE_CREATE 1
+#define CM_STAGE_UPLOAD 2
+#define CM_STAGE_DRAW 3
+#define CM_STAGE_OUTPUT 4
+#define CM_STAGE_LOST 5
+#define CM_STAGE_WRITE 6
+#define CM_STAGE_READ 7
+#define CM_STAGE_COUNT 8
+#define CM_RENDER_TRIES 3
+#define CM_RENDER_RETRY_FIRST_MS 250
+#define CM_RENDER_LOST_RETRY_MS 1000
+#define CM_RENDER_FAILED_RETRY_MS 30000
+#define CM_BUCKET_NONE 0
+#define CM_BUCKET_PASSING 1
+#define CM_BUCKET_PROCESSED 2
+#define CM_BUCKET_TROUBLE 3
+#define CM_REPORT_NAME 0
+#define CM_REPORT_TEXT 1
+#define CM_REPORT_NAME_MAX 64
+#define CM_REPORT_TEXT_MAX 200
+#define CM_ERROR_RANK_NONE 0
+#define CM_ERROR_RANK_PAST 1
+#define CM_ERROR_RANK_TROUBLE 2
+#define CM_POLICY_REV 2
 #define CM_ROW_EXTENSION_ORIGIN 0
 #define CM_ROW_OTHER_EXTENSION 1
 #define CM_ROW_MEET_PAGE 2
@@ -61,12 +139,15 @@
 static const uint8_t CM_ROW_TEXT[228] = { 99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 106, 105, 110, 108, 100, 99, 107, 100, 99, 98, 101, 111, 106, 104, 112, 97, 104, 112, 107, 97, 103, 109, 97, 99, 102, 100, 97, 112, 102, 110, 108, 110, 99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 97, 104, 116, 116, 112, 115, 58, 47, 47, 109, 101, 101, 116, 46, 103, 111, 111, 103, 108, 101, 46, 99, 111, 109, 99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 106, 105, 110, 108, 100, 99, 107, 100, 99, 98, 101, 111, 106, 104, 112, 97, 104, 112, 107, 97, 103, 109, 97, 99, 102, 100, 97, 112, 102, 110, 108, 110, 47, 99, 104, 114, 111, 109, 101, 45, 101, 120, 116, 101, 110, 115, 105, 111, 110, 58, 47, 47, 74, 73, 78, 76, 68, 67, 75, 68, 67, 66, 69, 79, 74, 72, 80, 65, 72, 80, 75, 65, 71, 77, 65, 67, 70, 68, 65, 80, 70, 78, 76, 78 };
 static const uint32_t CM_ROW_OFFSETS[5] = { 0, 51, 102, 125, 177 };
 static const uint32_t CM_ROW_LENGTHS[5] = { 51, 51, 23, 52, 51 };
+#define CM_PAGE_REPORT_MS 20000
+#define CM_PAGE_LEASE_MS 90000
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
 int64_t cm_setting_min(int64_t kind);
 int64_t cm_setting_max(int64_t kind);
 int64_t cm_setting_default(int64_t kind);
+bool cm_default_on(void);
 int64_t cm_clamp_setting(int64_t kind, int64_t value);
 bool cm_preset_sets(int64_t kind);
 int64_t cm_preset_value(int64_t preset, int64_t kind);
@@ -87,6 +168,45 @@ bool cm_link_takes_connection(int64_t connections);
 bool cm_link_handshake_expired(int64_t ms_since_accept);
 bool cm_link_accepts(int64_t open_clients);
 int64_t cm_link_cameras(int64_t reported);
+bool cm_panel_install_open(int64_t status);
+bool cm_link_version_taken(int64_t v);
+int64_t cm_report_error_rank(bool has_error, bool troubled);
 int64_t cm_link_status(bool listening, bool failed, int64_t clients, int64_t active_cameras);
+int64_t cm_link_panel(bool listening, bool failed, int64_t clients, int64_t processed, int64_t passing, int64_t troubled);
+int64_t cm_ws_handshake_status(bool is_get, bool upgrade, bool has_key, bool origin_allowed, int64_t open_clients);
+bool cm_ws_head_too_large(int64_t buffered);
+int64_t cm_ws_header_bytes(int64_t len7);
+int64_t cm_ws_frame_close(bool fin, bool masked, int64_t len7, int64_t length);
+int64_t cm_ws_opcode_action(int64_t opcode);
+int64_t cm_ws_action_close(int64_t action);
+int64_t cm_ws_send_len7(int64_t len);
+bool cm_ws_send_fits(int64_t len);
+int64_t cm_dial_delay_ms(int64_t failures, int64_t pages);
+int64_t cm_dial_wait_ms(int64_t reason, int64_t ms_since, int64_t failures, int64_t pages);
+int64_t cm_dial_failures_after(int64_t failures, bool opened);
+int64_t cm_page_lease_left_ms(int64_t ms_since);
+int64_t cm_trk_route(int64_t state, bool needs, bool due, bool sized);
+bool cm_render_usable(int64_t variant, bool color_identity);
+bool cm_trk_settings_restart(int64_t state, bool usable);
+int64_t cm_trk_step_state(int64_t state, int64_t event, bool usable);
+int64_t cm_trk_step_action(int64_t state, int64_t event, bool usable);
+int64_t cm_trk_bucket(int64_t state);
+int64_t cm_render_variant_held(int64_t variant);
+int64_t cm_render_fails_held(int64_t fails);
+int64_t cm_render_stage_held(int64_t stage);
+bool cm_render_gives_up(int64_t fails, int64_t stage, bool proven);
+int64_t cm_render_first(int64_t last_good, bool color_identity);
+int64_t cm_render_at(int64_t pos);
+int64_t cm_render_pos(int64_t variant);
+int64_t cm_render_after(int64_t variant, bool color_identity);
+bool cm_render_exhausted(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity);
+int64_t cm_render_next_variant(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity);
+int64_t cm_render_next_fails(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity);
+int64_t cm_render_retry_ms(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity);
+int64_t cm_render_next_state(int64_t variant, int64_t fails, int64_t stage, bool proven, bool color_identity);
+int64_t cm_report_stage(int64_t stage);
+int64_t cm_report_limit(int64_t kind);
+bool cm_report_byte_kept(uint8_t b);
+int64_t cm_report_clean(uint8_t text[static 256], int64_t len, int64_t kind);
 /* Function bodies: see the full header. */
 #endif

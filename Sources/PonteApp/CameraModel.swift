@@ -12,13 +12,11 @@ import PonteCamera
     private(set) var settings: [Int]
     /// «Обрабатывать камеру»: off, every frame passes as it came.
     var on: Bool { didSet { persist(); publish() } }
-    private(set) var listening = false
-    private(set) var failed = false
-    private(set) var clients = 0
-    private(set) var activeCameras = 0
+    /// The link and the Meet pages' cameras as the extension reports them.
+    private(set) var link = CameraLinkStatus()
 
     @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private let link: CameraLink
+    @ObservationIgnored private let server: CameraLink
     @ObservationIgnored private var started = false
 
     private enum Key {
@@ -32,15 +30,11 @@ import PonteCamera
         settings = (0..<CameraRules.setCount).map { kind in
             CameraRules.clamp(kind, kind < stored.count ? stored[kind] : CameraRules.settingDefault(kind))
         }
-        on = defaults.object(forKey: Key.on) as? Bool ?? true
-        link = CameraLink(port: port)
-        link.onStatus = { [weak self] listening, failed, clients, cameras in
+        on = defaults.object(forKey: Key.on) as? Bool ?? CameraRules.defaultOn
+        server = CameraLink(port: port)
+        server.onStatus = { [weak self] status in
             MainActor.assumeIsolated {
-                guard let self else { return }
-                self.listening = listening
-                self.failed = failed
-                self.clients = clients
-                self.activeCameras = cameras
+                self?.link = status
             }
         }
     }
@@ -51,17 +45,16 @@ import PonteCamera
         started = true
         installExtensionFiles()
         publish()
-        link.start()
+        server.start()
     }
 
     func stop() {
-        link.stop()
+        server.stop()
         started = false
     }
 
-    var status: Int {
-        CameraRules.linkStatus(listening: listening, failed: failed, clients: clients, activeCameras: activeCameras)
-    }
+    /// The panel's status (CameraRules.linkPanel): a camera in trouble before a processed one.
+    var status: Int { link.code }
 
     func value(_ kind: Int) -> Int { kind < settings.count ? settings[kind] : CameraRules.settingDefault(kind) }
 
@@ -101,7 +94,7 @@ import PonteCamera
     private func publish() {
         let message: [String: Any] = ["type": "settings", "v": CameraRules.linkVersion, "on": on, "s": settings]
         guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.sortedKeys]) else { return }
-        link.publish(data)
+        server.publish(data)
     }
 
     // MARK: The extension's files

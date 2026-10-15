@@ -1,101 +1,206 @@
 // Ponte Camera, service worker: the link to Ponte and the decisions.
 // Ponte (ws://127.0.0.1:47839, which accepts only this extension's origin) sends the settings; the C of
-// Specs/camera_rules.t27, built to cm.wasm, turns them into the shader's numbers; chrome.storage carries those to
-// every Meet page (bridge.js -> page.js). The pages report how many cameras they process, and that goes back to
-// Ponte's panel. Without Ponte the last settings stay in storage and keep working.
+// Specs/camera_rules.t27, built to cm.wasm, turns them into the shader's numbers and the pipeline's tables
+// (policy.js); chrome.storage carries those to every Meet page (bridge.js -> page.js). The pages report their cameras
+// (processed, passing as they came, in trouble) and their last error, and that goes back to Ponte's panel. Without
+// Ponte the last settings stay in storage and keep working; the link is dialled again as cm_dial_wait_ms says.
+// A page counts while its report's lease lasts (cm_page_lease_left_ms): it repeats its report, and says when it goes.
+import { loadRules, decide, dialWaitMs, dialFailuresAfter, linkCameras, linkVersionTaken, errorRank, cleanError,
+  pageLeaseLeftMs } from './policy.js';
+
 const PORT = 47839;          // CM_LINK_PORT
 const VERSION = 1;           // CM_LINK_VERSION
-const SETTINGS = 9;          // CM_SET_COUNT
 const STORE = 'ponteCamera';
-const CAMERAS_MAX = 16;      // CM_LINK_CAMERAS_MAX
+const DIAL_START = 0;        // CM_DIAL_START
+const DIAL_INSTALL = 1;      // CM_DIAL_INSTALL
+const DIAL_TIMER = 2;        // CM_DIAL_TIMER
+const DIAL_PAGE = 3;         // CM_DIAL_PAGE
+const DIAL_CLOSED = 4;       // CM_DIAL_CLOSED
 
 let cm = null;
 async function rules() {
   if (cm) return cm;
-  const bytes = await (await fetch(chrome.runtime.getURL('cm.wasm'))).arrayBuffer();
-  const { instance } = await WebAssembly.instantiate(bytes, {});
-  instance.exports._initialize?.();
-  cm = instance.exports;
+  cm = await loadRules(await (await fetch(chrome.runtime.getURL('cm.wasm'))).arrayBuffer());
   return cm;
 }
 
-// Settings as the spec holds them, and the numbers the shader needs.
-async function decide(on, values) {
-  const x = await rules();
-  const s = [];
-  for (let k = 0; k < SETTINGS; k++) {
-    const v = Number.isFinite(values?.[k]) ? Math.trunc(values[k]) : Number(x.cm_setting_default(BigInt(k)));
-    s.push(Number(x.cm_clamp_setting(BigInt(k), BigInt(Math.max(-1e9, Math.min(1e9, v))))));
-  }
-  const b = s.map(BigInt);
-  const floats = () => new Float32Array(x.memory.buffer, x.cm_wasm_floats(), 16);
-  const n = Number(x.cm_color_params(b[0], b[1], b[2], b[3], b[4], x.cm_wasm_floats()));
-  const params = Array.from(floats().slice(0, n));
-  x.cm_crop(b[5], b[6], b[7], b[8], x.cm_wasm_floats());
-  const crop = Array.from(floats().slice(0, 4));
-  const colorIdentity = x.cm_color_identity(b[0], b[1], b[2], b[3], b[4]) !== 0;
-  const frameIdentity = x.cm_frame_identity(b[5], b[6], b[7], b[8]) !== 0;
-  const needs = x.cm_needs_processing(on ? 1 : 0, colorIdentity ? 1 : 0, frameIdentity ? 1 : 0) !== 0;
-  return { on: !!on, s, params, crop, needs };
+// Writes the decided state when it differs from the stored one (pages see only real changes).
+async function store(state) {
+  const old = (await chrome.storage.local.get(STORE))[STORE];
+  if (JSON.stringify(old) !== JSON.stringify(state)) await chrome.storage.local.set({ [STORE]: state });
 }
 
-// --- The link to Ponte -------------------------------------------------------------------------------------------
+// The stored settings decided again by this version's rules (an update brings new tables; nothing stored: defaults).
+async function refresh() {
+  const x = await rules();
+  const stored = (await chrome.storage.local.get(STORE))[STORE];
+  await store(decide(x, typeof stored?.on === 'boolean' ? stored.on : x.cm_default_on() !== 0, stored?.s ?? []));
+}
+
+// --- What the Meet pages report (kept in session storage: the worker sleeps between events) -------------------------
+const PAGES = 'ponteCameraPages';
+const DIAL = 'ponteCameraDial';
+// tab id -> { doc, processed, passing, troubled, error, errorAt, seen }: `doc` the reporting document (a reload or
+// a navigation makes a new one), `seen` when its last report came, `errorAt` when its error was first reported.
+let pages = null;
+let pagesLoad = null;        // the one read of the stored map after a wake-up (calls that overlap share it)
+let pruneTimer = null;
+const savePages = () => chrome.storage.session.set({ [PAGES]: pages }).catch(() => {});
+
+// Forgets the pages whose lease ran out (on every use, so also right after the worker woke with an old map), and
+// looks again when the next lease runs out while the worker is awake (else the alarm does).
+async function pageMap() {
+  const x = await rules();
+  if (!pages) {
+    pagesLoad ??= chrome.storage.session.get(PAGES).then((r) => { pages ??= r[PAGES] ?? {}; });
+    await pagesLoad;
+  }
+  const now = Date.now();
+  let next = 0, dropped = false;
+  for (const [tab, p] of Object.entries(pages)) {
+    const left = pageLeaseLeftMs(x, now - (Number(p.seen) || 0));
+    if (left <= 0) { delete pages[tab]; dropped = true; } else if (next === 0 || left < next) next = left;
+  }
+  if (dropped) savePages();
+  clearTimeout(pruneTimer);
+  if (next > 0) pruneTimer = setTimeout(() => sendStatus(false), next);
+  return pages;
+}
+
+// The pages' cameras added up, and the error of the highest rank (cm_report_error_rank), the newest among equals.
+function totals(x) {
+  const t = { processed: 0, passing: 0, troubled: 0, error: null, rank: 0, at: -1 };
+  for (const p of Object.values(pages ?? {})) {
+    t.processed += p.processed;
+    t.passing += p.passing;
+    t.troubled += p.troubled;
+    const rank = errorRank(x, !!p.error, p.troubled > 0);
+    if (rank > t.rank || (rank > 0 && rank === t.rank && p.errorAt > t.at)) {
+      t.error = p.error;
+      t.rank = rank;
+      t.at = p.errorAt;
+    }
+  }
+  return t;
+}
+
+// --- The link to Ponte -----------------------------------------------------------------------------------------------
 let socket = null;
 let lastSent = '';
-const cameras = new Map();   // tab id -> processed cameras on that page
+let timer = null;
+let dial = null;             // { failures, last } of the attempts, kept across wake-ups
+
+async function dialState() {
+  if (!dial) dial = (await chrome.storage.session.get(DIAL))[DIAL] ?? { failures: 0, last: -1 };
+  return dial;
+}
+const saveDial = () => chrome.storage.session.set({ [DIAL]: dial }).catch(() => {});
 
 function send(message) {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
 }
-function sendStatus(force) {
-  let total = 0;
-  for (const n of cameras.values()) total += n;
-  const text = JSON.stringify({ type: 'status', v: VERSION, cameras: total });
+async function sendStatus(force) {
+  const x = await rules();
+  await pageMap();
+  const t = totals(x);
+  const text = JSON.stringify({ type: 'status', v: VERSION, cameras: linkCameras(x, t.processed),
+    passing: linkCameras(x, t.passing), troubled: linkCameras(x, t.troubled), error: cleanError(x, t.error) });
   if (force || text !== lastSent) { lastSent = text; send(JSON.parse(text)); }
 }
 
-function connect() {
+async function connect(reason) {
   if (socket && socket.readyState <= WebSocket.OPEN) return;
-  try {
-    socket = new WebSocket(`ws://127.0.0.1:${PORT}/camera`);
-  } catch {
+  const x = await rules();
+  const d = await dialState();
+  const open = Object.keys(await pageMap()).length;
+  const wait = dialWaitMs(x, reason, d.last < 0 ? -1 : Date.now() - d.last, d.failures, open);
+  clearTimeout(timer);
+  if (wait > 0) {
+    // While the worker stays awake; the alarm looks again after it slept.
+    timer = setTimeout(() => connect(DIAL_TIMER), wait);
     return;
   }
-  socket.onopen = () => {
+  if (socket && socket.readyState <= WebSocket.OPEN) return;
+  d.last = Date.now();
+  saveDial();
+  let s;
+  try {
+    s = new WebSocket(`ws://127.0.0.1:${PORT}/camera`);
+  } catch {
+    d.failures = dialFailuresAfter(x, d.failures, false);
+    saveDial();
+    return;
+  }
+  socket = s;
+  let opened = false;
+  s.onopen = () => {
+    opened = true;
+    d.failures = dialFailuresAfter(x, d.failures, true);
+    saveDial();
     send({ type: 'hello', v: VERSION, version: chrome.runtime.getManifest().version });
     sendStatus(true);
   };
-  socket.onmessage = async (event) => {
+  s.onmessage = async (event) => {
     let m;
     try { m = JSON.parse(event.data); } catch { return; }
-    if (m?.type !== 'settings' || m.v !== VERSION || !Array.isArray(m.s)) return;
-    const state = await decide(m.on !== false, m.s);
-    const old = (await chrome.storage.local.get(STORE))[STORE];
-    if (JSON.stringify(old) !== JSON.stringify(state)) await chrome.storage.local.set({ [STORE]: state });
+    if (m?.type !== 'settings' || !linkVersionTaken(x, m.v) || !Array.isArray(m.s)) return;
+    await store(decide(x, typeof m.on === 'boolean' ? m.on : x.cm_default_on() !== 0, m.s));
   };
-  socket.onclose = () => { socket = null; };
-  socket.onerror = () => {};
+  s.onclose = () => {
+    if (socket === s) socket = null;
+    // Refused (Ponte not running) or dropped before it opened: one more failure. A link that was open and closed
+    // (Ponte quit) is dialled again at once, then as the failures grow.
+    if (!opened) d.failures = dialFailuresAfter(x, d.failures, false);
+    saveDial();
+    connect(DIAL_CLOSED);
+  };
+  s.onerror = () => {};
 }
 
-// Ponte may start later than the browser: try again on every wake-up and every 30 s.
+// Ponte may start later than the browser: the alarm wakes the worker every 30 s to look again.
 chrome.alarms.create('ponte-camera-link', { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener(() => connect());
-chrome.runtime.onStartup.addListener(() => connect());
+chrome.alarms.onAlarm.addListener(() => {
+  connect(DIAL_TIMER);
+  sendStatus(false);
+});
+chrome.runtime.onStartup.addListener(() => connect(DIAL_START));
 chrome.runtime.onInstalled.addListener(async () => {
-  const stored = (await chrome.storage.local.get(STORE))[STORE];
-  if (!stored) await chrome.storage.local.set({ [STORE]: await decide(true, []) });
-  connect();
+  await refresh();
+  connect(DIAL_INSTALL);
 });
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== 'status' || !sender.tab?.id) return;
-  const n = Math.max(0, Math.min(CAMERAS_MAX, message.cameras | 0));
-  if (n === 0) cameras.delete(sender.tab.id); else cameras.set(sender.tab.id, n);
-  connect();
+  (async () => {
+    const x = await rules();
+    const map = await pageMap();
+    const tab = sender.tab.id, doc = sender.documentId ?? null, old = map[tab];
+    if (message.gone) {
+      // The page left (pagehide): forgotten, unless the tab already reports from its next document.
+      if (old && (old.doc === doc || old.doc == null)) {
+        delete map[tab];
+        savePages();
+        sendStatus(false);
+      }
+      return;
+    }
+    const error = message.error ?? null;
+    const sameError = old && old.doc === doc && JSON.stringify(old.error) === JSON.stringify(error);
+    map[tab] = {
+      doc, processed: linkCameras(x, message.processed), passing: linkCameras(x, message.passing),
+      troubled: linkCameras(x, message.troubled), error, errorAt: sameError ? old.errorAt : Date.now(), seen: Date.now(),
+    };
+    savePages();
+    connect(DIAL_PAGE);
+    sendStatus(false);
+  })();
+});
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const map = await pageMap();
+  if (!(tabId in map)) return;
+  delete map[tabId];
+  savePages();
   sendStatus(false);
 });
-chrome.tabs.onRemoved.addListener((tabId) => {
-  if (cameras.delete(tabId)) sendStatus(false);
-});
 
-connect();
+refresh().catch(() => {}).finally(() => connect(DIAL_START));

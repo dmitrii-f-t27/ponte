@@ -103,6 +103,8 @@
 #define LN_PTT_SCOPE_GLOBAL 2
 #define LN_DIR_INCOMING 0
 #define LN_DIR_OUTGOING 1
+#define LN_LANG_PT_BR 0
+#define LN_LANG_RU 1
 #define LN_DEFAULT_MODE 0
 #define LN_DEFAULT_PTT_KEY 0
 #define LN_STOP_SEGMENT_WAIT_MS 3000
@@ -188,6 +190,8 @@ int32_t ln_segment_close(bool started, bool closed);
 int32_t ln_source_kind(bool has_test_file);
 bool ln_requests_mic_permission(bool mic_is_live, int64_t mic_decision);
 int32_t ln_call_output(bool has_sink, bool has_blackhole);
+int32_t ln_dir_source(int32_t direction);
+int32_t ln_dir_target(int32_t direction);
 int32_t ln_lane_mode(int32_t direction, int32_t outgoing_mode);
 bool ln_lane_speaks(int32_t direction, bool speak_russian);
 bool ln_own_voice_available(bool running, bool has_call_output);
@@ -707,6 +711,20 @@ int32_t ln_call_output(bool has_sink, bool has_blackhole) {
     return LN_OUT_NONE;
 }
 
+int32_t ln_dir_source(int32_t direction) {
+    if ((direction == LN_DIR_INCOMING)) {
+        return LN_LANG_PT_BR;
+    }
+    return LN_LANG_RU;
+}
+
+int32_t ln_dir_target(int32_t direction) {
+    if ((direction == LN_DIR_INCOMING)) {
+        return LN_LANG_RU;
+    }
+    return LN_LANG_PT_BR;
+}
+
 int32_t ln_lane_mode(int32_t direction, int32_t outgoing_mode) {
     if ((direction == LN_DIR_INCOMING)) {
         return LN_MODE_CONTINUOUS;
@@ -1076,6 +1094,20 @@ void test_ln_moved_rules(void) {
     assert((ln_lane_voice_in_call(LN_DIR_INCOMING) == false));
     assert((ln_glossary_source_is_pt(LN_DIR_INCOMING) == true));
     assert((ln_glossary_source_is_pt(LN_DIR_OUTGOING) == false));
+    assert((ln_dir_source(LN_DIR_INCOMING) == LN_LANG_PT_BR));
+    assert((ln_dir_target(LN_DIR_INCOMING) == LN_LANG_RU));
+    assert((ln_dir_source(LN_DIR_OUTGOING) == LN_LANG_RU));
+    assert((ln_dir_target(LN_DIR_OUTGOING) == LN_LANG_PT_BR));
+    assert((ln_dir_source(LN_DIR_INCOMING) == ln_dir_target(LN_DIR_OUTGOING)));
+    assert((ln_dir_target(LN_DIR_INCOMING) == ln_dir_source(LN_DIR_OUTGOING)));
+    assert((ln_dir_source(LN_DIR_INCOMING) != ln_dir_target(LN_DIR_INCOMING)));
+    if (ln_glossary_source_is_pt(LN_DIR_INCOMING)) {
+        assert((ln_dir_source(LN_DIR_INCOMING) == LN_LANG_PT_BR));
+    }
+    if ((ln_glossary_source_is_pt(LN_DIR_OUTGOING) == false)) {
+        assert((ln_dir_source(LN_DIR_OUTGOING) != LN_LANG_PT_BR));
+    }
+    assert((ln_dir_source(7) == LN_LANG_RU));
     assert((ln_ptt_local(LN_PTT_SCOPE_WINDOW) == true));
     assert((ln_ptt_local(LN_PTT_SCOPE_NONE) == false));
     assert((ln_ptt_global(LN_PTT_SCOPE_GLOBAL) == true));

@@ -385,6 +385,21 @@ private struct Samples {
         #expect(ln_ptt_key_down(LN_PTT_FN, UInt64(NSEvent.ModifierFlags.function.rawValue)))
         #expect(ln_ptt_scope(true, LN_MODE_PUSH_TO_TALK, false) == LN_PTT_SCOPE_WINDOW)
     }
+
+    /// Direction.source/.target come from ln_dir_source/ln_dir_target: PT-BR → RU incoming, RU → PT-BR outgoing,
+    /// and the lane codes agree with segment_rules' and voice_rules' language codes.
+    @Test func directionLanguagesComeFromTheSpec() {
+        #expect(Direction.incoming.source == .ptBR && Direction.incoming.target == .ru)
+        #expect(Direction.outgoing.source == .ru && Direction.outgoing.target == .ptBR)
+        for d in Direction.allCases {
+            #expect(d.source != d.target)
+            #expect(d.source.specCode == ln_dir_source(d.specCode) && d.target.specCode == ln_dir_target(d.specCode))
+        }
+        #expect(Direction.incoming.specCode == LN_DIR_INCOMING && Direction.outgoing.specCode == LN_DIR_OUTGOING)
+        for lang in Lang.allCases { #expect(Lang(specCode: lang.specCode) == lang) }
+        #expect(Int64(LN_LANG_PT_BR) == Int64(SG_LANG_PT_BR) && Int64(LN_LANG_RU) == Int64(SG_LANG_RU))
+        #expect(Int64(LN_LANG_PT_BR) == Int64(VO_LANG_PT_BR) && Int64(LN_LANG_RU) == Int64(VO_LANG_RU))
+    }
 }
 
 // MARK: - ui_rules
@@ -468,5 +483,27 @@ private struct Samples {
         #expect([UI_LISTEN_UNKNOWN, UI_LISTEN_OK, UI_LISTEN_NOBODY, UI_LISTEN_REAL_MIC, UI_LISTEN_BOTH, UI_LISTEN_NO_BLACKHOLE].map(Int64.init)
                 == [DV_LISTEN_UNKNOWN, DV_LISTEN_OK, DV_LISTEN_NOBODY, DV_LISTEN_REAL_MIC, DV_LISTEN_BOTH, DV_LISTEN_NO_BLACKHOLE].map(Int64.init))
         #expect(ui_listener_mark(Int32(DV_LISTEN_REAL_MIC)) == UI_CK_BAD)
+    }
+
+    /// The relay (relay_rules, run by relay/server.js as rl.wasm) and the Pontes that use it (peer_rules).
+    @Test func relayAndPeerLinkAgree() {
+        // The close code of a full room is the one the peer link waits on.
+        #expect(Int64(RL_CLOSE_ROOM_FULL) == Int64(PE_CLOSE_ROOM_FULL))
+        #expect(pe_room_full(Int64(RL_CLOSE_ROOM_FULL)) && !pe_room_full(Int64(RL_CLOSE_SERVER_FULL)))
+        // Every note the relay sends ({"members":n}, n up to a full room) is one the peer link reads.
+        for n in 0...Int(RL_ROOM_MEMBERS_MAX) {
+            #expect(pe_members_valid(Int64(n)))
+            #expect(pe_note_fits(Int64(#"{"members":\#(n)}"#.utf8.count)))
+        }
+        // A full room is this Ponte and at most PE_MAX_PEERS others.
+        #expect(Int(RL_ROOM_MEMBERS_MAX) - 1 <= Int(PE_MAX_PEERS))
+        // The largest peer message (a voice window with its longest text, sealed by AES-GCM: 12-byte nonce, 16-byte
+        // tag) fits one relay message.
+        #expect(Int(PE_HDR_BYTES) + Int(PE_VP_TEXT) + Int(PE_VOICE_TEXT_MAX) + 28 <= Int(RL_MAX_PAYLOAD))
+        // Two ping rounds drop a member that stopped answering within the 20 s peer_rules counts on.
+        #expect(2 * Int(RL_PING_MS) <= 20_000)
+        // Every limit the server reads is the constant it names.
+        #expect([RL_K_MAX_PAYLOAD, RL_K_ROOM_MEMBERS, RL_K_CLOSE_ROOM_FULL, RL_K_RATE_LIMIT, RL_K_PING_MS].map { rl_limit(Int64($0)) }
+                == [RL_MAX_PAYLOAD, RL_ROOM_MEMBERS_MAX, RL_CLOSE_ROOM_FULL, RL_RATE_LIMIT, RL_PING_MS].map(Int64.init))
     }
 }

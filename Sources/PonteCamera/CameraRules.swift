@@ -19,6 +19,8 @@ public enum CameraRules {
     public static func settingMin(_ kind: Int) -> Int { Int(cm_setting_min(Int64(kind))) }
     public static func settingMax(_ kind: Int) -> Int { Int(cm_setting_max(Int64(kind))) }
     public static func settingDefault(_ kind: Int) -> Int { Int(cm_setting_default(Int64(kind))) }
+    /// «Обрабатывать камеру» before the owner ever set it.
+    public static var defaultOn: Bool { cm_default_on() }
     /// A value held to the setting's range.
     public static func clamp(_ kind: Int, _ value: Int) -> Int { Int(cm_clamp_setting(Int64(kind), Int64(value))) }
 
@@ -122,9 +124,95 @@ public enum CameraRules {
     public static func linkHandshakeExpired(msSinceAccept: Int64) -> Bool { cm_link_handshake_expired(msSinceAccept) }
     /// The processed cameras an extension reports, held to 0...CM_LINK_CAMERAS_MAX.
     public static func linkCameras(_ reported: Int) -> Int { Int(cm_link_cameras(Int64(reported))) }
+    /// A link message is read only in the spec's protocol version (no version: not read).
+    public static func linkVersionTaken(_ v: Int?) -> Bool {
+        guard let v else { return false }
+        return cm_link_version_taken(Int64(v))
+    }
 
     public static func linkStatus(listening: Bool, failed: Bool, clients: Int, activeCameras: Int) -> Int {
         Int(cm_link_status(listening, failed, Int64(clients), Int64(activeCameras)))
+    }
+
+    // MARK: Link, version 2: frames that pass unprocessed and cameras in trouble
+
+    public static let linkPassing = Int(CM_LINK_PASSING)
+    public static let linkTrouble = Int(CM_LINK_TROUBLE)
+    public static let linkReadMax = Int(CM_LINK_READ_MAX)
+
+    /// The panel's install steps open by themselves for this status.
+    public static func panelInstallOpen(status: Int) -> Bool { cm_panel_install_open(Int64(status)) }
+
+    /// The panel's status from the pages' reports: a camera in trouble before a processed one.
+    public static func linkPanel(listening: Bool, failed: Bool, clients: Int, processed: Int, passing: Int,
+                                 troubled: Int) -> Int {
+        Int(cm_link_panel(listening, failed, Int64(clients), Int64(processed), Int64(passing), Int64(troubled)))
+    }
+
+    // MARK: WebSocket (CameraLink)
+
+    public static let httpSwitching = Int(CM_HTTP_SWITCHING)
+    public static let httpBadRequest = Int(CM_HTTP_BAD_REQUEST)
+    public static let httpForbidden = Int(CM_HTTP_FORBIDDEN)
+    public static let httpTooLarge = Int(CM_HTTP_TOO_LARGE)
+    public static let httpBusy = Int(CM_HTTP_BUSY)
+    public static let wsaMessage = Int(CM_WSA_MESSAGE)
+    public static let wsaClose = Int(CM_WSA_CLOSE)
+    public static let wsaPong = Int(CM_WSA_PONG)
+    public static let wsaIgnore = Int(CM_WSA_IGNORE)
+    public static let wsaUnsupported = Int(CM_WSA_UNSUPPORTED)
+    public static let wsCloseNormal = Int(CM_WS_CLOSE_NORMAL)
+
+    /// The HTTP answer to a handshake (CM_HTTP_*): request, origin, then room for another client.
+    public static func wsHandshakeStatus(isGet: Bool, upgrade: Bool, hasKey: Bool, originAllowed: Bool,
+                                         openClients: Int) -> Int {
+        Int(cm_ws_handshake_status(isGet, upgrade, hasKey, originAllowed, Int64(openClients)))
+    }
+    /// Request headers still without their end after this many bytes are refused.
+    public static func wsHeadTooLarge(_ buffered: Int) -> Bool { cm_ws_head_too_large(Int64(buffered)) }
+    /// The bytes before a client frame's mask, by its 7-bit length field.
+    public static func wsHeaderBytes(len7: Int) -> Int { Int(cm_ws_header_bytes(Int64(len7))) }
+    /// 0 when a client frame's header is taken, else the close code it gets.
+    public static func wsFrameClose(fin: Bool, masked: Bool, len7: Int, length: Int) -> Int {
+        Int(cm_ws_frame_close(fin, masked, Int64(len7), Int64(length)))
+    }
+    /// What a received opcode does (CM_WSA_*).
+    public static func wsOpcodeAction(_ opcode: Int) -> Int { Int(cm_ws_opcode_action(Int64(opcode))) }
+    /// The close code Ponte sends after an action (0: none).
+    public static func wsActionClose(_ action: Int) -> Int { Int(cm_ws_action_close(Int64(action))) }
+    /// The 7-bit length field of Ponte's own frame (126: a 16-bit length follows) and whether it can be sent.
+    public static func wsSendLen7(_ length: Int) -> Int { Int(cm_ws_send_len7(Int64(length))) }
+    public static func wsSendFits(_ length: Int) -> Bool { cm_ws_send_fits(Int64(length)) }
+
+    // MARK: What a Meet page reports (the extension's pipeline runs the same spec)
+
+    public static let stageNone = Int(CM_STAGE_NONE)
+    public static let stageCreate = Int(CM_STAGE_CREATE)
+    public static let stageUpload = Int(CM_STAGE_UPLOAD)
+    public static let stageDraw = Int(CM_STAGE_DRAW)
+    public static let stageOutput = Int(CM_STAGE_OUTPUT)
+    public static let stageLost = Int(CM_STAGE_LOST)
+    public static let stageWrite = Int(CM_STAGE_WRITE)
+    public static let stageRead = Int(CM_STAGE_READ)
+    public static let reportName = Int(CM_REPORT_NAME)
+    public static let reportText = Int(CM_REPORT_TEXT)
+
+    /// A reported stage held to the known ones.
+    public static func reportStage(_ stage: Int) -> Int { Int(cm_report_stage(Int64(stage))) }
+    /// A reported renderer held to the known ones.
+    public static func reportRenderer(_ renderer: Int) -> Int { Int(cm_render_variant_held(Int64(renderer))) }
+    /// How much a report's error counts when the panel shows one of several (0: no error).
+    public static func reportErrorRank(hasError: Bool, troubled: Bool) -> Int {
+        Int(cm_report_error_rank(hasError, troubled))
+    }
+
+    /// A reported name or message cleaned by the spec: printable ASCII, at most the limit of its kind.
+    public static func reportClean(_ text: String, kind: Int) -> String {
+        var buffer = [UInt8](repeating: 0, count: 256)
+        let utf8 = Array(text.utf8.prefix(256))
+        buffer.replaceSubrange(0..<utf8.count, with: utf8)
+        let n = buffer.withUnsafeMutableBufferPointer { cm_report_clean($0.baseAddress!, Int64(utf8.count), Int64(kind)) }
+        return String(decoding: buffer.prefix(Int(n)), as: UTF8.self)
     }
 
     /// A setting from a settings array (missing: its default).

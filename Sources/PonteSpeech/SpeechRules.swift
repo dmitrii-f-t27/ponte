@@ -240,6 +240,8 @@ public enum SpeechRules {
     public static let claudeEffortCode = Int(CX_CLAUDE_EFFORT_CODE)
     /// URLRequest timeout; the router's per-attempt limit (`translationTimeoutMs`) is shorter.
     public static let claudeRequestTimeoutMs = Int(CX_CLAUDE_REQUEST_TIMEOUT_MS)
+    /// Bytes of a failed reply shown when it carries no error message.
+    public static let claudeErrorExcerptBytes = Int(CX_CLAUDE_ERROR_EXCERPT_BYTES)
 
     // MARK: - Voices
 

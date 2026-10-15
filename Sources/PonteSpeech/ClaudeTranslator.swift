@@ -154,7 +154,7 @@ public struct ClaudeRequestBuilder: Sendable {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         guard SpeechRules.httpSuccess(status: status) else {
             let error = json?["error"] as? [String: Any]
-            let message = (error?["message"] as? String) ?? String(data: data.prefix(300), encoding: .utf8) ?? ""
+            let message = (error?["message"] as? String) ?? String(data: data.prefix(SpeechRules.claudeErrorExcerptBytes), encoding: .utf8) ?? ""
             throw PonteSpeechError.cloudRequestFailed(status: status, message: message)
         }
         guard let json else { throw PonteSpeechError.cloudEmptyResponse }

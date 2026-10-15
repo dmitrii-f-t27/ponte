@@ -4,23 +4,14 @@
 // Members of /r/<room> exchange binary frames. Every binary frame from one member
 // goes, unchanged, to every other open member of the same room. Clients encrypt
 // end to end, so the relay never parses, stores or logs a payload or a room id.
+// Every decision and limit is Specs/relay_rules.t27 (rules.js runs it as rl.wasm);
+// this file carries the decisions out with node:http and ws.
 
 const http = require('node:http');
 const { WebSocketServer, WebSocket } = require('ws');
+const rules = require('./rules.js');
 
-const ROOM_PATH = /^\/r\/([0-9a-f]{64})$/;
-const MAX_PAYLOAD = 65536; // bytes per message
-const MAX_MEMBERS = 6; // per room; the next one gets ROOM_FULL
-const ROOM_FULL = 4001; // close code
-const RATE_LIMIT = 200; // messages per second per connection; excess is dropped
-const RATE_WINDOW_MS = 1000;
-const PING_INTERVAL_MS = 10000;
-const STATS_INTERVAL_MS = 60000;
-const MAX_BUFFERED = 64 * 1024; // a receiver this far behind (about 2 s of voice) skips frames: late audio is useless
-const MAX_CONNECTIONS = 1000; // across all rooms
-const MAX_ROOMS = 300;
-const MAX_PER_ADDRESS = 12; // connections from one client address
-const SERVER_FULL = 4002; // close code: the relay itself is full
+const { limits } = rules;
 
 function noop() {}
 
@@ -46,17 +37,18 @@ function rejectUpgrade(socket, status, text) {
  * port 0 picks a free port. options.pingIntervalMs, maxPerAddress, maxConnections and log exist for tests.
  */
 function start(port = 0, options = {}) {
-  const pingIntervalMs = options.pingIntervalMs ?? PING_INTERVAL_MS;
-  const maxPerAddress = options.maxPerAddress ?? MAX_PER_ADDRESS;
-  const maxConnections = options.maxConnections ?? MAX_CONNECTIONS;
+  const pingIntervalMs = options.pingIntervalMs ?? limits.PING_MS;
+  const maxPerAddress = options.maxPerAddress ?? limits.PER_ADDRESS;
+  const maxConnections = options.maxConnections ?? limits.CONNECTIONS;
   const log = options.log ?? ((line) => console.log(line));
   const rooms = new Map(); // room id -> Set of peers
   const perAddress = new Map(); // client address -> open connections
 
-  // The client address as Railway's proxy reports it (the last hop it added), else the socket's.
+  // The client address as Railway's proxy reports it (the hop rl_forwarded_hop picks), else the socket's.
   function clientAddress(req) {
     const forwarded = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
-    return forwarded.length ? forwarded[forwarded.length - 1] : req.socket.remoteAddress || '?';
+    const hop = rules.forwardedHop(forwarded.length);
+    return hop >= 0 ? forwarded[hop] : req.socket.remoteAddress || '?';
   }
 
   // Tells every member how many connections the room has (the only plain text the relay sends): a client that
@@ -75,43 +67,41 @@ function start(port = 0, options = {}) {
   }
 
   const server = http.createServer((req, res) => {
-    if ((req.method === 'GET' || req.method === 'HEAD') && req.url === '/healthz') {
-      res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+    const status = rules.httpStatus(req.method || '', req.url || '');
+    if (status === 200) {
+      res.writeHead(status, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
       res.end('ok');
       return;
     }
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.writeHead(status, { 'Content-Type': 'text/plain' });
     res.end('not found');
   });
 
   const wss = new WebSocketServer({
     noServer: true,
     clientTracking: false,
-    maxPayload: MAX_PAYLOAD,
+    maxPayload: limits.MAX_PAYLOAD,
     perMessageDeflate: false,
   });
 
   server.on('upgrade', (req, socket, head) => {
-    const match = ROOM_PATH.exec(req.url || '');
-    if (!match) {
+    const url = req.url || '';
+    if (!rules.roomPath(url)) {
       rejectUpgrade(socket, 400, 'Bad Request');
       return;
     }
     const address = clientAddress(req);
-    wss.handleUpgrade(req, socket, head, (ws) => join(ws, match[1], address));
+    wss.handleUpgrade(req, socket, head, (ws) => join(ws, url.slice(3), address));
   });
 
   function join(ws, roomId, address) {
     ws.on('error', noop);
     let members = rooms.get(roomId);
-    if (members && members.size >= MAX_MEMBERS) {
-      ws.close(ROOM_FULL, 'room full');
-      return;
-    }
     const total = stats();
-    if (total.connections >= maxConnections || (!members && total.rooms >= MAX_ROOMS) ||
-        (perAddress.get(address) || 0) >= maxPerAddress) {
-      ws.close(SERVER_FULL, 'relay full');
+    const verdict = rules.admit(members ? members.size : 0, !!members, total.connections, total.rooms,
+      perAddress.get(address) || 0, maxPerAddress, maxConnections);
+    if (verdict !== rules.JOIN) {
+      ws.close(verdict, verdict === limits.CLOSE_ROOM_FULL ? 'room full' : 'relay full');
       return;
     }
     if (!members) {
@@ -129,39 +119,42 @@ function start(port = 0, options = {}) {
 
     ws.on('message', (data, isBinary) => {
       const now = Date.now();
-      if (now - peer.windowStart >= RATE_WINDOW_MS) {
+      if (rules.windowRestarts(now, peer.windowStart)) {
         peer.windowStart = now;
         peer.count = 0;
       }
-      if (++peer.count > RATE_LIMIT) return;
-      if (!isBinary) return;
+      peer.count += 1;
+      if (!rules.rateAllows(peer.count)) return;
+      if (!rules.forwards(isBinary)) return;
       for (const other of members) {
-        if (other === peer) continue;
-        if (other.ws.readyState !== WebSocket.OPEN) continue;
-        if (other.ws.bufferedAmount > MAX_BUFFERED) continue;
+        if (!rules.forwardTo(other === peer, other.ws.readyState === WebSocket.OPEN, other.ws.bufferedAmount)) continue;
         other.ws.send(data, { binary: true });
       }
     });
 
     ws.on('close', () => {
       members.delete(peer);
-      const left = (perAddress.get(address) || 1) - 1;
+      const left = rules.addressAfterLeave(perAddress.get(address) || 1);
       if (left > 0) perAddress.set(address, left);
       else perAddress.delete(address);
-      if (members.size === 0 && rooms.get(roomId) === members) rooms.delete(roomId);
-      else announce(members);
+      if (rules.leftAction(members.size) === rules.LEFT_DELETE) {
+        if (rooms.get(roomId) === members) rooms.delete(roomId);
+      } else {
+        announce(members);
+      }
     });
   }
 
   const pingTimer = setInterval(() => {
     for (const members of rooms.values()) {
       for (const peer of members) {
-        if (!peer.alive) {
+        const action = rules.pingAction(peer.alive, peer.ws.readyState === WebSocket.OPEN);
+        if (action === rules.PING_TERMINATE) {
           peer.ws.terminate();
           continue;
         }
         peer.alive = false;
-        if (peer.ws.readyState === WebSocket.OPEN) peer.ws.ping();
+        if (action === rules.PING_SEND) peer.ws.ping();
       }
     }
   }, pingIntervalMs);
@@ -175,7 +168,7 @@ function start(port = 0, options = {}) {
       lastLine = line;
       log(line);
     }
-  }, STATS_INTERVAL_MS);
+  }, limits.STATS_MS);
   statsTimer.unref();
 
   function close() {
@@ -201,10 +194,10 @@ function start(port = 0, options = {}) {
   });
 }
 
-module.exports = { start };
+module.exports = { start, limits };
 
 if (require.main === module) {
-  const port = Number(process.env.PORT) || 8080;
+  const port = Number(process.env.PORT) || limits.PORT;
   start(port).then(
     (relay) => {
       console.log(`ponte-relay listening on port ${relay.port}`);

@@ -1,0 +1,267 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Ponte Camera — diagnostics</title>
+<style>
+  body { font: 14px -apple-system, system-ui, sans-serif; margin: 24px; max-width: 760px; }
+  video { width: 320px; background: #222; display: block; margin: 12px 0; }
+  pre { background: #f4f4f4; padding: 8px; white-space: pre-wrap; }
+</style>
+<h1>Ponte Camera — diagnostics</h1>
+<p>Runs the extension's own <code>page.js</code> on this browser's GPU: first with synthetic frames of known colours,
+then with the real camera. Nothing leaves this Mac: the result goes only to <code>diagnose.mjs</code> on 127.0.0.1.</p>
+<button id="start">Start</button>
+<video id="view" autoplay muted playsinline></video>
+<pre id="log"></pre>
+<script>
+  // Before page.js: the wrapper's "camera" is either synthetic blocks of known colours or the real camera.
+  window.harness = { synthetic: false, statuses: [] };
+  const md = navigator.mediaDevices;
+  const rawGetUserMedia = md.getUserMedia.bind(md);
+  harness.raw = rawGetUserMedia;
+  harness.blocks = [[200, 60, 40], [40, 160, 90], [90, 90, 200], [128, 128, 128]];
+  harness.makeBlocks = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 480;
+    const ctx = canvas.getContext('2d');
+    const paint = () => {
+      harness.blocks.forEach(([r, g, b], i) => {
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        ctx.fillRect((i % 2) * 320, Math.floor(i / 2) * 240, 320, 240);
+      });
+    };
+    paint();
+    const stream = canvas.captureStream(30);
+    const timer = setInterval(paint, 33);
+    stream.getVideoTracks()[0].addEventListener('ended', () => clearInterval(timer));
+    harness.stopBlocks = () => clearInterval(timer);
+    return stream;
+  };
+  md.getUserMedia = (constraints) => (harness.synthetic ? Promise.resolve(harness.makeBlocks()) : rawGetUserMedia(constraints));
+  window.addEventListener('message', (e) => {
+    if (e.source === window && e.data && e.data.__ponteCamera === 'status') harness.statuses.push(e.data);
+  });
+</script>
+<script src="/extension/page.js"></script>
+<script type="module">
+  import { loadRules, decide } from '/extension/policy.js';
+
+  const log = (line) => { document.getElementById('log').textContent += `${line}\n`; };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const TOLERANCE = 6;
+  const x = await loadRules(await (await fetch('/extension/cm.wasm')).arrayBuffer());
+
+  // What bridge.js hands page.js from storage.
+  const apply = (s, on = true) => {
+    const st = decide(x, on, s);
+    window.postMessage({ __ponteCamera: 'params', policy: st.policy,
+      p: { needs: st.needs, colorIdentity: st.colorIdentity, m: st.params, crop: st.crop } }, '*');
+  };
+  const last = () => harness.statuses.at(-1) ?? null;
+  const until = async (test, ms) => {
+    for (const end = Date.now() + ms; Date.now() < end; await sleep(100)) if (test()) return true;
+    return test();
+  };
+  const expect = (s, rgb) => {
+    x.cm_apply_pixel(...s.slice(0, 5).map(BigInt), rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, x.cm_wasm_floats());
+    return Array.from(new Float32Array(x.memory.buffer, x.cm_wasm_floats(), 3), (v) => Math.round(v * 255));
+  };
+  const diff = (a, b) => Math.max(...a.map((v, c) => Math.abs(v - b[c])));
+  async function sample(reader, points, skip) {
+    let frame = null;
+    for (let i = 0; i <= skip; i++) { frame?.close(); frame = (await reader.read()).value; }
+    const canvas = new OffscreenCanvas(frame.displayWidth, frame.displayHeight);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(frame, 0, 0);
+    const w = frame.displayWidth, h = frame.displayHeight;
+    frame.close();
+    return points.map(([px, py]) => Array.from(ctx.getImageData(Math.floor(px * w), Math.floor(py * h), 1, 1).data.slice(0, 3)));
+  }
+  const errors = () => harness.statuses.filter((s) => s.error).map((s) => s.error)
+    .filter((e, i, all) => all.findIndex((o) => JSON.stringify(o) === JSON.stringify(e)) === i);
+
+  function environment() {
+    const env = { userAgent: navigator.userAgent, webgl2: false, gpu: null };
+    try {
+      const gl = new OffscreenCanvas(2, 2).getContext('webgl2');
+      if (gl) {
+        env.webgl2 = true;
+        const info = gl.getExtension('WEBGL_debug_renderer_info');
+        env.gpu = info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+        gl.getExtension('WEBGL_lose_context')?.loseContext();
+      }
+    } catch (e) { env.webglError = `${e.name}: ${e.message}`; }
+    env.swiftshader = /swiftshader/i.test(env.gpu ?? '');
+    return env;
+  }
+
+  // One frame through a WebGL2 canvas as page.js takes it in (texImage2D), then a new VideoFrame from the canvas
+  // (preserved drawing buffer) or from an ImageBitmap of it. The probe's own canvas, context and frames are released.
+  function outputProbe(frame, fromCanvas) {
+    const r = { ok: false, stage: null, name: null, message: null };
+    let stage = 'create', gl = null;
+    try {
+      const canvas = new OffscreenCanvas(frame.displayWidth, frame.displayHeight);
+      gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, stencil: false,
+        premultipliedAlpha: false, preserveDrawingBuffer: fromCanvas, desynchronized: false });
+      if (!gl) throw new Error('no WebGL2 context');
+      stage = 'upload';
+      gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+      stage = 'draw';
+      gl.clearColor(0.5, 0.25, 0.75, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      const code = gl.getError();
+      if (code !== gl.NO_ERROR) throw new Error(`WebGL error 0x${code.toString(16)}`);
+      stage = 'output';
+      const init = { timestamp: frame.timestamp, alpha: 'discard' };
+      let out;
+      if (fromCanvas) out = new VideoFrame(canvas, init);
+      else {
+        const bitmap = canvas.transferToImageBitmap();
+        try { out = new VideoFrame(bitmap, init); } finally { bitmap.close(); }
+      }
+      r.format = out.format;
+      out.close();
+      r.ok = true;
+      r.stage = null;
+    } catch (e) {
+      r.stage = stage;
+      r.name = String(e?.name ?? typeof e);
+      r.message = String(e?.message ?? e).slice(0, 200);
+    } finally {
+      try { gl?.getExtension('WEBGL_lose_context')?.loseContext(); } catch {}
+    }
+    return r;
+  }
+
+  async function syntheticPhase() {
+    const out = { pass: false, worst: null, framed: null, errors: [] };
+    harness.synthetic = true;
+    harness.statuses.length = 0;
+    const S = [40, 30, 20, 10, 10, 100, 0, 0, 0];
+    apply(S);
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const track = stream.getVideoTracks()[0];
+    const reader = new MediaStreamTrackProcessor({ track }).readable.getReader();
+    const centres = [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
+    if (!(await until(() => last()?.processed === 1, 10000))) {
+      out.errors = errors();
+      out.status = last();
+    } else {
+      out.renderer = last()?.detail?.[0]?.renderer ?? null;
+      const after = await sample(reader, centres, 6);
+      out.worst = Math.max(...after.map((rgb, i) => diff(rgb, expect(S, harness.blocks[i]))));
+      apply([0, 0, 0, 0, 0, 200, 0, 0, 1]);
+      // Frames are read until the new settings show, for at most 5 s (the last frame read is judged either way).
+      const framedWant = [harness.blocks[1], harness.blocks[2]];
+      let framed;
+      for (const end = Date.now() + 5000; ;) {
+        framed = await sample(reader, [[0.1, 0.1], [0.9, 0.9]], 1);
+        if (framed.every((rgb, i) => diff(rgb, framedWant[i]) <= TOLERANCE) || Date.now() >= end) break;
+      }
+      out.framed = framed;
+      const framedOk = diff(framed[0], harness.blocks[1]) <= TOLERANCE && diff(framed[1], harness.blocks[2]) <= TOLERANCE;
+      out.pass = out.worst <= TOLERANCE && framedOk && last()?.troubled === 0;
+      out.errors = errors();
+    }
+    track.stop();
+    harness.stopBlocks?.();
+    harness.synthetic = false;
+    await until(() => (last()?.processed ?? 0) + (last()?.passing ?? 0) + (last()?.troubled ?? 0) === 0, 3000);
+    return out;
+  }
+
+  async function cameraPhase() {
+    const out = { pass: false, label: null, fake: null, rawFrame: null, drawnPerSecond: null, deliveredPerSecond: null,
+      errors: [] };
+    // One frame of the raw camera, as the wrapper gets it (its format tells which path the GPU takes).
+    const raw = await harness.raw({ video: true });
+    const rawTrack = raw.getVideoTracks()[0];
+    out.label = rawTrack.label;
+    out.fake = /fake/i.test(rawTrack.label);
+    // Only the numbers (no deviceId or groupId: they identify the camera).
+    const settings = rawTrack.getSettings();
+    out.settings = { width: settings.width, height: settings.height, frameRate: settings.frameRate };
+    const rawReader = new MediaStreamTrackProcessor({ track: rawTrack }).readable.getReader();
+    const first = (await rawReader.read()).value;
+    out.rawFrame = { format: first.format, codedWidth: first.codedWidth, codedHeight: first.codedHeight,
+      displayWidth: first.displayWidth, displayHeight: first.displayHeight,
+      colorSpace: first.colorSpace?.toJSON?.() ?? null };
+    // Each way page.js makes its new frame (CM_RV_WEBGL_CANVAS, CM_RV_WEBGL_BITMAP), tried on its own with this real
+    // camera frame, outside the wrapper: which step fails, if any, with the DOMException's name and message.
+    out.outputs = { canvas: outputProbe(first, true), bitmap: outputProbe(first, false) };
+    first.close();
+    rawTrack.stop();
+
+    harness.statuses.length = 0;
+    const S = [20, 10, 30, 15, 10, 150, 20, 0, 1];
+    apply(S);
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const track = stream.getVideoTracks()[0];
+    document.getElementById('view').srcObject = stream;
+    const processed = await until(() => last()?.processed === 1, 10000);
+    // page.js reports on changes only; a 'query' asks it for a report now (its drawn counts). The frames the wrapped
+    // track delivers are counted here, at its consumer, at the same time.
+    const fresh = async () => {
+      const n = harness.statuses.length;
+      window.postMessage({ __ponteCamera: 'query' }, '*');
+      await until(() => harness.statuses.length > n, 2000);
+      return last();
+    };
+    const consumer = new MediaStreamTrackProcessor({ track }).readable.getReader();
+    let delivered = 0, counting = true;
+    const counter = (async () => {
+      while (counting) {
+        const { value, done } = await consumer.read();
+        if (done) break;
+        value.close();
+        delivered += 1;
+      }
+    })();
+    const drawn0 = (await fresh())?.detail?.[0]?.drawn ?? 0;
+    const t0 = performance.now();
+    await sleep(3000);
+    const s1 = await fresh();
+    const seconds = (performance.now() - t0) / 1000;
+    counting = false;
+    consumer.cancel().catch(() => {});
+    await counter.catch(() => {});
+    out.drawnPerSecond = Math.round((((s1?.detail?.[0]?.drawn ?? 0) - drawn0) / seconds) * 10) / 10;
+    out.deliveredPerSecond = Math.round((delivered / seconds) * 10) / 10;
+    out.renderer = s1?.detail?.[0]?.renderer ?? null;
+    out.status = s1 ? { processed: s1.processed, passing: s1.passing, troubled: s1.troubled, detail: s1.detail } : null;
+    out.errors = errors();
+    // Processed the whole time (no trouble report after the first processed one), frames drawn and delivered.
+    const firstProcessed = harness.statuses.findIndex((s) => s.processed === 1);
+    out.troubleAfterProcessed = firstProcessed >= 0 && harness.statuses.slice(firstProcessed).some((s) => s.troubled > 0);
+    out.pass = processed && s1?.processed === 1 && s1?.troubled === 0 && !out.troubleAfterProcessed &&
+      out.drawnPerSecond > 1 && out.deliveredPerSecond > 1;
+    track.stop();
+    return out;
+  }
+
+  document.getElementById('start').onclick = async () => {
+    document.getElementById('start').disabled = true;
+    const result = { environment: environment() };
+    log(`GPU: ${result.environment.gpu}`);
+    try {
+      result.synthetic = await syntheticPhase();
+      log(`synthetic frames on this GPU: ${result.synthetic.pass ? 'PASS' : 'FAIL'} (worst ${result.synthetic.worst})`);
+      result.camera = await cameraPhase();
+      for (const [path, o] of Object.entries(result.camera.outputs ?? {})) {
+        log(`WebGL2 ${path} output on a camera frame: ${o.ok ? 'ok' : `failed at ${o.stage}: ${o.name}: ${o.message}`}`);
+      }
+      log(`camera "${result.camera.label}": ${result.camera.pass ? 'PASS' : 'FAIL'}, ${result.camera.drawnPerSecond} frames/s drawn, ${result.camera.deliveredPerSecond} delivered, renderer ${result.camera.renderer}`);
+    } catch (e) {
+      result.error = `${e.name}: ${e.message}`;
+      log(result.error);
+    }
+    result.errors = errors();
+    const pass = result.synthetic?.pass && result.camera?.pass;
+    result.verdict = !pass ? 'FAIL' : result.camera.fake || result.environment.swiftshader ? 'fake device PASS' : 'hardware PASS';
+    log(result.verdict);
+    for (const e of result.errors) log(`error: stage ${e.stage}, renderer ${e.renderer}: ${e.name}: ${e.message}`);
+    await fetch('/result', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(result) });
+  };
+</script>
