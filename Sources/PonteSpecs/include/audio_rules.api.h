@@ -106,6 +106,11 @@
 #define AU_METER_RANGE_DB 60.0
 #define AU_PRINTABLE_FIRST 32
 #define AU_PRINTABLE_END 127
+#define AU_OUTPUT_WATCH_MS 1000
+#define AU_OUTPUT_CHECK_GRACE_MS 1000
+#define AU_MISPLACED_NONE 0
+#define AU_MISPLACED_UNIT 1
+#define AU_MISPLACED_PROCESS 2
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -180,5 +185,18 @@ bool au_is_plain_mono(int64_t format, int64_t channels, bool interleaved);
 int64_t au_converter_input(bool supplied, bool final);
 bool au_fourcc_printable(uint32_t code);
 float au_meter_fraction(float level);
+bool au_relay_samples_low(bool filling, bool has_queued);
+bool au_relay_filling_after(int64_t action, bool sent, bool filling);
+bool au_relay_can_trim(int64_t count);
+int64_t au_output_misplaced(bool unit_read, int64_t unit_device, int64_t our_device, int64_t ms_since_start, bool has_outputs, bool outputs_include_ours);
+bool au_unit_binds_before_start(bool unit_read, int64_t unit_device, int64_t our_device);
+bool au_unit_rebinds_after_start(bool unit_read, int64_t unit_device, int64_t our_device);
+int64_t au_stream_end(int64_t stream_end, int64_t position, int64_t frames);
+bool au_player_can_rebuild(int64_t state);
+bool au_player_rechecks(bool ignored, bool finished, bool still_pending, bool engine_running, bool same_engine);
+int64_t au_rebuild_failures_next(int64_t failures);
+int64_t au_mic_slice_frames(int64_t io_frames, int64_t hint_frames);
+bool au_mic_cycle_fits(int64_t frames, int64_t capacity);
+bool au_tap_rebuilds(int64_t action, bool updated);
 /* Function bodies: see the full header. */
 #endif

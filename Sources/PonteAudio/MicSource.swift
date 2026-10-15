@@ -167,7 +167,7 @@ public final class MicSource: AudioSource {
             PonteDiagnostics.log("mic rebuild ok after \(failures) failure(s) device=\(capture?.deviceName ?? "?") format=\(PCM.describe(outputFormat))")
             changed = setStatus(.capturing)
         } catch {
-            failures += 1
+            failures = AudioRules.rebuildFailuresNext(failures)
             PonteDiagnostics.log("mic rebuild \(failures) FAILED: \(error.localizedDescription)")
             if AudioRules.restartFailed(failures: failures) {
                 changed = setStatus(.failed(error.localizedDescription))
@@ -306,7 +306,7 @@ private final class InputCapture {
                                                UInt32(MemoryLayout<AudioStreamBasicDescription>.size)), "client format")
             let ioFrames = (try? HAL.get(deviceID, HAL.address(kAudioDevicePropertyBufferFrameSize, kAudioObjectPropertyScopeInput),
                                          default: UInt32(0))) ?? 0
-            var slice = UInt32(AudioRules.micMaxFrames(ioFrames: max(Int(ioFrames), sliceHint)))
+            var slice = UInt32(AudioRules.micSliceFrames(ioFrames: Int(ioFrames), hintFrames: sliceHint))
             try HAL.check(AudioUnitSetProperty(unit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0,
                                                &slice, flagSize), "maximum frames")
             capacity = AVAudioFrameCount(slice)
@@ -379,7 +379,7 @@ private final class InputCapture {
     /// The I/O thread: one cycle of input.
     fileprivate func renderInput(_ flags: UnsafeMutablePointer<AudioUnitRenderActionFlags>, _ timeStamp: UnsafePointer<AudioTimeStamp>,
                                  _ bus: UInt32, _ frames: UInt32) -> OSStatus {
-        guard frames > 0, frames <= capacity else { return noErr }
+        guard AudioRules.micCycleFits(frames: Int(frames), capacity: Int(capacity)) else { return noErr }
         for i in 0..<list.count {
             list[i] = AudioBuffer(mNumberChannels: 1, mDataByteSize: frames * UInt32(MemoryLayout<Float>.size), mData: nil)
         }

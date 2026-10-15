@@ -195,4 +195,46 @@ private typealias L = AudioRulesLegacy
         }
         log.finish(minimumCases: 300_000)
     }
+
+    @Test func movedOutOfSwift() {
+        let log = DiffLog("relay transitions, output placement, player, mic slice and cycle, tap rebuild")
+        let bools = [false, true]
+        for a in bools { for b in bools {
+            log.check(F.relaySamplesLow(filling: a, hasQueued: b), L.relaySamplesLow(filling: a, hasQueued: b), "\(a) \(b)")
+            for action in -1...6 {
+                log.check(F.relayFillingAfter(action: action, sent: a, filling: b), L.relayFillingAfter(action: action, sent: a, filling: b), "\(action) \(a) \(b)")
+                log.check(F.tapRebuilds(action: action, updated: a), L.tapRebuilds(action: action, updated: a), "\(action) \(a)")
+            }
+            for c in bools { for d in bools { for e in bools {
+                log.check(F.playerRechecks(ignored: a, finished: b, stillPending: c, engineRunning: d, sameEngine: e),
+                          L.playerRechecks(ignored: a, finished: b, stillPending: c, engineRunning: d, sameEngine: e), "\(a) \(b) \(c) \(d) \(e)")
+            } } }
+        } }
+        for n in Array(-3...10) + [Int.min, Int.max] {
+            log.check(F.relayCanTrim(count: n), L.relayCanTrim(count: n), "\(n)")
+            log.check(F.playerCanRebuild(state: n), L.playerCanRebuild(state: n), "\(n)")
+        }
+        let devices: [Int?] = [nil, 0, 1, 72, 90, Int(Int32.max)]
+        for unit in devices { for ours in [0, 72, 90] {
+            log.check(F.unitBindsBeforeStart(unitDevice: unit, ourDevice: ours), L.unitBindsBeforeStart(unitDevice: unit, ourDevice: ours), "\(String(describing: unit)) \(ours)")
+            log.check(F.unitRebindsAfterStart(unitDevice: unit, ourDevice: ours), L.unitRebindsAfterStart(unitDevice: unit, ourDevice: ours), "\(String(describing: unit)) \(ours)")
+            for ms: Int64 in [-1, 0, 999, 1000, 60_000] { for outputs in [0, 1, 3] { for includes in bools {
+                log.check(F.outputMisplaced(unitDevice: unit, ourDevice: ours, msSinceStart: ms, outputs: outputs, outputsIncludeOurs: includes),
+                          L.outputMisplaced(unitDevice: unit, ourDevice: ours, msSinceStart: ms, outputs: outputs, outputsIncludeOurs: includes),
+                          "\(String(describing: unit)) \(ours) \(ms) \(outputs) \(includes)")
+            } } }
+        } }
+        var r = DiffRandom(seed: 0xA0D10)
+        for _ in 0..<40_000 {
+            let end = Int64(r.int(0...10_000_000)), position = Int64(r.int(0...10_000_000)), frames = Int64(r.int(0...48_000))
+            log.check(F.streamEnd(end, position: position, frames: frames), L.streamEnd(end, position: position, frames: frames), "\(end) \(position) \(frames)")
+            let failures = r.bool() ? Int64(r.int(-5...100)) : Int64(bitPattern: r.next())
+            log.check(F.rebuildFailuresNext(failures), L.rebuildFailuresNext(failures), "\(failures)")
+            let io = r.int(-100...20_000), hint = r.int(-100...20_000)
+            log.check(F.micSliceFrames(ioFrames: io, hintFrames: hint), L.micSliceFrames(ioFrames: io, hintFrames: hint), "\(io) \(hint)")
+            let frames2 = r.int(-10...9000), capacity = r.int(-10...9000)
+            log.check(F.micCycleFits(frames: frames2, capacity: capacity), L.micCycleFits(frames: frames2, capacity: capacity), "\(frames2) \(capacity)")
+        }
+        log.finish(minimumCases: 160_000)
+    }
 }

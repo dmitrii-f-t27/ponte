@@ -811,4 +811,37 @@ extension AudioRulesLegacy {
         if let i = kinds.indices.first(where: { allowed($0) && kinds[$0] == kindBuiltInMic }) { return i }
         return kinds.indices.first { allowed($0) && isRealMicKind(kinds[$0]) } ?? -1
     }
+
+    // MARK: Moved out of Swift 2026-10-15 (LiveRelay, DeviceAudioPlayer, MicSource, AppAudioTapSource)
+
+    /// `if !filling, let queued { lowMs = min; lowCount += 1 } else { reset }`.
+    static func relaySamplesLow(filling: Bool, hasQueued: Bool) -> Bool { !filling && hasQueued }
+    /// send: `filling = false` / `true` when refused; trim, refill: `filling = true`.
+    static func relayFillingAfter(action: Int, sent: Bool, filling: Bool) -> Bool {
+        switch action {
+        case 1: return !sent
+        case 3, 4: return true
+        default: return filling
+        }
+    }
+    static func relayCanTrim(count: Int) -> Bool { count > 1 }
+    /// wrongOutputDevice: `read == noErr, current != 0, current != live.id`, then after 1 s
+    /// `!outputs.isEmpty, !outputs.contains(device)`.
+    static func outputMisplaced(unitDevice: Int?, ourDevice: Int, msSinceStart: Int64, outputs: Int, outputsIncludeOurs: Bool) -> Int {
+        if let current = unitDevice, current != 0, current != ourDevice { return 1 }
+        if msSinceStart >= 1000, outputs > 0, !outputsIncludeOurs { return 2 }
+        return 0
+    }
+    static func unitBindsBeforeStart(unitDevice: Int?, ourDevice: Int) -> Bool { unitDevice.map { $0 != ourDevice } ?? true }
+    static func unitRebindsAfterStart(unitDevice: Int?, ourDevice: Int) -> Bool { unitDevice.map { $0 != ourDevice } ?? false }
+    static func streamEnd(_ streamEnd: Int64, position: Int64, frames: Int64) -> Int64 { max(streamEnd, position) + frames }
+    static func playerCanRebuild(state: Int) -> Bool { state == 2 || state == 3 }
+    static func playerRechecks(ignored: Bool, finished: Bool, stillPending: Bool, engineRunning: Bool, sameEngine: Bool) -> Bool {
+        ignored && !finished && stillPending && !engineRunning && sameEngine
+    }
+    static func rebuildFailuresNext(_ failures: Int64) -> Int64 { failures < 0 ? 1 : (failures >= 1 << 62 ? failures : failures + 1) }
+    static func micSliceFrames(ioFrames: Int, hintFrames: Int) -> Int { micMaxFrames(ioFrames: max(ioFrames, hintFrames)) }
+    static func micCycleFits(frames: Int, capacity: Int) -> Bool { frames > 0 && frames <= capacity }
+    /// `case tapUpdate where updateTapProcesses(..): return; default: rebuild`.
+    static func tapRebuilds(action: Int, updated: Bool) -> Bool { action == 3 || (action == 2 && !updated) }
 }

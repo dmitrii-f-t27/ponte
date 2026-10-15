@@ -110,6 +110,11 @@
 #define AU_METER_RANGE_DB 60.0
 #define AU_PRINTABLE_FIRST 32
 #define AU_PRINTABLE_END 127
+#define AU_OUTPUT_WATCH_MS 1000
+#define AU_OUTPUT_CHECK_GRACE_MS 1000
+#define AU_MISPLACED_NONE 0
+#define AU_MISPLACED_UNIT 1
+#define AU_MISPLACED_PROCESS 2
 
 /* -------------------------------------------------------
    Function prototypes
@@ -186,6 +191,19 @@ bool au_is_plain_mono(int64_t format, int64_t channels, bool interleaved);
 int64_t au_converter_input(bool supplied, bool final);
 bool au_fourcc_printable(uint32_t code);
 float au_meter_fraction(float level);
+bool au_relay_samples_low(bool filling, bool has_queued);
+bool au_relay_filling_after(int64_t action, bool sent, bool filling);
+bool au_relay_can_trim(int64_t count);
+int64_t au_output_misplaced(bool unit_read, int64_t unit_device, int64_t our_device, int64_t ms_since_start, bool has_outputs, bool outputs_include_ours);
+bool au_unit_binds_before_start(bool unit_read, int64_t unit_device, int64_t our_device);
+bool au_unit_rebinds_after_start(bool unit_read, int64_t unit_device, int64_t our_device);
+int64_t au_stream_end(int64_t stream_end, int64_t position, int64_t frames);
+bool au_player_can_rebuild(int64_t state);
+bool au_player_rechecks(bool ignored, bool finished, bool still_pending, bool engine_running, bool same_engine);
+int64_t au_rebuild_failures_next(int64_t failures);
+int64_t au_mic_slice_frames(int64_t io_frames, int64_t hint_frames);
+bool au_mic_cycle_fits(int64_t frames, int64_t capacity);
+bool au_tap_rebuilds(int64_t action, bool updated);
 
 /* -------------------------------------------------------
    Function implementations
@@ -841,6 +859,84 @@ float au_meter_fraction(float level) {
     return au_min_f(one, au_max_f(zero, fraction));
 }
 
+bool au_relay_samples_low(bool filling, bool has_queued) {
+    return ((filling == false) && has_queued);
+}
+
+bool au_relay_filling_after(int64_t action, bool sent, bool filling) {
+    if ((action == AU_RLA_SEND)) {
+        return (sent == false);
+    }
+    if (((action == AU_RLA_TRIM) || (action == AU_RLA_REFILL))) {
+        return true;
+    }
+    return filling;
+}
+
+bool au_relay_can_trim(int64_t count) {
+    return (count > 1);
+}
+
+int64_t au_output_misplaced(bool unit_read, int64_t unit_device, int64_t our_device, int64_t ms_since_start, bool has_outputs, bool outputs_include_ours) {
+    if (((unit_read && (unit_device != 0)) && (unit_device != our_device))) {
+        return AU_MISPLACED_UNIT;
+    }
+    if ((((ms_since_start >= AU_OUTPUT_CHECK_GRACE_MS) && has_outputs) && (outputs_include_ours == false))) {
+        return AU_MISPLACED_PROCESS;
+    }
+    return AU_MISPLACED_NONE;
+}
+
+bool au_unit_binds_before_start(bool unit_read, int64_t unit_device, int64_t our_device) {
+    return ((unit_read == false) || (unit_device != our_device));
+}
+
+bool au_unit_rebinds_after_start(bool unit_read, int64_t unit_device, int64_t our_device) {
+    return (unit_read && (unit_device != our_device));
+}
+
+int64_t au_stream_end(int64_t stream_end, int64_t position, int64_t frames) {
+    int64_t base = stream_end;
+    if ((position > base)) {
+        base = position;
+    }
+    return (base + frames);
+}
+
+bool au_player_can_rebuild(int64_t state) {
+    return ((state == AU_PL_REBUILDING) || (state == AU_PL_FAILED));
+}
+
+bool au_player_rechecks(bool ignored, bool finished, bool still_pending, bool engine_running, bool same_engine) {
+    return ((((ignored && (finished == false)) && still_pending) && (engine_running == false)) && same_engine);
+}
+
+int64_t au_rebuild_failures_next(int64_t failures) {
+    if ((failures < 0)) {
+        return 1;
+    }
+    if ((failures >= 4611686018427387904)) {
+        return failures;
+    }
+    return (failures + 1);
+}
+
+int64_t au_mic_slice_frames(int64_t io_frames, int64_t hint_frames) {
+    int64_t n = io_frames;
+    if ((hint_frames > n)) {
+        n = hint_frames;
+    }
+    return au_mic_max_frames(n);
+}
+
+bool au_mic_cycle_fits(int64_t frames, int64_t capacity) {
+    return ((frames > 0) && (frames <= capacity));
+}
+
+bool au_tap_rebuilds(int64_t action, bool updated) {
+    return ((action == AU_TAP_REBUILD) || ((action == AU_TAP_UPDATE) && (updated == false)));
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
@@ -1483,6 +1579,52 @@ void test_au_relay_rules(void) {
     assert((queued == 50.0));
 }
 
+void test_au_moved_out_of_swift(void) {
+    assert((au_relay_samples_low(false, true) == true));
+    assert((au_relay_samples_low(true, true) == false));
+    assert((au_relay_samples_low(false, false) == false));
+    assert((au_relay_filling_after(AU_RLA_SEND, true, true) == false));
+    assert((au_relay_filling_after(AU_RLA_SEND, false, false) == true));
+    assert((au_relay_filling_after(AU_RLA_TRIM, true, false) == true));
+    assert((au_relay_filling_after(AU_RLA_REFILL, true, false) == true));
+    assert((au_relay_filling_after(AU_RLA_KEEP, true, false) == false));
+    assert((au_relay_filling_after(AU_RLA_DROP, true, true) == true));
+    assert((au_relay_can_trim(2) == true));
+    assert((au_relay_can_trim(1) == false));
+    assert((au_output_misplaced(true, 72, 72, 5000, true, true) == AU_MISPLACED_NONE));
+    assert((au_output_misplaced(true, 90, 72, 0, false, false) == AU_MISPLACED_UNIT));
+    assert((au_output_misplaced(true, 0, 72, 0, false, false) == AU_MISPLACED_NONE));
+    assert((au_output_misplaced(false, 90, 72, 0, false, false) == AU_MISPLACED_NONE));
+    assert((au_output_misplaced(true, 72, 72, 999, true, false) == AU_MISPLACED_NONE));
+    assert((au_output_misplaced(true, 72, 72, 1000, true, false) == AU_MISPLACED_PROCESS));
+    assert((au_output_misplaced(true, 72, 72, 5000, false, false) == AU_MISPLACED_NONE));
+    assert((au_unit_binds_before_start(false, 72, 72) == true));
+    assert((au_unit_binds_before_start(true, 72, 72) == false));
+    assert((au_unit_binds_before_start(true, 90, 72) == true));
+    assert((au_unit_rebinds_after_start(true, 90, 72) == true));
+    assert((au_unit_rebinds_after_start(false, 90, 72) == false));
+    assert((au_stream_end(1000, 400, 100) == 1100));
+    assert((au_stream_end(1000, 1500, 100) == 1600));
+    assert((au_player_can_rebuild(AU_PL_REBUILDING) == true));
+    assert((au_player_can_rebuild(AU_PL_FAILED) == true));
+    assert((au_player_can_rebuild((AU_PL_REBUILDING + 100)) == false));
+    assert((au_player_rechecks(true, false, true, false, true) == true));
+    assert((au_player_rechecks(true, false, true, true, true) == false));
+    assert((au_player_rechecks(true, true, true, false, true) == false));
+    assert((au_rebuild_failures_next(0) == 1));
+    assert((au_rebuild_failures_next((0 - 3)) == 1));
+    assert((au_rebuild_failures_next(9223372036854775807) == 9223372036854775807));
+    assert((au_mic_slice_frames(512, 4096) == au_mic_max_frames(4096)));
+    assert((au_mic_slice_frames(512, 0) == au_mic_max_frames(512)));
+    assert((au_mic_cycle_fits(512, 4096) == true));
+    assert((au_mic_cycle_fits(0, 4096) == false));
+    assert((au_mic_cycle_fits(5000, 4096) == false));
+    assert((au_tap_rebuilds(AU_TAP_REBUILD, true) == true));
+    assert((au_tap_rebuilds(AU_TAP_UPDATE, false) == true));
+    assert((au_tap_rebuilds(AU_TAP_UPDATE, true) == false));
+    assert((au_tap_rebuilds(AU_TAP_KEEP, false) == false));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1500,7 +1642,8 @@ int main(void) {
     test_au_player_rules();
     test_au_mic_input_rules();
     test_au_relay_rules();
-    printf("All %d tests passed.\n", 9);
+    test_au_moved_out_of_swift();
+    printf("All %d tests passed.\n", 10);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

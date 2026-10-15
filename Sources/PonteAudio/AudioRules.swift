@@ -868,6 +868,41 @@ public enum AudioRules {
         var inputs = DeviceText.list(inputChannels)
         return Int(dv_pick_auto_mic_index(&t.bytes, &t.offsets, &t.lengths, &k, &inputs, t.count, Int64(outputIndex)))
     }
+
+    // MARK: Moved out of Swift 2026-10-15
+
+    /// Seconds to whole milliseconds, rounded half away from zero: the lane's rule (lane_rules.t27 ln_millis).
+    public static func millis(_ seconds: Double) -> Int64 { ln_millis(seconds) }
+
+    public static func relaySamplesLow(filling: Bool, hasQueued: Bool) -> Bool { au_relay_samples_low(filling, hasQueued) }
+    public static func relayFillingAfter(action: Int, sent: Bool, filling: Bool) -> Bool {
+        au_relay_filling_after(Int64(action), sent, filling)
+    }
+    public static func relayCanTrim(count: Int) -> Bool { au_relay_can_trim(Int64(count)) }
+
+    public static let outputWatchMs = Int(AU_OUTPUT_WATCH_MS)
+    public static let misplacedNone = Int(AU_MISPLACED_NONE)
+    public static let misplacedUnit = Int(AU_MISPLACED_UNIT)
+    public static let misplacedProcess = Int(AU_MISPLACED_PROCESS)
+    /// Where the call output plays: fine, a unit bound elsewhere, or a process playing only into other devices.
+    public static func outputMisplaced(unitDevice: Int?, ourDevice: Int, msSinceStart: Int64, outputs: Int, outputsIncludeOurs: Bool) -> Int {
+        Int(au_output_misplaced(unitDevice != nil, Int64(unitDevice ?? 0), Int64(ourDevice), msSinceStart, outputs > 0, outputsIncludeOurs))
+    }
+    public static func unitBindsBeforeStart(unitDevice: Int?, ourDevice: Int) -> Bool {
+        au_unit_binds_before_start(unitDevice != nil, Int64(unitDevice ?? 0), Int64(ourDevice))
+    }
+    public static func unitRebindsAfterStart(unitDevice: Int?, ourDevice: Int) -> Bool {
+        au_unit_rebinds_after_start(unitDevice != nil, Int64(unitDevice ?? 0), Int64(ourDevice))
+    }
+    public static func streamEnd(_ streamEnd: Int64, position: Int64, frames: Int64) -> Int64 { au_stream_end(streamEnd, position, frames) }
+    public static func playerCanRebuild(state: Int) -> Bool { au_player_can_rebuild(Int64(state)) }
+    public static func playerRechecks(ignored: Bool, finished: Bool, stillPending: Bool, engineRunning: Bool, sameEngine: Bool) -> Bool {
+        au_player_rechecks(ignored, finished, stillPending, engineRunning, sameEngine)
+    }
+    public static func rebuildFailuresNext(_ failures: Int64) -> Int64 { au_rebuild_failures_next(failures) }
+    public static func micSliceFrames(ioFrames: Int, hintFrames: Int) -> Int { Int(au_mic_slice_frames(Int64(ioFrames), Int64(hintFrames))) }
+    public static func micCycleFits(frames: Int, capacity: Int) -> Bool { au_mic_cycle_fits(Int64(frames), Int64(capacity)) }
+    public static func tapRebuilds(action: Int, updated: Bool) -> Bool { au_tap_rebuilds(Int64(action), updated) }
 }
 
 /// Strings packed for `device_rules`: one UTF-8 buffer of `DV_TEXT_MAX` bytes and offset/length tables of

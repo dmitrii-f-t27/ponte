@@ -162,10 +162,8 @@ public final class AppAudioTapSource: AudioSource {
         case let .pids(pids):
             return pids.compactMap { HAL.processObject(for: $0) }.sorted()
         case let .target(.app(bundleID)):
-            // Never tap ourselves, even if Ponte is attributed to the same app (e.g. a terminal).
-            let me = getpid()
-            return AudioProcesses.objects(forApp: bundleID, in: AudioProcesses.snapshot())
-                .filter { $0.pid != me }.map(\.objectID).sorted()
+            // Never ourselves, even if Ponte is attributed to the same app (e.g. a terminal): dv_is_tap_target_process.
+            return AudioProcesses.objects(forApp: bundleID, in: AudioProcesses.snapshot()).map(\.objectID).sorted()
         case .target(.systemExceptSelf):
             return HAL.processObject(for: getpid()).map { [$0] } ?? []
         }
@@ -198,10 +196,9 @@ public final class AppAudioTapSource: AudioSource {
             teardown()
             _status = .waitingForApp
             return
-        case AudioRules.tapUpdate where updateTapProcesses(objects):
-            return
         default:
-            break   // tapRebuild, or tapUpdate that failed
+            let updated = action == AudioRules.tapUpdate && updateTapProcesses(objects)
+            guard AudioRules.tapRebuilds(action: action, updated: updated) else { return }
         }
         teardown()
         do {

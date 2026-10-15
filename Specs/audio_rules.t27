@@ -1270,6 +1270,96 @@ test au_restart_backoff {
     assert au_mic_tap_ready(-48000.0, 1, 48000.0, 1) == false;
 }
 
+; --- Moved out of Swift 2026-10-15 --------------------------------------------------------------------------------
+; The jitter buffer's low-water window (LiveRelay): a buffer counts toward it while the relay flows and the output
+; reports its queue; otherwise the window starts again.
+pub fn au_relay_samples_low(filling: bool, has_queued: bool) -> bool {
+    return filling == false and has_queued;
+}
+
+; Whether the relay fills after an action: a send that reached the output flows; a send the stopped output refused,
+; a trim and a refill fill again; keep and drop leave it as it was.
+pub fn au_relay_filling_after(action: i64, sent: bool, filling: bool) -> bool {
+    if (action == AU_RLA_SEND) { return sent == false; }
+    if (action == AU_RLA_TRIM or action == AU_RLA_REFILL) { return true; }
+    return filling;
+}
+
+; A trim drops the oldest buffers but always keeps one.
+pub fn au_relay_can_trim(count: i64) -> bool {
+    return count > 1;
+}
+
+; The call output's watchdog looks this often whether the engine still plays into its device; the process-wide
+; look waits this long after a start (the system attributes the new output only after a moment).
+pub const AU_OUTPUT_WATCH_MS : i64 = 1000;
+pub const AU_OUTPUT_CHECK_GRACE_MS : i64 = 1000;
+; Where the call output plays (MISPLACED_*): fine; the output unit is bound to another device than ours; this
+; process plays only into other devices (after the grace).
+pub const AU_MISPLACED_NONE : i64 = 0;
+pub const AU_MISPLACED_UNIT : i64 = 1;
+pub const AU_MISPLACED_PROCESS : i64 = 2;
+pub fn au_output_misplaced(unit_read: bool, unit_device: i64, our_device: i64, ms_since_start: i64, has_outputs: bool, outputs_include_ours: bool) -> i64 {
+    if (unit_read and unit_device != 0 and unit_device != our_device) { return AU_MISPLACED_UNIT; }
+    if (ms_since_start >= AU_OUTPUT_CHECK_GRACE_MS and has_outputs and outputs_include_ours == false) {
+        return AU_MISPLACED_PROCESS;
+    }
+    return AU_MISPLACED_NONE;
+}
+
+; Before a start the output unit is bound to our device unless it already is; after the start it is bound once
+; more when it reads another device.
+pub fn au_unit_binds_before_start(unit_read: bool, unit_device: i64, our_device: i64) -> bool {
+    return unit_read == false or unit_device != our_device;
+}
+pub fn au_unit_rebinds_after_start(unit_read: bool, unit_device: i64, our_device: i64) -> bool {
+    return unit_read and unit_device != our_device;
+}
+
+; The end of the scheduled stream in frames after scheduling `frames` more at the play position: an output that ran
+; dry starts again at the position.
+pub fn au_stream_end(stream_end: i64, position: i64, frames: i64) -> i64 {
+    var base: i64 = stream_end;
+    if (position > base) { base = position; }
+    return base + frames;
+}
+
+; Only a rebuilding or failed player may be rebuilt (a rebuild scheduled before a start is dropped).
+pub fn au_player_can_rebuild(state: i64) -> bool {
+    return state == AU_PL_REBUILDING or state == AU_PL_FAILED;
+}
+
+; A completion was ignored because the engine stopped (and the phrase is still pending): look again after the first
+; restart delay, in case no stop notification follows.
+pub fn au_player_rechecks(ignored: bool, finished: bool, still_pending: bool, engine_running: bool, same_engine: bool) -> bool {
+    return ignored and finished == false and still_pending and engine_running == false and same_engine;
+}
+
+; A failed rebuild of the microphone counts one more failure (it stops growing at 2^62).
+pub fn au_rebuild_failures_next(failures: i64) -> i64 {
+    if (failures < 0) { return 1; }
+    if (failures >= 4611686018427387904) { return failures; }
+    return failures + 1;
+}
+
+; The microphone unit's slice: the device's I/O size or the cycle the system asked for, whichever is larger,
+; through au_mic_max_frames.
+pub fn au_mic_slice_frames(io_frames: i64, hint_frames: i64) -> i64 {
+    var n: i64 = io_frames;
+    if (hint_frames > n) { n = hint_frames; }
+    return au_mic_max_frames(n);
+}
+
+; A cycle of input is rendered only when it has frames and fits the buffers (a larger one is skipped, not cut).
+pub fn au_mic_cycle_fits(frames: i64, capacity: i64) -> bool {
+    return frames > 0 and frames <= capacity;
+}
+
+; The process tap: a rebuild, or an in-place update that failed, rebuilds the tap.
+pub fn au_tap_rebuilds(action: i64, updated: bool) -> bool {
+    return action == AU_TAP_REBUILD or (action == AU_TAP_UPDATE and updated == false);
+}
+
 test au_player_rules {
     // Live 2026-10-13: the call output keeps running, rebuilds after a real stop and replays a cut phrase.
     assert au_player_step_state(au_player_step(AU_PL_IDLE, AU_PLE_STARTED, true, 0)) == AU_PL_RUNNING;
@@ -1477,4 +1567,50 @@ test au_relay_rules {
     }
     assert drops == 2;
     assert queued == 50.0;
+}
+
+test au_moved_out_of_swift {
+    assert au_relay_samples_low(false, true) == true;
+    assert au_relay_samples_low(true, true) == false;
+    assert au_relay_samples_low(false, false) == false;
+    assert au_relay_filling_after(AU_RLA_SEND, true, true) == false;
+    assert au_relay_filling_after(AU_RLA_SEND, false, false) == true;
+    assert au_relay_filling_after(AU_RLA_TRIM, true, false) == true;
+    assert au_relay_filling_after(AU_RLA_REFILL, true, false) == true;
+    assert au_relay_filling_after(AU_RLA_KEEP, true, false) == false;
+    assert au_relay_filling_after(AU_RLA_DROP, true, true) == true;
+    assert au_relay_can_trim(2) == true;
+    assert au_relay_can_trim(1) == false;
+    assert au_output_misplaced(true, 72, 72, 5000, true, true) == AU_MISPLACED_NONE;
+    assert au_output_misplaced(true, 90, 72, 0, false, false) == AU_MISPLACED_UNIT;
+    assert au_output_misplaced(true, 0, 72, 0, false, false) == AU_MISPLACED_NONE;
+    assert au_output_misplaced(false, 90, 72, 0, false, false) == AU_MISPLACED_NONE;
+    assert au_output_misplaced(true, 72, 72, 999, true, false) == AU_MISPLACED_NONE;
+    assert au_output_misplaced(true, 72, 72, 1000, true, false) == AU_MISPLACED_PROCESS;
+    assert au_output_misplaced(true, 72, 72, 5000, false, false) == AU_MISPLACED_NONE;
+    assert au_unit_binds_before_start(false, 72, 72) == true;
+    assert au_unit_binds_before_start(true, 72, 72) == false;
+    assert au_unit_binds_before_start(true, 90, 72) == true;
+    assert au_unit_rebinds_after_start(true, 90, 72) == true;
+    assert au_unit_rebinds_after_start(false, 90, 72) == false;
+    assert au_stream_end(1000, 400, 100) == 1100;
+    assert au_stream_end(1000, 1500, 100) == 1600;
+    assert au_player_can_rebuild(AU_PL_REBUILDING) == true;
+    assert au_player_can_rebuild(AU_PL_FAILED) == true;
+    assert au_player_can_rebuild(AU_PL_REBUILDING + 100) == false;
+    assert au_player_rechecks(true, false, true, false, true) == true;
+    assert au_player_rechecks(true, false, true, true, true) == false;
+    assert au_player_rechecks(true, true, true, false, true) == false;
+    assert au_rebuild_failures_next(0) == 1;
+    assert au_rebuild_failures_next(0 - 3) == 1;
+    assert au_rebuild_failures_next(9223372036854775807) == 9223372036854775807;
+    assert au_mic_slice_frames(512, 4096) == au_mic_max_frames(4096);
+    assert au_mic_slice_frames(512, 0) == au_mic_max_frames(512);
+    assert au_mic_cycle_fits(512, 4096) == true;
+    assert au_mic_cycle_fits(0, 4096) == false;
+    assert au_mic_cycle_fits(5000, 4096) == false;
+    assert au_tap_rebuilds(AU_TAP_REBUILD, true) == true;
+    assert au_tap_rebuilds(AU_TAP_UPDATE, false) == true;
+    assert au_tap_rebuilds(AU_TAP_UPDATE, true) == false;
+    assert au_tap_rebuilds(AU_TAP_KEEP, false) == false;
 }

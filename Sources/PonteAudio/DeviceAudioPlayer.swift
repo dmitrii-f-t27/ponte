@@ -79,7 +79,8 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
         // Live 2026-10-13 (0.1.4): the call output logged "phrase played" while the app's sound went to the
         // MacBook speakers, not BlackHole, so the call heard nothing. Look every second and rebuild if so.
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
+        let watch = DispatchTimeInterval.milliseconds(AudioRules.outputWatchMs)
+        timer.schedule(deadline: .now() + watch, repeating: watch)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             self.lock.lock()
@@ -179,7 +180,7 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
                 for b in ready { player.scheduleBuffer(b, completionHandler: nil) }
             }
             if failure == nil {
-                streamEnd = max(streamEnd, position) + frames
+                streamEnd = AudioRules.streamEnd(streamEnd, position: position, frames: frames)
                 queued = Double(streamEnd - position) / target.sampleRate * 1000
             }
         }
@@ -316,17 +317,20 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
             }
             if let c = finish(id) { resume.append(c) }
         }
-        if result.code == AudioRules.playerCompletionIgnore, result.done == nil, book.phrases.contains(where: { $0.id == id }) {
+        let pending = book.phrases.contains(where: { $0.id == id })
+        if result.code == AudioRules.playerCompletionIgnore, result.done == nil, pending {
             PonteDiagnostics.log("player \(name): phrase \(id) completion ignored (\(running ? "old engine" : "engine stopped"))")
-            // The system stopped the engine (its notification follows); should none come, look again.
-            if !running, let engine, engine === self.engine {
-                queue.asyncAfter(deadline: .now() + .milliseconds(Int(AudioRules.restartDelayMs(attempt: 0)))) { [weak self] in
-                    guard let self else { return }
-                    self.lock.lock()
-                    let resume = self.checkEngineAlive()
-                    self.lock.unlock()
-                    resume.forEach { $0.resume() }
-                }
+        }
+        // The system stopped the engine (its notification follows); should none come, look again.
+        if AudioRules.playerRechecks(ignored: result.code == AudioRules.playerCompletionIgnore, finished: result.done != nil,
+                                     stillPending: pending, engineRunning: running,
+                                     sameEngine: engine != nil && engine === self.engine) {
+            queue.asyncAfter(deadline: .now() + .milliseconds(Int(AudioRules.restartDelayMs(attempt: 0)))) { [weak self] in
+                guard let self else { return }
+                self.lock.lock()
+                let resume = self.checkEngineAlive()
+                self.lock.unlock()
+                resume.forEach { $0.resume() }
             }
         }
         if let replay = result.replay {
@@ -377,16 +381,16 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
                 read = AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size)
             }
         }
-        if read == noErr, current != 0, current != live.id {
-            return HAL.device(current)?.name ?? "device \(current)"
+        let unit = read == noErr ? Int(current) : nil
+        let since = startedAt.map { AudioRules.millis(Date().timeIntervalSince($0)) } ?? -1
+        // The process-wide look is only asked once the grace after the start has passed.
+        let outputs = since >= 0 ? RunningAudioAppCatalog.outputDevices(ofPID: getpid()) : []
+        switch AudioRules.outputMisplaced(unitDevice: unit, ourDevice: Int(live.id), msSinceStart: since,
+                                          outputs: outputs.count, outputsIncludeOurs: outputs.contains { $0.uid == device.uid }) {
+        case AudioRules.misplacedUnit: return HAL.device(current)?.name ?? "device \(current)"
+        case AudioRules.misplacedProcess: return outputs.map(\.name).joined(separator: ", ")
+        default: return nil
         }
-        if let startedAt, Date().timeIntervalSince(startedAt) >= 1 {
-            let outputs = RunningAudioAppCatalog.outputDevices(ofPID: getpid())
-            if !outputs.isEmpty, !outputs.contains(where: { $0.uid == device.uid }) {
-                return outputs.map(\.name).joined(separator: ", ")
-            }
-        }
-        return nil
     }
 
     /// Lock held. Starts the engine now (first start).
@@ -425,7 +429,7 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
     private func rebuild() {
         lock.lock()
         rebuildWork = nil
-        guard book.state == AudioRules.playerRebuilding || book.state == AudioRules.playerFailed else {
+        guard AudioRules.playerCanRebuild(state: book.state) else {
             lock.unlock()
             return
         }
@@ -505,7 +509,7 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
                     var current = AudioDeviceID(0)
                     var size = UInt32(MemoryLayout<AudioDeviceID>.size)
                     let read = AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size)
-                    if read != noErr || current != live.id {
+                    if AudioRules.unitBindsBeforeStart(unitDevice: read == noErr ? Int(current) : nil, ourDevice: Int(live.id)) {
                         var id = live.id
                         try HAL.check(AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
                                                            &id, UInt32(MemoryLayout<AudioDeviceID>.size)),
@@ -521,8 +525,8 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
                    let au = engine.outputNode.audioUnit {
                     var current = AudioDeviceID(0)
                     var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-                    if AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size) == noErr,
-                       current != live.id {
+                    let read = AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &current, &size)
+                    if AudioRules.unitRebindsAfterStart(unitDevice: read == noErr ? Int(current) : nil, ourDevice: Int(live.id)) {
                         PonteDiagnostics.log("player \(self.name): started on device \(current), binding to \(device.name) again")
                         engine.stop()
                         var id = live.id

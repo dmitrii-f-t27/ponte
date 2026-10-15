@@ -72,7 +72,7 @@ public final class LiveRelay: @unchecked Sendable {
         pending.append((buffer, ms))
         pendingMs += ms
         let queued = player.streamQueuedMs()
-        if !filling, let queued {
+        if AudioRules.relaySamplesLow(filling: filling, hasQueued: queued != nil), let queued {
             lowMs = min(lowMs, queued)
             lowCount += 1
         } else {
@@ -84,33 +84,33 @@ public final class LiveRelay: @unchecked Sendable {
             lowMs = .infinity
             lowCount = 0
         }
+        var sent = false
         switch action {
         case AudioRules.relaySend:
+            // A stopped output refuses the buffers: they are kept for when it runs again.
             if let queued = player.stream(pending.map(\.buffer)) {
                 _stats.sent += pending.count
                 _stats.maxQueuedMs = max(_stats.maxQueuedMs, queued)
                 pending.removeAll()
                 pendingMs = 0
-                filling = false
-            } else {
-                filling = true   // the output stopped in between: keep the audio for when it runs again
+                sent = true
             }
         case AudioRules.relayDrop:
+            // The newest buffer, which would leave the output too far behind.
             pending.removeLast()
             pendingMs -= ms
             _stats.dropped += 1
         case AudioRules.relayTrim:
-            while pending.count > 1, rules.trims(pendingMs, pending[0].ms) {
+            while AudioRules.relayCanTrim(count: pending.count), rules.trims(pendingMs, pending[0].ms) {
                 pendingMs -= pending.removeFirst().ms
                 _stats.trimmed += 1
             }
-            filling = true
         case AudioRules.relayRefill:
             _stats.refills += 1
-            filling = true
         default:
             break   // relayKeep: the jitter buffer fills
         }
+        filling = AudioRules.relayFillingAfter(action: action, sent: sent, filling: filling)
     }
 
     /// Stops forwarding at once and empties the jitter buffer (the caller flushes the player). Returns the stats.
