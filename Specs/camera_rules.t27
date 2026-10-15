@@ -69,6 +69,8 @@ pub const CM_LINK_PING_MS : i64 = 20000;
 pub const CM_LINK_MESSAGE_MAX : i64 = 4096;
 ; Connections at once: the extension opens one; a second extension window opens another.
 pub const CM_LINK_CLIENTS_MAX : i64 = 4;
+; A report of more processed cameras than this is read as this many.
+pub const CM_LINK_CAMERAS_MAX : i64 = 16;
 ; The panel's status (LINK_*).
 pub const CM_LINK_OFF : i64 = 0;
 ; The port is taken (another Ponte?) or the listener failed.
@@ -160,6 +162,22 @@ pub fn cm_preset_value(preset: i64, kind: i64) -> i64 {
         return 0;
     }
     return 0;
+}
+
+; The preset whose light and colour values these are (the panel marks it), or -1 when they were changed by hand.
+pub fn cm_matching_preset(brightness: i64, contrast: i64, shadows: i64, warmth: i64, saturation: i64) -> i64 {
+    var p: i64 = 0;
+    while (p < CM_PRESET_COUNT) {
+        if (cm_clamp_setting(CM_SET_BRIGHTNESS, brightness) == cm_preset_value(p, CM_SET_BRIGHTNESS)
+            and cm_clamp_setting(CM_SET_CONTRAST, contrast) == cm_preset_value(p, CM_SET_CONTRAST)
+            and cm_clamp_setting(CM_SET_SHADOWS, shadows) == cm_preset_value(p, CM_SET_SHADOWS)
+            and cm_clamp_setting(CM_SET_WARMTH, warmth) == cm_preset_value(p, CM_SET_WARMTH)
+            and cm_clamp_setting(CM_SET_SATURATION, saturation) == cm_preset_value(p, CM_SET_SATURATION)) {
+            return p;
+        }
+        p = p + 1;
+    }
+    return 0 - 1;
 }
 
 ; --- Colour ---------------------------------------------------------------------------------------------------------
@@ -337,6 +355,13 @@ pub fn cm_link_accepts(open_clients: i64) -> bool {
     return open_clients >= 0 and open_clients < CM_LINK_CLIENTS_MAX;
 }
 
+; The processed cameras an extension reports, held to 0...CM_LINK_CAMERAS_MAX.
+pub fn cm_link_cameras(reported: i64) -> i64 {
+    if (reported < 0) { return 0; }
+    if (reported > CM_LINK_CAMERAS_MAX) { return CM_LINK_CAMERAS_MAX; }
+    return reported;
+}
+
 ; The panel's status: the listener, the connected extensions, and the Meet pages they report with a camera
 ; through the extension.
 pub fn cm_link_status(listening: bool, failed: bool, clients: i64, active_cameras: i64) -> i64 {
@@ -392,6 +417,12 @@ test cm_setting_rules {
     assert cm_preset_value(CM_PRESET_DARK_ROOM, CM_SET_SHADOWS) == 50;
     assert cm_preset_value(CM_PRESET_NORMAL, CM_SET_BRIGHTNESS) == 0;
     assert cm_preset_value(99, CM_SET_BRIGHTNESS) == 0;
+    assert cm_matching_preset(0, 0, 0, 0, 0) == CM_PRESET_NORMAL;
+    assert cm_matching_preset(5, 0, 15, 30, 0) == CM_PRESET_WARM;
+    assert cm_matching_preset(20, 0 - 10, 50, 0, 10) == CM_PRESET_DARK_ROOM;
+    assert cm_matching_preset(0, 20, 10, 0, 25) == CM_PRESET_VIVID;
+    assert cm_matching_preset(1, 0, 0, 0, 0) == 0 - 1;
+    assert cm_matching_preset(0, 0, 0 - 7, 0, 0) == CM_PRESET_NORMAL;
 }
 
 test cm_color_rules {
@@ -551,6 +582,9 @@ test cm_link_rules {
     assert cm_origin_allowed(t, n) == false;
     assert cm_row(CM_ROW_COUNT, t) == 0;
     assert cm_row(0 - 1, t) == 0;
+    assert cm_link_cameras(0 - 3) == 0;
+    assert cm_link_cameras(2) == 2;
+    assert cm_link_cameras(17) == 16;
     assert cm_link_accepts(0) == true;
     assert cm_link_accepts(3) == true;
     assert cm_link_accepts(4) == false;

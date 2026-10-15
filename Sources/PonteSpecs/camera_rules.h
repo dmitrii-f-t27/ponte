@@ -48,6 +48,7 @@
 #define CM_LINK_PING_MS 20000
 #define CM_LINK_MESSAGE_MAX 4096
 #define CM_LINK_CLIENTS_MAX 4
+#define CM_LINK_CAMERAS_MAX 16
 #define CM_LINK_OFF 0
 #define CM_LINK_FAILED 1
 #define CM_LINK_NO_EXTENSION 2
@@ -73,6 +74,7 @@ int64_t cm_setting_default(int64_t kind);
 int64_t cm_clamp_setting(int64_t kind, int64_t value);
 bool cm_preset_sets(int64_t kind);
 int64_t cm_preset_value(int64_t preset, int64_t kind);
+int64_t cm_matching_preset(int64_t brightness, int64_t contrast, int64_t shadows, int64_t warmth, int64_t saturation);
 bool cm_color_identity(int64_t brightness, int64_t contrast, int64_t shadows, int64_t warmth, int64_t saturation);
 float cm_unit(int64_t kind, int64_t value);
 int64_t cm_color_params(int64_t brightness, int64_t contrast, int64_t shadows, int64_t warmth, int64_t saturation, float out[static 16]);
@@ -86,6 +88,7 @@ bool cm_needs_processing(bool on, bool color_identity, bool frame_identity);
 int64_t cm_row(int64_t row, uint8_t out[static 256]);
 bool cm_origin_allowed(uint8_t text[static 256], int64_t len);
 bool cm_link_accepts(int64_t open_clients);
+int64_t cm_link_cameras(int64_t reported);
 int64_t cm_link_status(bool listening, bool failed, int64_t clients, int64_t active_cameras);
 
 /* -------------------------------------------------------
@@ -185,6 +188,17 @@ int64_t cm_preset_value(int64_t preset, int64_t kind) {
         return 0;
     }
     return 0;
+}
+
+int64_t cm_matching_preset(int64_t brightness, int64_t contrast, int64_t shadows, int64_t warmth, int64_t saturation) {
+    int64_t p = 0;
+    while ((p < CM_PRESET_COUNT)) {
+        if ((((((cm_clamp_setting(CM_SET_BRIGHTNESS, brightness) == cm_preset_value(p, CM_SET_BRIGHTNESS)) && (cm_clamp_setting(CM_SET_CONTRAST, contrast) == cm_preset_value(p, CM_SET_CONTRAST))) && (cm_clamp_setting(CM_SET_SHADOWS, shadows) == cm_preset_value(p, CM_SET_SHADOWS))) && (cm_clamp_setting(CM_SET_WARMTH, warmth) == cm_preset_value(p, CM_SET_WARMTH))) && (cm_clamp_setting(CM_SET_SATURATION, saturation) == cm_preset_value(p, CM_SET_SATURATION)))) {
+            return p;
+        }
+        p = (p + 1);
+    }
+    return (0 - 1);
 }
 
 bool cm_color_identity(int64_t brightness, int64_t contrast, int64_t shadows, int64_t warmth, int64_t saturation) {
@@ -344,6 +358,16 @@ bool cm_link_accepts(int64_t open_clients) {
     return ((open_clients >= 0) && (open_clients < CM_LINK_CLIENTS_MAX));
 }
 
+int64_t cm_link_cameras(int64_t reported) {
+    if ((reported < 0)) {
+        return 0;
+    }
+    if ((reported > CM_LINK_CAMERAS_MAX)) {
+        return CM_LINK_CAMERAS_MAX;
+    }
+    return reported;
+}
+
 int64_t cm_link_status(bool listening, bool failed, int64_t clients, int64_t active_cameras) {
     if (failed) {
         return CM_LINK_FAILED;
@@ -408,6 +432,12 @@ void test_cm_setting_rules(void) {
     assert((cm_preset_value(CM_PRESET_DARK_ROOM, CM_SET_SHADOWS) == 50));
     assert((cm_preset_value(CM_PRESET_NORMAL, CM_SET_BRIGHTNESS) == 0));
     assert((cm_preset_value(99, CM_SET_BRIGHTNESS) == 0));
+    assert((cm_matching_preset(0, 0, 0, 0, 0) == CM_PRESET_NORMAL));
+    assert((cm_matching_preset(5, 0, 15, 30, 0) == CM_PRESET_WARM));
+    assert((cm_matching_preset(20, (0 - 10), 50, 0, 10) == CM_PRESET_DARK_ROOM));
+    assert((cm_matching_preset(0, 20, 10, 0, 25) == CM_PRESET_VIVID));
+    assert((cm_matching_preset(1, 0, 0, 0, 0) == (0 - 1)));
+    assert((cm_matching_preset(0, 0, (0 - 7), 0, 0) == CM_PRESET_NORMAL));
 }
 
 void test_cm_color_rules(void) {
@@ -551,6 +581,9 @@ void test_cm_link_rules(void) {
     assert((cm_origin_allowed(t, n) == false));
     assert((cm_row(CM_ROW_COUNT, t) == 0));
     assert((cm_row((0 - 1), t) == 0));
+    assert((cm_link_cameras((0 - 3)) == 0));
+    assert((cm_link_cameras(2) == 2));
+    assert((cm_link_cameras(17) == 16));
     assert((cm_link_accepts(0) == true));
     assert((cm_link_accepts(3) == true));
     assert((cm_link_accepts(4) == false));

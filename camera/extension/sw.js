@@ -7,6 +7,7 @@ const PORT = 47839;          // CM_LINK_PORT
 const VERSION = 1;           // CM_LINK_VERSION
 const SETTINGS = 9;          // CM_SET_COUNT
 const STORE = 'ponteCamera';
+const CAMERAS_MAX = 16;      // CM_LINK_CAMERAS_MAX
 
 let cm = null;
 async function rules() {
@@ -88,7 +89,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== 'status' || !sender.tab?.id) return;
-  const n = Math.max(0, Math.min(16, message.cameras | 0));
+  const n = Math.max(0, Math.min(CAMERAS_MAX, message.cameras | 0));
   if (n === 0) cameras.delete(sender.tab.id); else cameras.set(sender.tab.id, n);
   connect();
   sendStatus(false);

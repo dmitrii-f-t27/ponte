@@ -3,6 +3,7 @@
 // five colour settings, seeded random settings and pixels (out of range, NaN, infinities), every zoom and pan.
 import Foundation
 import PonteSpecs
+import PonteCamera
 import Testing
 @testable import PonteApp
 
@@ -47,7 +48,17 @@ private typealias L = CameraRulesLegacy
             let s = [b, c, sh, w, sat]
             log.check(F.colorParams(s), L.colorParams(s), "\(s)")
             log.check(F.colorIdentity(s), L.colorIdentity(s), "identity \(s)")
+            log.check(F.matchingPreset(s), L.matchingPreset(s), "preset \(s)")
         } } } } }
+        for preset in 0..<L.presetCount {
+            let s = L.presets[preset]
+            log.check(F.matchingPreset(s), L.matchingPreset(s), "preset values \(preset)")
+            for kind in 0..<5 { for delta in [-1, 1] {
+                var t = s
+                t[kind] += delta
+                log.check(F.matchingPreset(t), L.matchingPreset(t), "near preset \(preset) \(kind) \(delta)")
+            } }
+        }
         var r = DiffRandom(seed: 0xCA3E_7A)
         for _ in 0..<60_000 {
             let s = (0..<5).map { _ in r.int(-120...120) }
@@ -122,6 +133,7 @@ private typealias L = CameraRulesLegacy
             log.check(F.originAllowed(utf8: bytes), L.originAllowed(utf8: bytes), "\(bytes)")
         }
         for n in -3...10 { log.check(F.linkAccepts(openClients: n), L.linkAccepts(openClients: n), "\(n)") }
+        for n in Array(-20...40) + [Int.min, Int.max] { log.check(F.linkCameras(n), L.linkCameras(n), "cameras \(n)") }
         for listening in [false, true] { for failed in [false, true] {
             for clients in -1...3 { for active in -1...3 {
                 log.check(F.linkStatus(listening: listening, failed: failed, clients: clients, activeCameras: active),

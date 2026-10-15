@@ -44,6 +44,7 @@
 #define CM_LINK_PING_MS 20000
 #define CM_LINK_MESSAGE_MAX 4096
 #define CM_LINK_CLIENTS_MAX 4
+#define CM_LINK_CAMERAS_MAX 16
 #define CM_LINK_OFF 0
 #define CM_LINK_FAILED 1
 #define CM_LINK_NO_EXTENSION 2
@@ -67,6 +68,7 @@ int64_t cm_setting_default(int64_t kind);
 int64_t cm_clamp_setting(int64_t kind, int64_t value);
 bool cm_preset_sets(int64_t kind);
 int64_t cm_preset_value(int64_t preset, int64_t kind);
+int64_t cm_matching_preset(int64_t brightness, int64_t contrast, int64_t shadows, int64_t warmth, int64_t saturation);
 bool cm_color_identity(int64_t brightness, int64_t contrast, int64_t shadows, int64_t warmth, int64_t saturation);
 float cm_unit(int64_t kind, int64_t value);
 int64_t cm_color_params(int64_t brightness, int64_t contrast, int64_t shadows, int64_t warmth, int64_t saturation, float out[static 16]);
@@ -80,6 +82,7 @@ bool cm_needs_processing(bool on, bool color_identity, bool frame_identity);
 int64_t cm_row(int64_t row, uint8_t out[static 256]);
 bool cm_origin_allowed(uint8_t text[static 256], int64_t len);
 bool cm_link_accepts(int64_t open_clients);
+int64_t cm_link_cameras(int64_t reported);
 int64_t cm_link_status(bool listening, bool failed, int64_t clients, int64_t active_cameras);
 /* Function bodies: see the full header. */
 #endif

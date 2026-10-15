@@ -1,5 +1,6 @@
 // End-to-end test of the Ponte Camera extension in a headless Chrome of its own (never the owner's browser):
-//   node camera/test/e2e.mjs
+//   node camera/test/e2e.mjs                 (a stand-in for Ponte's link, written in Node)
+//   PONTE_LINK=1 node camera/test/e2e.mjs    (Ponte's own CameraLink, run by .build/debug/CameraProbe)
 // - a fake camera plays four solid colour blocks (a Y4M file made with ffmpeg);
 // - a test copy of camera/extension (same key, so the same ID; its pages are http://127.0.0.1 instead of Meet, and
 //   its link port is a free one) is loaded over the DevTools pipe;
@@ -24,7 +25,11 @@ const TOLERANCE = 6; // levels of 255
 const work = mkdtempSync(join(tmpdir(), 'ponte-camera-e2e-'));
 const fail = (message) => { console.error(`FAIL ${message}`); cleanup(); process.exit(1); };
 let chrome = null;
-const cleanup = () => { try { chrome?.kill('SIGKILL'); } catch {} try { rmSync(work, { recursive: true, force: true }); } catch {} };
+const cleanup = () => {
+  try { chrome?.kill('SIGKILL'); } catch {}
+  try { probe?.stdin.end(); probe?.kill(); } catch {}
+  try { rmSync(work, { recursive: true, force: true }); } catch {}
+};
 
 // --- The fake camera: TL, TR, BL, BR blocks, 640x480 ---------------------------------------------------------------
 const BLOCKS = { tl: [200, 60, 40], tr: [40, 160, 90], bl: [90, 90, 200], br: [128, 128, 128] };
@@ -38,22 +43,48 @@ execFileSync('ffmpeg', ['-v', 'error', '-y',
   '-filter_complex', '[0][1]hstack[top];[2][3]hstack[bottom];[top][bottom]vstack,format=yuv420p',
   '-pix_fmt', 'yuv420p', video]);
 
-// --- The stand-in for Ponte's camera link --------------------------------------------------------------------------
-const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-await new Promise((r) => wss.once('listening', r));
-const linkPort = wss.address().port;
-let link = null;
+// --- Ponte's camera link: the real one (CameraProbe) or a stand-in -------------------------------------------------
+const PONTE = process.env.PONTE_LINK === '1';
+let linkPort, link = null, origin = null, wss = null, probe = null;
 const statuses = [];
-let origin = null;
-wss.on('connection', (socket, request) => {
-  origin = request.headers.origin;
-  link = socket;
-  socket.on('message', (data) => {
-    const m = JSON.parse(String(data));
-    if (m.type === 'status') statuses.push(m.cameras);
+let sendSettings;
+if (PONTE) {
+  const free = createServer();
+  await new Promise((r) => free.listen(0, '127.0.0.1', r));
+  linkPort = free.address().port;
+  await new Promise((r) => free.close(r));
+  probe = spawn(join(root, '.build', 'debug', 'CameraProbe'), ['--port', String(linkPort)], { stdio: ['pipe', 'pipe', 'inherit'] });
+  let out = '';
+  probe.stdout.on('data', (d) => {
+    out += d;
+    let i;
+    while ((i = out.indexOf('\n')) >= 0) {
+      const [word, listening, failed, clients, cameras] = out.slice(0, i).split(' ');
+      out = out.slice(i + 1);
+      if (word !== 'status') continue;
+      if (failed === '1') { console.error('FAIL the link failed to listen'); process.exit(1); }
+      // A connected extension passed the link's own origin check (camera_rules.t27, cm_origin_allowed).
+      if (clients !== '0') { link = true; origin = 'chrome-extension://jinldckdcbeojhpahpkagmacfdapfnln (checked by Ponte)'; }
+      if (link) statuses.push(Number(cameras));
+    }
   });
-});
-const sendSettings = (s, on = true) => link.send(JSON.stringify({ type: 'settings', v: 1, on, s }));
+  sendSettings = (s, on = true) => probe.stdin.write(`publish ${JSON.stringify({ type: 'settings', v: 1, on, s })}\n`);
+  sendSettings([0, 0, 0, 0, 0, 100, 0, 0, 0]);
+} else {
+  wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await new Promise((r) => wss.once('listening', r));
+  linkPort = wss.address().port;
+  wss.on('connection', (socket, request) => {
+    origin = request.headers.origin;
+    link = socket;
+    socket.on('message', (data) => {
+      const m = JSON.parse(String(data));
+      if (m.type === 'status') statuses.push(m.cameras);
+    });
+  });
+  sendSettings = (s, on = true) => link.send(JSON.stringify({ type: 'settings', v: 1, on, s }));
+}
+console.log(`ok   link: ${PONTE ? `Ponte's CameraLink on ${linkPort}` : `a stand-in on ${linkPort}`}`);
 
 // --- The test page -------------------------------------------------------------------------------------------------
 const PAGE = `<!doctype html><meta charset="utf-8"><title>camera test</title><script>
@@ -129,7 +160,7 @@ try {
   if (id !== EXTENSION_ID) fail(`extension ID ${id}, expected ${EXTENSION_ID}`);
   console.log(`ok   extension loaded with ID ${id}`);
   await until('the extension connects to the link', () => link !== null);
-  if (origin !== `chrome-extension://${EXTENSION_ID}`) fail(`origin ${origin}`);
+  if (!PONTE && origin !== `chrome-extension://${EXTENSION_ID}`) fail(`origin ${origin}`);
   console.log(`ok   handshake origin ${origin}`);
 
   const { targetId } = await cdp('Target.createTarget', { url: pageURL });
@@ -201,7 +232,7 @@ try {
   fail(error.stack ?? String(error));
 } finally {
   cleanup();
-  wss.close();
+  wss?.close();
   http.close();
 }
 process.exit(0);

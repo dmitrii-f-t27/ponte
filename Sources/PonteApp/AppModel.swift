@@ -4,6 +4,7 @@ import Foundation
 import Observation
 import os
 import PonteAudio
+import PonteCamera
 import PonteCore
 import PontePeer
 import PonteSpeech
@@ -208,6 +209,8 @@ final class AppModel {
     @ObservationIgnored private var listenerWarning = ListenerWarning()
     /// The call analysis (CallAnalysisModel.swift): notes during a call, the report after it.
     let analysis = CallAnalysisModel()
+    /// «Камера в Meet»: started by the app when the window appears (never in tests).
+    let camera = CameraModel()
 
     // MARK: Catalog snapshots
 

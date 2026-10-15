@@ -10,7 +10,10 @@ struct PonteMain: App {
         Window("Ponte", id: "main") {
             MainView()
                 .environment(model)
-                .onAppear { delegate.model = model }
+                .onAppear {
+                    delegate.model = model
+                    model.camera.start()
+                }
         }
         .defaultSize(width: 1080, height: 700)
         .commands {

@@ -27,6 +27,10 @@ enum CameraRulesLegacy {
     static let presets: [[Int]] = [[0, 0, 0, 0, 0], [5, 0, 15, 30, 0], [20, -10, 50, 0, 10], [0, 20, 10, 0, 25]]
 
     static func presetSets(_ kind: Int) -> Bool { (0...4).contains(kind) }
+    static func matchingPreset(_ s: [Int]) -> Int? {
+        let colour = (0...4).map { clamp($0, $0 < s.count ? s[$0] : 0) }
+        return presets.firstIndex(of: colour)
+    }
     static func presetValue(_ preset: Int, _ kind: Int) -> Int {
         guard presetSets(kind) else { return settingDefault(kind) }
         return presets.indices.contains(preset) ? presets[preset][kind] : 0
@@ -98,6 +102,7 @@ enum CameraRulesLegacy {
     static func originAllowed(utf8 origin: [UInt8]) -> Bool { origin == Array(extensionOrigin.utf8) }
 
     static func linkAccepts(openClients: Int) -> Bool { (0..<clientsMax).contains(openClients) }
+    static func linkCameras(_ reported: Int) -> Int { min(max(reported, 0), 16) }
 
     static func linkStatus(listening: Bool, failed: Bool, clients: Int, activeCameras: Int) -> Int {
         if failed { return 1 }

@@ -23,6 +23,10 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
     cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 fi
+# The Ponte Camera extension (camera/extension, with cm.wasm built from the camera spec by camera/build-wasm.sh):
+# Ponte copies it to ~/Library/Application Support/Ponte/PonteCamera, which BrowserOS loads unpacked.
+rm -rf "$APP/Contents/Resources/PonteCamera"
+cp -R "$ROOT/camera/extension" "$APP/Contents/Resources/PonteCamera"
 # SwiftPM resource bundles, if any target ever declares resources.
 shopt -s nullglob
 for bundle in "$BIN_DIR"/*.bundle "$BIN_DIR"/*.resources; do

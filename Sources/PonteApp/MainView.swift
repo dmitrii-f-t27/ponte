@@ -1,5 +1,6 @@
 import AppKit
 import PonteAudio
+import PonteCamera
 import PonteCore
 import PonteSpeech
 import SwiftUI
@@ -52,6 +53,7 @@ private struct MainToolbar: ToolbarContent {
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             PeerToolbarButton()
+            CameraToolbarButton()
 
             Button {
                 model.overlayVisible.toggle()
