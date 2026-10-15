@@ -443,7 +443,7 @@ private struct TextComposer: View {
     private func noteText(_ note: Int32) -> String? {
         switch note {
         case TextRules.NOTE_TOO_LONG:
-            "Слишком длинный текст (\(draft.count) знаков): за раз — до \(TextRules.MAX_BYTES / 2) русских букв. Отправьте его частями."
+            "Слишком длинный текст (\(draft.count) знаков): за раз — до \(TextRules.MAX_LETTERS) русских букв. Отправьте его частями."
         case TextRules.NOTE_NEEDS_START: "Нажмите «Старт» — тогда Ponte скажет этот текст в звонок."
         case TextRules.NOTE_NO_LANE: "Канал «Я → по-португальски» не запустился — сказать текст нельзя."
         case TextRules.NOTE_PAUSED: "Пауза голоса: перевод появится здесь, но в звонок не прозвучит."

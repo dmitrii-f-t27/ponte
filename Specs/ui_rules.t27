@@ -805,6 +805,42 @@ pub fn ui_mic_migration(migrated: bool, has_setting: bool) -> i32 {
     return UI_MIGRATE_MARK;
 }
 
+; --- Moved out of Swift 2026-10-15 --------------------------------------------------------------------------------
+; The listener banner's "dismissed" flag after a poll: a banner that left the screen without another taking its place
+; was closed by the owner and stays away until the streak of bad marks ends.
+pub fn ui_listener_dismissed(dismissed: bool, gone: bool, closed: bool, streak: bool) -> bool {
+    if (streak == false) { return false; }
+    if (gone and closed) { return true; }
+    return dismissed;
+}
+
+; Picking an output in "Zvuk" makes the system output the choice: headphones saved in the settings are cleared.
+pub fn ui_hear_pick_clears_headphones(has_saved: bool) -> bool {
+    return has_saved;
+}
+
+; The pick did not take when the system output is still another device afterwards (the panel says so).
+pub fn ui_hear_pick_failed(system_is_picked: bool) -> bool {
+    return system_is_picked == false;
+}
+
+; The open checklist reads the devices again on every listener tick, so plugged headphones show within a second.
+pub fn ui_listener_tick_reads_devices(sheet_open: bool) -> bool {
+    return sheet_open;
+}
+
+; The Russians' panel notes (PEERNOTE_* bits): the call is not running (the others hear the owner after "Start");
+; no headphones (his voice goes to them only while the key is held).
+pub const UI_PEERNOTE_NOT_RUNNING : i32 = 1;
+pub const UI_PEERNOTE_SPEAKERS : i32 = 2;
+pub fn ui_peer_notes(peer_on: bool, running: bool, headphones_like: bool) -> i32 {
+    var notes: i32 = 0;
+    if (peer_on == false) { return notes; }
+    if (running == false) { notes = notes | UI_PEERNOTE_NOT_RUNNING; }
+    if (headphones_like == false) { notes = notes | UI_PEERNOTE_SPEAKERS; }
+    return notes;
+}
+
 test ui_run_and_buttons {
     // rulesRunStateBannersAndButtons
     assert ui_toggle_run(UI_RUN_IDLE) == UI_TOGGLE_START;
@@ -1282,4 +1318,20 @@ test ui_checklist {
     assert ui_mic_migration(false, false) == UI_MIGRATE_MARK;
     assert ui_mic_migration(true, true) == UI_MIGRATE_NONE;
     assert ui_mic_migration(true, false) == UI_MIGRATE_NONE;
+}
+
+test ui_moved_out_of_swift {
+    assert ui_listener_dismissed(false, true, true, true) == true;
+    assert ui_listener_dismissed(false, true, false, true) == false;
+    assert ui_listener_dismissed(true, false, false, true) == true;
+    assert ui_listener_dismissed(true, true, true, false) == false;
+    assert ui_hear_pick_clears_headphones(true) == true;
+    assert ui_hear_pick_failed(false) == true;
+    assert ui_hear_pick_failed(true) == false;
+    assert ui_listener_tick_reads_devices(true) == true;
+    assert ui_peer_notes(false, false, false) == 0;
+    assert ui_peer_notes(true, false, true) == UI_PEERNOTE_NOT_RUNNING;
+    assert ui_peer_notes(true, true, false) == UI_PEERNOTE_SPEAKERS;
+    assert ui_peer_notes(true, false, false) == UI_PEERNOTE_NOT_RUNNING | UI_PEERNOTE_SPEAKERS;
+    assert ui_peer_notes(true, true, true) == 0;
 }

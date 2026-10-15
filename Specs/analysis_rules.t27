@@ -1032,6 +1032,57 @@ pub fn an_fixture_matches_name(index: i64, buf: [256]u8, len: i64) -> bool {
     return true;
 }
 
+; --- Moved out of Swift 2026-10-15 --------------------------------------------------------------------------------
+; A notes request takes at most max_lines lines (all without a cap), and always one.
+pub fn an_report_line_cap(has_max: bool, max_lines: i64, count: i64) -> i64 {
+    var cap: i64 = count;
+    if (has_max) { cap = max_lines; }
+    if (cap < 1) { return 1; }
+    return cap;
+}
+
+; The lines a report chunk counts as covered: what the step reports, held to the lines left, and at least one, so
+; the report always moves on.
+pub fn an_covered_progress(covered: i64, remaining: i64) -> i64 {
+    var n: i64 = covered;
+    if (n > remaining) { n = remaining; }
+    if (n < 1) { return 1; }
+    return n;
+}
+
+; An error text shown is at most AN_ERROR_EXCERPT_CHARS characters (longer ones end in an ellipsis); a key of at
+; least AN_REDACT_MIN_KEY characters is hidden in it (a shorter one would hide ordinary words).
+pub const AN_ERROR_EXCERPT_CHARS : i64 = 300;
+pub const AN_REDACT_MIN_KEY : i64 = 4;
+pub fn an_excerpt_cut(chars: i64) -> bool {
+    return chars > AN_ERROR_EXCERPT_CHARS;
+}
+pub fn an_redacts_key(key_chars: i64) -> bool {
+    return key_chars >= AN_REDACT_MIN_KEY;
+}
+
+; Quitting looks this often whether the reports it waits for arrived.
+pub const AN_QUIT_POLL_MS : i64 = 20;
+
+; The call's start for the report (START_*): the analysis' own record, the app's, the first line, or now.
+pub const AN_START_OWN : i64 = 0;
+pub const AN_START_APP : i64 = 1;
+pub const AN_START_FIRST_LINE : i64 = 2;
+pub const AN_START_NOW : i64 = 3;
+pub fn an_start_source(has_own: bool, has_app: bool, has_lines: bool) -> i64 {
+    if (has_own) { return AN_START_OWN; }
+    if (has_app) { return AN_START_APP; }
+    if (has_lines) { return AN_START_FIRST_LINE; }
+    return AN_START_NOW;
+}
+
+; The call's end for the report: none while it runs; its recorded end, or now.
+pub fn an_end_ms(running: bool, has_end: bool, end_ms: i64, now_ms: i64) -> i64 {
+    if (running) { return 0 - 1; }
+    if (has_end) { return end_ms; }
+    return now_ms;
+}
+
 test an_provider_tables {
     var out: [256]u8 = [0; 256];
     assert an_provider_code(AN_PROVIDER_ZAI) == AN_PROVIDER_ZAI;
@@ -1639,4 +1690,25 @@ test an_file_names {
     assert out[13] == 48;
     assert an_report_file_name(12345, 1, 2, 3, 4, 1, out) == 33;
     assert an_report_file_name(2147483647, 2147483647, 2147483647, 2147483647, 2147483647, 2147483647, out) == 81;
+}
+
+test an_moved_rules {
+    assert an_report_line_cap(false, 0, 12) == 12;
+    assert an_report_line_cap(true, 5, 12) == 5;
+    assert an_report_line_cap(true, 0, 12) == 1;
+    assert an_report_line_cap(false, 0, 0) == 1;
+    assert an_covered_progress(3, 10) == 3;
+    assert an_covered_progress(30, 10) == 10;
+    assert an_covered_progress(0, 10) == 1;
+    assert an_excerpt_cut(300) == false;
+    assert an_excerpt_cut(301) == true;
+    assert an_redacts_key(4) == true;
+    assert an_redacts_key(3) == false;
+    assert an_start_source(true, true, true) == AN_START_OWN;
+    assert an_start_source(false, true, true) == AN_START_APP;
+    assert an_start_source(false, false, true) == AN_START_FIRST_LINE;
+    assert an_start_source(false, false, false) == AN_START_NOW;
+    assert an_end_ms(true, true, 5, 9) == 0 - 1;
+    assert an_end_ms(false, true, 5, 9) == 5;
+    assert an_end_ms(false, false, 5, 9) == 9;
 }

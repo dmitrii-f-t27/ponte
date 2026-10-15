@@ -195,6 +195,8 @@ static const uint32_t UI_ROW_LENGTHS[5] = { 6, 4, 3, 4, 1 };
 #define UI_MIGRATE_NONE 0
 #define UI_MIGRATE_CLEAR 1
 #define UI_MIGRATE_MARK 2
+#define UI_PEERNOTE_NOT_RUNNING 1
+#define UI_PEERNOTE_SPEAKERS 2
 
 /* -------------------------------------------------------
    Function prototypes
@@ -265,6 +267,11 @@ bool ui_poll_reads_listeners(int64_t tick, bool sheet_open, int32_t run_state);
 bool ui_listener_streak(int32_t mark);
 int32_t ui_listener_banner(int32_t run_state, int32_t mark, int64_t ms_bad, bool shown, bool dismissed);
 int32_t ui_mic_migration(bool migrated, bool has_setting);
+bool ui_listener_dismissed(bool dismissed, bool gone, bool closed, bool streak);
+bool ui_hear_pick_clears_headphones(bool has_saved);
+bool ui_hear_pick_failed(bool system_is_picked);
+bool ui_listener_tick_reads_devices(bool sheet_open);
+int32_t ui_peer_notes(bool peer_on, bool running, bool headphones_like);
 
 /* -------------------------------------------------------
    Function implementations
@@ -936,6 +943,42 @@ int32_t ui_mic_migration(bool migrated, bool has_setting) {
     return UI_MIGRATE_MARK;
 }
 
+bool ui_listener_dismissed(bool dismissed, bool gone, bool closed, bool streak) {
+    if ((streak == false)) {
+        return false;
+    }
+    if ((gone && closed)) {
+        return true;
+    }
+    return dismissed;
+}
+
+bool ui_hear_pick_clears_headphones(bool has_saved) {
+    return has_saved;
+}
+
+bool ui_hear_pick_failed(bool system_is_picked) {
+    return (system_is_picked == false);
+}
+
+bool ui_listener_tick_reads_devices(bool sheet_open) {
+    return sheet_open;
+}
+
+int32_t ui_peer_notes(bool peer_on, bool running, bool headphones_like) {
+    int32_t notes = 0;
+    if ((peer_on == false)) {
+        return notes;
+    }
+    if ((running == false)) {
+        notes = (notes | UI_PEERNOTE_NOT_RUNNING);
+    }
+    if ((headphones_like == false)) {
+        notes = (notes | UI_PEERNOTE_SPEAKERS);
+    }
+    return notes;
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
@@ -1437,6 +1480,22 @@ void test_ui_checklist(void) {
     assert((ui_mic_migration(true, false) == UI_MIGRATE_NONE));
 }
 
+void test_ui_moved_out_of_swift(void) {
+    assert((ui_listener_dismissed(false, true, true, true) == true));
+    assert((ui_listener_dismissed(false, true, false, true) == false));
+    assert((ui_listener_dismissed(true, false, false, true) == true));
+    assert((ui_listener_dismissed(true, true, true, false) == false));
+    assert((ui_hear_pick_clears_headphones(true) == true));
+    assert((ui_hear_pick_failed(false) == true));
+    assert((ui_hear_pick_failed(true) == false));
+    assert((ui_listener_tick_reads_devices(true) == true));
+    assert((ui_peer_notes(false, false, false) == 0));
+    assert((ui_peer_notes(true, false, true) == UI_PEERNOTE_NOT_RUNNING));
+    assert((ui_peer_notes(true, true, false) == UI_PEERNOTE_SPEAKERS));
+    assert((ui_peer_notes(true, false, false) == (UI_PEERNOTE_NOT_RUNNING | UI_PEERNOTE_SPEAKERS)));
+    assert((ui_peer_notes(true, true, true) == 0));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1451,7 +1510,8 @@ int main(void) {
     test_ui_moved_rules();
     test_ui_mic_light_gate();
     test_ui_checklist();
-    printf("All %d tests passed.\n", 6);
+    test_ui_moved_out_of_swift();
+    printf("All %d tests passed.\n", 7);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

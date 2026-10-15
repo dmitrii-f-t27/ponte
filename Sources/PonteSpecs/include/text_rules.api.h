@@ -16,6 +16,7 @@
    ------------------------------------------------------- */
 #define TX_TEXT_MAX 8192
 #define TX_MAX_BYTES 4000
+#define TX_MAX_LETTERS 2000
 #define TX_PHRASE_MIN_BYTES 24
 #define TX_PHRASE_MAX_BYTES 400
 #define TX_SUBMIT_OK 0

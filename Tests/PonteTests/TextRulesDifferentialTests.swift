@@ -13,8 +13,8 @@ private typealias L = TextRulesLegacy
 
     @Test func constantsAndCodes() {
         let log = DiffLog("text constants and codes")
-        log.check([F.TEXT_MAX, F.MAX_BYTES, F.PHRASE_MIN_BYTES, F.PHRASE_MAX_BYTES],
-                  [L.TEXT_MAX, L.MAX_BYTES, L.PHRASE_MIN_BYTES, L.PHRASE_MAX_BYTES], "limits")
+        log.check([F.TEXT_MAX, F.MAX_BYTES, F.PHRASE_MIN_BYTES, F.PHRASE_MAX_BYTES, F.MAX_LETTERS],
+                  [L.TEXT_MAX, L.MAX_BYTES, L.PHRASE_MIN_BYTES, L.PHRASE_MAX_BYTES, L.MAX_LETTERS], "limits")
         log.check([F.SUBMIT_OK, F.SUBMIT_NOT_RUNNING, F.SUBMIT_NO_LANE, F.SUBMIT_EMPTY, F.SUBMIT_TOO_LONG],
                   [L.SUBMIT_OK, L.SUBMIT_NOT_RUNNING, L.SUBMIT_NO_LANE, L.SUBMIT_EMPTY, L.SUBMIT_TOO_LONG], "submit codes")
         log.check([F.NOTE_NONE, F.NOTE_TOO_LONG, F.NOTE_NEEDS_START, F.NOTE_NO_LANE, F.NOTE_PAUSED],

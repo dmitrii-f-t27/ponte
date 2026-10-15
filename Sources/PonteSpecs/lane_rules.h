@@ -125,6 +125,7 @@
 #define LN_OWN_TALK_TAIL_MS 1500
 #define LN_OWN_TALK_DROP_PERMILLE 600
 #define LN_PHRASE_FALLBACK_MS 3000
+#define LN_MS_LIMIT 1000000000000000.0
 #define LN_ROUTE_RELAY 1
 #define LN_ROUTE_PEERS 2
 #define LN_TALK_NONE 0
@@ -477,7 +478,17 @@ bool ln_own_talk_drops(int64_t phrase_start_ms, int64_t phrase_end_ms, int64_t t
 }
 
 int64_t ln_millis(double seconds) {
-    return ((int64_t)(round((seconds * LN_MS_PER_SECOND))));
+    double ms = (seconds * LN_MS_PER_SECOND);
+    if ((ms != ms)) {
+        return 0;
+    }
+    if ((ms > LN_MS_LIMIT)) {
+        ms = LN_MS_LIMIT;
+    }
+    if ((ms < (0.0 - LN_MS_LIMIT))) {
+        ms = (0.0 - LN_MS_LIMIT);
+    }
+    return ((int64_t)(round(ms)));
 }
 
 bool ln_echo_marks_time(bool was_speaking, bool now_speaking) {
@@ -1076,6 +1087,11 @@ void test_ln_moved_rules(void) {
 }
 
 void test_ln_intake_rules(void) {
+    assert((ln_millis(1.5) == 1500));
+    assert((ln_millis(0.0005) == 1));
+    assert((ln_millis((0.0 - 0.0005)) == (0 - 1)));
+    assert((ln_millis(1.0e30) == 1000000000000000));
+    assert((ln_millis((0.0 - 1.0e30)) == (0 - 1000000000000000)));
     assert((ln_intake_routes(true, true, false) == (LN_ROUTE_RELAY | LN_ROUTE_PEERS)));
     assert((ln_intake_routes(true, false, false) == LN_ROUTE_RELAY));
     assert((ln_intake_routes(false, true, false) == LN_ROUTE_PEERS));

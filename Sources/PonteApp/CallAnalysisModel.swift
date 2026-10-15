@@ -507,8 +507,18 @@ final class CallAnalysisModel {
         stopNotesUpdate()
         let conversation = host.lines
         let lines = conversation.map(AnalysisLine.init)
-        let started = callStartedAt ?? host.callStartedAt ?? lines.first?.at ?? Date()
-        let ended = host.isRunning ? nil : (callEndedAt ?? Date())
+        let now = Date()
+        let started: Date
+        switch AnalysisRules.startSource(hasOwn: callStartedAt != nil, hasApp: host.callStartedAt != nil, hasLines: !lines.isEmpty) {
+        case AnalysisRules.startOwn: started = callStartedAt ?? now
+        case AnalysisRules.startApp: started = host.callStartedAt ?? now
+        case AnalysisRules.startFirstLine: started = lines.first?.at ?? now
+        default: started = now
+        }
+        let ended = AnalysisRules.endMs(running: host.isRunning,
+                                        endMs: callEndedAt.map { Int64(AnalysisRules.millis($0.timeIntervalSince1970)) },
+                                        nowMs: Int64(AnalysisRules.millis(now.timeIntervalSince1970)))
+            .map { Date(timeIntervalSince1970: Double($0) / 1000) }
         let facts = CallFacts(startedAt: started, endedAt: ended, sourceName: sourceName ?? host.activeSourceName, lines: lines)
         let pending = notebook.pending(lines, now: Date(), all: true)
         let notes = notebook.notes
@@ -634,7 +644,7 @@ final class CallAnalysisModel {
             log.info("quit: waiting up to \(wait, privacy: .public) ms for \(self.builds.count, privacy: .public) report(s)")
             let deadline = ContinuousClock.now + .milliseconds(wait)
             while !builds.isEmpty, ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(20))
+                try? await Task.sleep(for: .milliseconds(AnalysisRules.quitPollMs))
             }
             if !builds.isEmpty {
                 log.error("quit: \(self.builds.count, privacy: .public) report request(s) abandoned")

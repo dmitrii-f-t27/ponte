@@ -709,7 +709,12 @@ extension AppRulesLegacy {
     static func peerAudioBlocksCall(outputSealed: Bool, msSincePeerAudio: Int64) -> Bool {
         !outputSealed && msSincePeerAudio >= 0 && msSincePeerAudio < 700
     }
-    static func millis(_ seconds: Double) -> Int64 { Int64((seconds * 1000).rounded()) }
+    /// TranslationLane.millis, made safe 2026-10-15: NaN 0, held to +-1e15 ms.
+    static func millis(_ seconds: Double) -> Int64 {
+        let ms = seconds * 1000
+        guard !ms.isNaN else { return 0 }
+        return Int64(min(max(ms, -1e15), 1e15).rounded())
+    }
     /// EchoGuard.setSpeaking: `if speaking || on`.
     static func echoMarksTime(wasSpeaking: Bool, nowSpeaking: Bool) -> Bool { wasSpeaking || nowSpeaking }
     /// isRunning, start().
@@ -1036,4 +1041,26 @@ extension AppRulesLegacy {
         if migrated { return MIGRATE_NONE }
         return hasSetting ? MIGRATE_CLEAR : MIGRATE_MARK
     }
+
+    // MARK: ui_rules and transcript_rules moved out of Swift 2026-10-15
+
+    /// ListenerWarning.banner: `if gone { if current == nil { dismissed = true } }`, then `if !streak { dismissed = false }`.
+    static func listenerDismissed(dismissed: Bool, gone: Bool, closed: Bool, streak: Bool) -> Bool {
+        var d = dismissed
+        if gone && closed { d = true }
+        if !streak { d = false }
+        return d
+    }
+    static func hearPickClearsHeadphones(hasSaved: Bool) -> Bool { hasSaved }
+    static func hearPickFailed(systemIsPicked: Bool) -> Bool { !systemIsPicked }
+    static func listenerTickReadsDevices(sheetOpen: Bool) -> Bool { sheetOpen }
+    /// PeerPanel: `peerOn && !isRunning`, `peerOn && !headphonesLike`.
+    static func peerNotes(peerOn: Bool, running: Bool, headphonesLike: Bool) -> Int32 {
+        (peerOn && !running ? 1 : 0) | (peerOn && !headphonesLike ? 2 : 0)
+    }
+    /// `callStartedAt ?? lines[0].at`.
+    static func transcriptStartedMs(callStartMs: Int64?, firstLineMs: Int64) -> Int64 { callStartMs ?? firstLineMs }
+    /// `attempt += 1` while the name exists, now bounded at 999.
+    static func nextAttempt(_ attempt: Int32) -> Int32 { attempt < 1 ? 1 : (attempt > 999 ? attempt : attempt + 1) }
+    static func attemptAllowed(_ attempt: Int32) -> Bool { (1...999).contains(attempt) }
 }

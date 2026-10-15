@@ -375,4 +375,22 @@ private struct LegacyActivity {
         }
         log.finish(minimumCases: 930_000)
     }
+
+    @Test func voiceAndSegmentMovedOutOfSwift() {
+        let log = DiffLog("genderReadsStored, phraseVoiceStart, arrivalFallback, flushesVolatile, copiesBuffer, converterDownmixes")
+        for a in [false, true] {
+            log.check(F.genderReadsStored(storedEmpty: a), L.genderReadsStored(storedEmpty: a), "\(a)")
+            log.check(F.arrivalFallback(hasMarks: a), L.arrivalFallback(hasMarks: a), "\(a)")
+            log.check(F.flushesVolatile(hasVolatile: a), L.flushesVolatile(hasVolatile: a), "\(a)")
+            log.check(F.copiesBuffer(sameFormat: a), L.copiesBuffer(sameFormat: a), "\(a)")
+        }
+        var r = DiffRandom(seed: 0x5E6)
+        for _ in 0..<20_000 {
+            let start: Double? = r.bool() ? r.double() : nil
+            let window = r.double()
+            log.check(F.phraseVoiceStart(start: start, windowStart: window), L.phraseVoiceStart(start: start, windowStart: window), "\(String(describing: start)) \(window)")
+        }
+        for i in -2...9 { for o in -2...9 { log.check(F.converterDownmixes(inputChannels: i, outputChannels: o), L.converterDownmixes(inputChannels: i, outputChannels: o), "\(i) \(o)") } }
+        log.finish(minimumCases: 20_000)
+    }
 }

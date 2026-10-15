@@ -809,4 +809,23 @@ enum AppRules {
     }
 
     static func micMigration(migrated: Bool, hasSetting: Bool) -> Int32 { ui_mic_migration(migrated, hasSetting) }
+
+    // MARK: Moved out of Swift 2026-10-15 (ui_rules, transcript_rules)
+
+    static func listenerDismissed(dismissed: Bool, gone: Bool, closed: Bool, streak: Bool) -> Bool {
+        ui_listener_dismissed(dismissed, gone, closed, streak)
+    }
+    static func hearPickClearsHeadphones(hasSaved: Bool) -> Bool { ui_hear_pick_clears_headphones(hasSaved) }
+    static func hearPickFailed(systemIsPicked: Bool) -> Bool { ui_hear_pick_failed(systemIsPicked) }
+    static func listenerTickReadsDevices(sheetOpen: Bool) -> Bool { ui_listener_tick_reads_devices(sheetOpen) }
+    static let PEERNOTE_NOT_RUNNING: Int32 = UI_PEERNOTE_NOT_RUNNING
+    static let PEERNOTE_SPEAKERS: Int32 = UI_PEERNOTE_SPEAKERS
+    static func peerNotes(peerOn: Bool, running: Bool, headphonesLike: Bool) -> Int32 { ui_peer_notes(peerOn, running, headphonesLike) }
+
+    static let ATTEMPTS_MAX: Int32 = TR_ATTEMPTS_MAX
+    static func transcriptStartedMs(callStartMs: Int64?, firstLineMs: Int64) -> Int64 {
+        tr_started_ms(callStartMs != nil, callStartMs ?? 0, firstLineMs)
+    }
+    static func nextAttempt(_ attempt: Int32) -> Int32 { tr_next_attempt(attempt) }
+    static func attemptAllowed(_ attempt: Int32) -> Bool { tr_attempt_allowed(attempt) }
 }

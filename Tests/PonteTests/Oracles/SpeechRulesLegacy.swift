@@ -684,4 +684,19 @@ extension SpeechRulesLegacy {
     static func setsRate(rate: Float?, ratePercent: Int) -> Bool { rate != nil || ratePercent != 100 }
     static func baseRateMilli(rate: Float?) -> Int { rate.map { Int(($0 * 1000).rounded()) } ?? defaultUtteranceRateMilli }
     static func utteranceRate(milli: Int) -> Float { Float(milli) / 1000 }
+
+    // MARK: voice and segment rules moved out of Swift 2026-10-15
+
+    /// AppModel.voiceGender: `stored.isEmpty ? voices.first?.id : stored`.
+    static func genderReadsStored(storedEmpty: Bool) -> Bool { !storedEmpty }
+    /// `if phraseVoiceStart == nil { phraseVoiceStart = start }`.
+    static func phraseVoiceStart(start: Double?, windowStart: Double) -> Double { start ?? windowStart }
+    /// `arrivals.last?.at ?? Date()`: 0 the last mark, 1 now.
+    static func arrivalFallback(hasMarks: Bool) -> Int { hasMarks ? 0 : 1 }
+    /// `if !volatileText.isEmpty { .final }`.
+    static func flushesVolatile(hasVolatile: Bool) -> Bool { hasVolatile }
+    /// `if buffer.format == format { copy }`.
+    static func copiesBuffer(sameFormat: Bool) -> Bool { sameFormat }
+    /// `converter.downmix = true` (it only acts when the output has fewer channels).
+    static func converterDownmixes(inputChannels: Int, outputChannels: Int) -> Bool { inputChannels > outputChannels }
 }

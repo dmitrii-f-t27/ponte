@@ -349,6 +349,34 @@ public enum AnalysisRules {
     private static func text(_ write: (UnsafeMutablePointer<UInt8>) -> Int64) -> String {
         String(decoding: bytes(write), as: UTF8.self)
     }
+
+    // MARK: Moved out of Swift 2026-10-15
+
+    /// Seconds to whole milliseconds, rounded, NaN 0, held to about 31 700 years (lane_rules.t27 ln_millis).
+    public static func millis(_ seconds: Double) -> Int { Int(ln_millis(seconds)) }
+    /// The transcript's line order (transcript_rules.t27 tr_line_before): by time, then as written.
+    public static func lineBefore(atA: Double, indexA: Int, atB: Double, indexB: Int) -> Bool {
+        tr_line_before(atA, Int64(indexA), atB, Int64(indexB))
+    }
+    public static let httpOK = Int(AN_HTTP_OK_FIRST)
+    public static func reportLineCap(maxLines: Int?, count: Int) -> Int {
+        Int(an_report_line_cap(maxLines != nil, Int64(maxLines ?? 0), Int64(count)))
+    }
+    public static func coveredProgress(covered: Int, remaining: Int) -> Int { Int(an_covered_progress(Int64(covered), Int64(remaining))) }
+    public static let errorExcerptChars = Int(AN_ERROR_EXCERPT_CHARS)
+    public static func excerptCut(chars: Int) -> Bool { an_excerpt_cut(Int64(chars)) }
+    public static func redactsKey(chars: Int) -> Bool { an_redacts_key(Int64(chars)) }
+    public static let quitPollMs = Int(AN_QUIT_POLL_MS)
+    public static let startOwn = Int(AN_START_OWN)
+    public static let startApp = Int(AN_START_APP)
+    public static let startFirstLine = Int(AN_START_FIRST_LINE)
+    public static let startNow = Int(AN_START_NOW)
+    public static func startSource(hasOwn: Bool, hasApp: Bool, hasLines: Bool) -> Int { Int(an_start_source(hasOwn, hasApp, hasLines)) }
+    /// The call's end for the report: nil while it runs.
+    public static func endMs(running: Bool, endMs: Int64?, nowMs: Int64) -> Int64? {
+        let ms = an_end_ms(running, endMs != nil, endMs ?? 0, nowMs)
+        return ms < 0 ? nil : ms
+    }
 }
 
 /// A base URL or a key in the fixed buffer the C takes: the first AN_URL_MAX bytes, with the whole length (the C

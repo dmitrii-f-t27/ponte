@@ -22,10 +22,10 @@ public final class CoreAudioDeviceCatalog: AudioDeviceCatalog {
     }
 
     /// Input-capable devices (microphones, BlackHole as an input).
-    public func inputDevices() -> [AudioDevice] { devices().filter { $0.inputChannels > 0 } }
+    public func inputDevices() -> [AudioDevice] { devices().filter { AudioRules.isInput(channels: $0.inputChannels) } }
 
     /// Output-capable devices (speakers, headphones, BlackHole as the call's mic).
-    public func outputDevices() -> [AudioDevice] { devices().filter { $0.outputChannels > 0 } }
+    public func outputDevices() -> [AudioDevice] { devices().filter { AudioRules.isOutput(channels: $0.outputChannels) } }
 
     /// Finds a device by UID first, then by exact name, then by case-insensitive name substring.
     public func device(matching query: String) -> AudioDevice? {

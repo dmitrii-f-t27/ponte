@@ -71,6 +71,7 @@ static const uint8_t TR_FX_TEXT[515] = { 50, 48, 50, 54, 45, 49, 48, 45, 49, 49,
 static const uint32_t TR_FX_OFFSETS[28] = { 0, 18, 36, 56, 77, 92, 128, 177, 189, 202, 210, 219, 233, 248, 263, 279, 291, 304, 321, 339, 346, 351, 395, 440, 440, 454, 470, 491 };
 static const uint32_t TR_FX_LENGTHS[28] = { 18, 18, 20, 21, 15, 36, 49, 12, 13, 8, 9, 14, 15, 15, 16, 12, 13, 17, 18, 7, 5, 44, 45, 0, 14, 16, 21, 24 };
 #define TR_FIRST_ATTEMPT 1
+#define TR_ATTEMPTS_MAX 999
 
 /* -------------------------------------------------------
    Function prototypes
@@ -85,6 +86,9 @@ bool tr_fits_escape_input(int64_t bytes, int64_t char_bytes);
 bool tr_line_before(double at_a, int64_t index_a, double at_b, int64_t index_b);
 int64_t tr_fixture(int64_t index, uint8_t out[static 4096]);
 bool tr_fixture_matches(int64_t index, uint8_t buf[static 4096], int64_t len);
+int64_t tr_started_ms(bool has_call_start, int64_t call_start_ms, int64_t first_line_ms);
+int32_t tr_next_attempt(int32_t attempt);
+bool tr_attempt_allowed(int32_t attempt);
 
 /* -------------------------------------------------------
    Function implementations
@@ -264,6 +268,27 @@ bool tr_fixture_matches(int64_t index, uint8_t buf[static 4096], int64_t len) {
     return true;
 }
 
+int64_t tr_started_ms(bool has_call_start, int64_t call_start_ms, int64_t first_line_ms) {
+    if (has_call_start) {
+        return call_start_ms;
+    }
+    return first_line_ms;
+}
+
+int32_t tr_next_attempt(int32_t attempt) {
+    if ((attempt < TR_FIRST_ATTEMPT)) {
+        return TR_FIRST_ATTEMPT;
+    }
+    if ((attempt > TR_ATTEMPTS_MAX)) {
+        return attempt;
+    }
+    return (attempt + 1);
+}
+
+bool tr_attempt_allowed(int32_t attempt) {
+    return ((attempt >= TR_FIRST_ATTEMPT) && (attempt <= TR_ATTEMPTS_MAX));
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
@@ -364,6 +389,18 @@ void test_tr_moved_rules(void) {
     assert((TR_FIRST_ATTEMPT == 1));
 }
 
+void test_tr_moved_out_of_swift(void) {
+    assert((tr_started_ms(true, 5000, 9000) == 5000));
+    assert((tr_started_ms(false, 5000, 9000) == 9000));
+    assert((tr_next_attempt(1) == 2));
+    assert((tr_next_attempt((0 - 5)) == TR_FIRST_ATTEMPT));
+    assert((tr_next_attempt(999) == 1000));
+    assert((tr_attempt_allowed(1000) == false));
+    assert((tr_attempt_allowed(999) == true));
+    assert((tr_attempt_allowed(0) == false));
+    assert((tr_next_attempt(2147483647) == 2147483647));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -375,7 +412,8 @@ int main(void) {
     test_tr_file_names();
     test_tr_escape_rules();
     test_tr_moved_rules();
-    printf("All %d tests passed.\n", 3);
+    test_tr_moved_out_of_swift();
+    printf("All %d tests passed.\n", 4);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

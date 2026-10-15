@@ -239,6 +239,13 @@ static const uint32_t AN_ROW_LENGTHS[25] = { 3, 8, 6, 28, 24, 0, 13, 14, 0, 17, 
 static const uint8_t AN_FX_TEXT[864] = { 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 100, 101, 101, 112, 115, 101, 101, 107, 46, 99, 111, 109, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 49, 49, 52, 51, 52, 47, 118, 49, 47, 99, 104, 97, 116, 47, 99, 111, 109, 112, 108, 101, 116, 105, 111, 110, 115, 72, 84, 84, 80, 83, 58, 47, 47, 65, 80, 73, 46, 68, 69, 69, 80, 83, 69, 69, 75, 46, 67, 79, 77, 102, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 104, 116, 116, 112, 115, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 32, 98, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 112, 97, 97, 115, 47, 118, 52, 47, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 122, 97, 105, 112, 111, 110, 116, 101, 45, 97, 110, 97, 108, 121, 115, 105, 115, 45, 99, 117, 115, 116, 111, 109, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 49, 48, 45, 49, 51, 45, 49, 52, 48, 53, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 54, 45, 48, 49, 45, 48, 50, 45, 50, 51, 53, 57, 45, 50, 46, 116, 120, 116, 80, 111, 110, 116, 101, 45, 114, 101, 112, 111, 114, 116, 45, 50, 48, 50, 55, 45, 49, 50, 45, 51, 49, 45, 48, 48, 48, 48, 45, 49, 50, 46, 116, 120, 116, 104, 116, 116, 112, 115, 58, 47, 47, 208, 191, 209, 128, 208, 184, 208, 188, 208, 181, 209, 128, 46, 209, 128, 209, 132, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58, 56, 48, 56, 48, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 91, 58, 58, 49, 93, 58, 49, 49, 52, 51, 52, 72, 84, 84, 80, 58, 47, 47, 76, 111, 99, 97, 108, 72, 111, 115, 116, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 63, 120, 61, 49, 104, 116, 116, 112, 58, 47, 47, 101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 64, 101, 118, 105, 108, 46, 101, 120, 97, 109, 112, 108, 101, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 46, 101, 118, 105, 108, 46, 101, 120, 97, 109, 112, 108, 101, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 58, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 49, 50, 55, 46, 48, 46, 48, 46, 49, 58, 56, 48, 97, 47, 118, 49, 104, 116, 116, 112, 58, 47, 47, 47, 108, 111, 99, 97, 108, 104, 111, 115, 116, 104, 116, 116, 112, 58, 47, 47, 104, 116, 116, 112, 115, 58, 47, 47, 97, 112, 105, 46, 122, 46, 97, 105, 47, 97, 112, 105, 47, 99, 111, 100, 105, 110, 103, 47, 112, 97, 97, 115, 47, 118, 52, 115, 116, 111, 112, 108, 101, 110, 103, 116, 104, 99, 111, 110, 116, 101, 110, 116, 95, 102, 105, 108, 116, 101, 114, 116, 111, 111, 108, 95, 99, 97, 108, 108, 115, 83, 84, 79, 80, 100, 101, 101, 112, 115, 101, 101, 107, 47, 100, 101, 101, 112, 115, 101, 101, 107, 45, 99, 104, 97, 116, 58, 102, 114, 101, 101, 103, 108, 109, 32, 52, 46, 53 };
 static const uint32_t AN_FX_OFFSETS[40] = { 0, 28, 58, 103, 149, 190, 215, 257, 281, 298, 306, 315, 335, 355, 355, 356, 374, 395, 427, 461, 496, 524, 548, 566, 585, 605, 626, 658, 690, 710, 733, 750, 757, 792, 796, 802, 816, 826, 830, 857 };
 static const uint32_t AN_FX_LENGTHS[40] = { 28, 30, 45, 46, 41, 25, 42, 24, 17, 8, 9, 20, 20, 0, 1, 18, 21, 32, 34, 35, 28, 24, 18, 19, 20, 21, 32, 32, 20, 23, 17, 7, 35, 4, 6, 14, 10, 4, 27, 7 };
+#define AN_ERROR_EXCERPT_CHARS 300
+#define AN_REDACT_MIN_KEY 4
+#define AN_QUIT_POLL_MS 20
+#define AN_START_OWN 0
+#define AN_START_APP 1
+#define AN_START_FIRST_LINE 2
+#define AN_START_NOW 3
 
 /* -------------------------------------------------------
    Function prototypes
@@ -297,6 +304,12 @@ int64_t an_report_file_name(int32_t year, int32_t month, int32_t day, int32_t ho
 int64_t an_fixture(int64_t index, uint8_t out[static 2048]);
 bool an_fixture_matches(int64_t index, uint8_t buf[static 2048], int64_t len);
 bool an_fixture_matches_name(int64_t index, uint8_t buf[static 256], int64_t len);
+int64_t an_report_line_cap(bool has_max, int64_t max_lines, int64_t count);
+int64_t an_covered_progress(int64_t covered, int64_t remaining);
+bool an_excerpt_cut(int64_t chars);
+bool an_redacts_key(int64_t key_chars);
+int64_t an_start_source(bool has_own, bool has_app, bool has_lines);
+int64_t an_end_ms(bool running, bool has_end, int64_t end_ms, int64_t now_ms);
 
 /* -------------------------------------------------------
    Function implementations
@@ -1061,6 +1074,59 @@ bool an_fixture_matches_name(int64_t index, uint8_t buf[static 256], int64_t len
     return true;
 }
 
+int64_t an_report_line_cap(bool has_max, int64_t max_lines, int64_t count) {
+    int64_t cap = count;
+    if (has_max) {
+        cap = max_lines;
+    }
+    if ((cap < 1)) {
+        return 1;
+    }
+    return cap;
+}
+
+int64_t an_covered_progress(int64_t covered, int64_t remaining) {
+    int64_t n = covered;
+    if ((n > remaining)) {
+        n = remaining;
+    }
+    if ((n < 1)) {
+        return 1;
+    }
+    return n;
+}
+
+bool an_excerpt_cut(int64_t chars) {
+    return (chars > AN_ERROR_EXCERPT_CHARS);
+}
+
+bool an_redacts_key(int64_t key_chars) {
+    return (key_chars >= AN_REDACT_MIN_KEY);
+}
+
+int64_t an_start_source(bool has_own, bool has_app, bool has_lines) {
+    if (has_own) {
+        return AN_START_OWN;
+    }
+    if (has_app) {
+        return AN_START_APP;
+    }
+    if (has_lines) {
+        return AN_START_FIRST_LINE;
+    }
+    return AN_START_NOW;
+}
+
+int64_t an_end_ms(bool running, bool has_end, int64_t end_ms, int64_t now_ms) {
+    if (running) {
+        return (0 - 1);
+    }
+    if (has_end) {
+        return end_ms;
+    }
+    return now_ms;
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
@@ -1684,6 +1750,27 @@ void test_an_file_names(void) {
     assert((an_report_file_name(2147483647, 2147483647, 2147483647, 2147483647, 2147483647, 2147483647, out) == 81));
 }
 
+void test_an_moved_rules(void) {
+    assert((an_report_line_cap(false, 0, 12) == 12));
+    assert((an_report_line_cap(true, 5, 12) == 5));
+    assert((an_report_line_cap(true, 0, 12) == 1));
+    assert((an_report_line_cap(false, 0, 0) == 1));
+    assert((an_covered_progress(3, 10) == 3));
+    assert((an_covered_progress(30, 10) == 10));
+    assert((an_covered_progress(0, 10) == 1));
+    assert((an_excerpt_cut(300) == false));
+    assert((an_excerpt_cut(301) == true));
+    assert((an_redacts_key(4) == true));
+    assert((an_redacts_key(3) == false));
+    assert((an_start_source(true, true, true) == AN_START_OWN));
+    assert((an_start_source(false, true, true) == AN_START_APP));
+    assert((an_start_source(false, false, true) == AN_START_FIRST_LINE));
+    assert((an_start_source(false, false, false) == AN_START_NOW));
+    assert((an_end_ms(true, true, 5, 9) == (0 - 1)));
+    assert((an_end_ms(false, true, 5, 9) == 5));
+    assert((an_end_ms(false, false, 5, 9) == 9));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1702,7 +1789,8 @@ int main(void) {
     test_an_binding_rules();
     test_an_reply_rules();
     test_an_file_names();
-    printf("All %d tests passed.\n", 10);
+    test_an_moved_rules();
+    printf("All %d tests passed.\n", 11);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

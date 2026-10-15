@@ -729,6 +729,29 @@ pub fn sg_fixture(index: i64, out: [8192]u8, at: i64) -> i64 {
     return k;
 }
 
+; --- Moved out of Swift 2026-10-15 --------------------------------------------------------------------------------
+; A phrase's voice starts at its first voice window (and ends at the end of its last).
+pub fn sg_phrase_voice_start(has_start: bool, start: f64, window_start: f64) -> f64 {
+    if (has_start) { return start; }
+    return window_start;
+}
+
+; A cut asked of the analyzer is a time at this many units per second.
+pub const SG_CUT_TIMESCALE : i32 = 16000;
+
+; The arrival time of audio no mark covers (ARRIVAL_*): the last mark's, or now when there is none.
+pub const SG_ARRIVAL_LAST : i64 = 0;
+pub const SG_ARRIVAL_NOW : i64 = 1;
+pub fn sg_arrival_fallback(has_marks: bool) -> i64 {
+    if (has_marks) { return SG_ARRIVAL_LAST; }
+    return SG_ARRIVAL_NOW;
+}
+
+; Text still volatile when the analyzer stops becomes a final phrase.
+pub fn sg_flushes_volatile(has_volatile: bool) -> bool {
+    return has_volatile;
+}
+
 test sg_voice_activity {
     // thresholdsAndFloor
     assert sg_is_voice(999, 0) == false;
@@ -1012,4 +1035,13 @@ test sg_moved_rules {
     assert sg_sum_squares_f32(block, 2, 0.0) == 25.0;
     assert sg_sum_squares_f32(block, 2, 1.0) == 26.0;
     assert sg_rms_f32(25.0, 4) == 2.5;
+}
+
+test sg_moved_out_of_swift {
+    assert sg_phrase_voice_start(true, 1.5, 2.0) == 1.5;
+    assert sg_phrase_voice_start(false, 1.5, 2.0) == 2.0;
+    assert SG_CUT_TIMESCALE == 16000;
+    assert sg_arrival_fallback(true) == SG_ARRIVAL_LAST;
+    assert sg_arrival_fallback(false) == SG_ARRIVAL_NOW;
+    assert sg_flushes_volatile(true) == true;
 }

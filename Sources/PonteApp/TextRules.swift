@@ -18,6 +18,8 @@ enum TextRules {
     static let TEXT_MAX = Int(TX_TEXT_MAX)
     /// The longest text said at once (UTF-8 bytes after trimming).
     static let MAX_BYTES = Int(TX_MAX_BYTES)
+    /// The note under the field counts Russian letters (two bytes each).
+    static let MAX_LETTERS = Int(TX_MAX_LETTERS)
     /// A phrase is at least this many bytes (a shorter sentence joins the next one)…
     static let PHRASE_MIN_BYTES = Int(TX_PHRASE_MIN_BYTES)
     /// …and at most this many (a longer sentence is cut at a line break, a clause end or a space).

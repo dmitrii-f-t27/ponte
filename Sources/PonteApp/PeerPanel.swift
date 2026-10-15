@@ -54,14 +54,14 @@ struct PeerPanel: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if model.peerOn && !model.isRunning {
+            if AppRules.peerNotes(peerOn: model.peerOn, running: model.isRunning, headphonesLike: model.headphonesLike) & AppRules.PEERNOTE_NOT_RUNNING != 0 {
                 Label("Вас услышат, когда перевод запущен (кнопка «Старт»). Других русских вы слышите уже сейчас.",
                       systemImage: "info.circle")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if model.peerOn && !model.headphonesLike {
+            if AppRules.peerNotes(peerOn: model.peerOn, running: model.isRunning, headphonesLike: model.headphonesLike) & AppRules.PEERNOTE_SPEAKERS != 0 {
                 Label("Без наушников вас слышно только пока вы держите кнопку разговора: иначе второй русский услышит себя эхом.",
                       systemImage: "headphones")
                     .font(.callout)

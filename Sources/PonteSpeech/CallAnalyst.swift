@@ -61,15 +61,10 @@ public struct CallFacts: Sendable, Equatable {
 
     /// Minutes from the start to the end (or to `now` while the call runs).
     public func minutes(now: Date = Date()) -> Int {
-        AnalysisRules.durationMinutes(ms: analysisMillis((endedAt ?? now).timeIntervalSince(startedAt)))
+        AnalysisRules.durationMinutes(ms: AnalysisRules.millis((endedAt ?? now).timeIntervalSince(startedAt)))
     }
 }
 
-/// Seconds to whole milliseconds (rounded), clamped far from overflow.
-func analysisMillis(_ seconds: TimeInterval) -> Int {
-    guard seconds.isFinite else { return 0 }
-    return Int(max(-1e12, min(1e12, (seconds * 1000).rounded())))
-}
 
 
 // MARK: - Settings of a request
@@ -350,7 +345,7 @@ public struct ChatCompletionsClient: Sendable {
         guard AnalysisRules.httpClass(status: status) == AnalysisRules.errNone else {
             let error = json?["error"] as? [String: Any]
             let message = (error?["message"] as? String) ?? (json?["message"] as? String)
-                ?? String(decoding: data.prefix(300), as: UTF8.self)
+                ?? String(decoding: data.prefix(AnalysisRules.errorExcerptChars), as: UTF8.self)
             throw AnalysisError(kind: AnalysisRules.kindHTTP, status: status, message: redact(message, key: key))
         }
         guard let json, let choices = json["choices"] as? [Any] else {
@@ -376,8 +371,8 @@ public struct ChatCompletionsClient: Sendable {
     /// A service message, cut to 300 characters, with the key (should a service echo it) blanked out.
     static func redact(_ message: String, key: String) -> String {
         var text = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        if key.count >= 4 { text = text.replacingOccurrences(of: key, with: "•••") }
-        return text.count > 300 ? String(text.prefix(300)) + "…" : text
+        if AnalysisRules.redactsKey(chars: key.count) { text = text.replacingOccurrences(of: key, with: "•••") }
+        return AnalysisRules.excerptCut(chars: text.count) ? String(text.prefix(AnalysisRules.errorExcerptChars)) + "…" : text
     }
 }
 
@@ -582,7 +577,7 @@ public struct CallAnalyst: Sendable {
     /// the request took.
     public func updateNotes(notes: String, lines: [AnalysisLine], maxLines: Int? = nil) async throws -> (notes: String, covered: Int) {
         guard !lines.isEmpty else { return (notes, 0) }
-        let candidates = lines.prefix(max(1, maxLines ?? lines.count))
+        let candidates = lines.prefix(AnalysisRules.reportLineCap(maxLines: maxLines, count: lines.count))
         let formatted = candidates.map { CallAnalysisPrompts.formatLine($0, timeZone: timeZone) }
         let used = CallAnalysisPrompts.system.utf8.count + CallAnalysisPrompts.notesUser(notes: notes, lines: "").utf8.count
         let take = AnalysisRules.chunkTake(sizes: formatted.map { $0.utf8.count + 1 }, usedBytes: used)
@@ -595,7 +590,7 @@ public struct CallAnalyst: Sendable {
         } catch let error as AnalysisError where error.errorClass == AnalysisRules.errCut {
             throw AnalysisError(kind: AnalysisRules.kindCut, status: error.status, lines: take)
         }
-        guard reply.complete else { throw AnalysisError(kind: AnalysisRules.kindCut, status: 200, lines: take) }
+        guard reply.complete else { throw AnalysisError(kind: AnalysisRules.kindCut, status: AnalysisRules.httpOK, lines: take) }
         return (CallAnalysisPrompts.cut(reply.text, maxBytes: AnalysisRules.maxNotesBytes), take)
     }
 
@@ -610,7 +605,7 @@ public struct CallAnalyst: Sendable {
         } catch let error as AnalysisError where error.errorClass == AnalysisRules.errCut {
             throw AnalysisError(kind: AnalysisRules.kindCut, status: error.status, lines: 0)
         }
-        guard reply.complete else { throw AnalysisError(kind: AnalysisRules.kindCut, status: 200, lines: 0) }
+        guard reply.complete else { throw AnalysisError(kind: AnalysisRules.kindCut, status: AnalysisRules.httpOK, lines: 0) }
         return CallAnalysisPrompts.cut(reply.text, maxBytes: AnalysisRules.maxNotesBytes)
     }
 
@@ -682,7 +677,7 @@ public struct CallAnalyst: Sendable {
             }
             notes = step.notes
             cap = step.lineCap
-            let covered = max(1, min(step.covered, rest.count))
+            let covered = AnalysisRules.coveredProgress(covered: step.covered, remaining: rest.count)
             await noted(notes, Array(rest.prefix(covered)))
             rest.removeFirst(covered)
         }
@@ -746,17 +741,18 @@ public struct AnalysisNotebook: Sendable, Equatable {
                 let line = item.element
                 guard !covered.contains(line.id) else { return false }
                 return all || AnalysisRules.lineReady(hasTranslation: line.hasTranslation, hasError: line.hasError,
-                                                      msSinceLine: analysisMillis(now.timeIntervalSince(line.at)))
+                                                      msSinceLine: AnalysisRules.millis(now.timeIntervalSince(line.at)))
             }
-            .sorted { $0.element.at != $1.element.at ? $0.element.at < $1.element.at : $0.offset < $1.offset }
+            .sorted { AnalysisRules.lineBefore(atA: $0.element.at.timeIntervalSinceReferenceDate, indexA: $0.offset,
+                                               atB: $1.element.at.timeIntervalSinceReferenceDate, indexB: $1.offset) }
             .map(\.element)
     }
 
     /// AnalysisRules.shouldUpdate with this notebook's facts.
     public func shouldUpdate(running: Bool, enabled: Bool, configured: Bool, busy: Bool, pendingCount: Int, now: Date) -> Bool {
         AnalysisRules.shouldUpdate(running: running, enabled: enabled, configured: configured, busy: busy, stopped: stopped,
-                                   newLines: pendingCount, msSinceLast: analysisMillis(now.timeIntervalSince(lastUpdateAt)),
-                                   msUntilRetry: retryAt.map { analysisMillis($0.timeIntervalSince(now)) } ?? 0)
+                                   newLines: pendingCount, msSinceLast: AnalysisRules.millis(now.timeIntervalSince(lastUpdateAt)),
+                                   msUntilRetry: retryAt.map { AnalysisRules.millis($0.timeIntervalSince(now)) } ?? 0)
     }
 
     /// A notes update succeeded (in the background or as a chunk of the report): the notes now cover these lines.

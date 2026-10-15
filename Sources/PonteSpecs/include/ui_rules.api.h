@@ -191,6 +191,8 @@ static const uint32_t UI_ROW_LENGTHS[5] = { 6, 4, 3, 4, 1 };
 #define UI_MIGRATE_NONE 0
 #define UI_MIGRATE_CLEAR 1
 #define UI_MIGRATE_MARK 2
+#define UI_PEERNOTE_NOT_RUNNING 1
+#define UI_PEERNOTE_SPEAKERS 2
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -259,5 +261,10 @@ bool ui_poll_reads_listeners(int64_t tick, bool sheet_open, int32_t run_state);
 bool ui_listener_streak(int32_t mark);
 int32_t ui_listener_banner(int32_t run_state, int32_t mark, int64_t ms_bad, bool shown, bool dismissed);
 int32_t ui_mic_migration(bool migrated, bool has_setting);
+bool ui_listener_dismissed(bool dismissed, bool gone, bool closed, bool streak);
+bool ui_hear_pick_clears_headphones(bool has_saved);
+bool ui_hear_pick_failed(bool system_is_picked);
+bool ui_listener_tick_reads_devices(bool sheet_open);
+int32_t ui_peer_notes(bool peer_on, bool running, bool headphones_like);
 /* Function bodies: see the full header. */
 #endif

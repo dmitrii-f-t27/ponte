@@ -517,7 +517,7 @@ public enum AudioRules {
 
     // MARK: - App catalog
 
-    /// Known call apps, sorted by bundle ID; labels are parallel. Must equal AudioApp.knownCallApps.
+    /// Known call apps, sorted by bundle ID; labels are parallel. The app reads only this table.
     public static let knownCallAppBundleIDs: [String] = (0..<Int64(DV_CALL_APPS)).map { i in
         DeviceText.bytes { dv_call_app_bundle_id(i, $0) }
     }
@@ -903,6 +903,21 @@ public enum AudioRules {
     public static func micSliceFrames(ioFrames: Int, hintFrames: Int) -> Int { Int(au_mic_slice_frames(Int64(ioFrames), Int64(hintFrames))) }
     public static func micCycleFits(frames: Int, capacity: Int) -> Bool { au_mic_cycle_fits(Int64(frames), Int64(capacity)) }
     public static func tapRebuilds(action: Int, updated: Bool) -> Bool { au_tap_rebuilds(Int64(action), updated) }
+
+    // MARK: Devices (moved out of Swift 2026-10-15)
+
+    public static let earsHeadphones = Int(DV_EARS_HEADPHONES)
+    public static let earsSystem = Int(DV_EARS_SYSTEM)
+    /// Where the owner hears Ponte: the chosen headphones while connected, else the system output.
+    public static func ears(headphonesConnected: Bool) -> Int { Int(dv_ears(headphonesConnected)) }
+    public static func isInput(channels: Int) -> Bool { dv_is_input(Int64(channels)) }
+    public static func isOutput(channels: Int) -> Bool { dv_is_output(Int64(channels)) }
+    public static func isMicChoice(inputChannels: Int, isBlackHole: Bool) -> Bool { dv_is_mic_choice(Int64(inputChannels), isBlackHole) }
+    /// The label of a known call app (the spec's table), or nil.
+    public static func knownCallAppLabel(bundleID: String) -> String? {
+        let i = knownCallAppIndex(bundleID: bundleID)
+        return i >= 0 && i < knownCallAppLabels.count ? knownCallAppLabels[i] : nil
+    }
 }
 
 /// Strings packed for `device_rules`: one UTF-8 buffer of `DV_TEXT_MAX` bytes and offset/length tables of

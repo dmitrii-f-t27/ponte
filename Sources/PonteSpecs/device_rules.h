@@ -209,6 +209,8 @@ static const uint32_t DV_FX_LENGTHS[73] = { 20, 20, 19, 28, 22, 23, 3, 1, 13, 16
 #define DV_LISTEN_REAL_MIC 3
 #define DV_LISTEN_BOTH 4
 #define DV_LISTEN_NO_BLACKHOLE 5
+#define DV_EARS_HEADPHONES 0
+#define DV_EARS_SYSTEM 1
 
 /* -------------------------------------------------------
    Function prototypes
@@ -276,6 +278,10 @@ bool dv_mic_is_output_headset(uint8_t text[static 8192], uint32_t name_offsets[s
 int64_t dv_pick_auto_mic_index(uint8_t text[static 8192], uint32_t name_offsets[static 256], uint32_t name_lengths[static 256], int64_t kinds[static 256], int64_t input_channels[static 256], int64_t count, int64_t output_index);
 int64_t dv_fixture(int64_t index, uint8_t text[static 8192], int64_t at);
 int64_t dv_fixture_push(int64_t index, uint8_t text[static 8192], int64_t at, uint32_t offsets[static 256], uint32_t lengths[static 256], int64_t slot);
+int64_t dv_ears(bool headphones_connected);
+bool dv_is_input(int64_t input_channels);
+bool dv_is_output(int64_t output_channels);
+bool dv_is_mic_choice(int64_t input_channels, bool is_blackhole);
 
 /* -------------------------------------------------------
    Function implementations
@@ -1096,6 +1102,25 @@ int64_t dv_fixture_push(int64_t index, uint8_t text[static 8192], int64_t at, ui
     return (at + n);
 }
 
+int64_t dv_ears(bool headphones_connected) {
+    if (headphones_connected) {
+        return DV_EARS_HEADPHONES;
+    }
+    return DV_EARS_SYSTEM;
+}
+
+bool dv_is_input(int64_t input_channels) {
+    return (input_channels > 0);
+}
+
+bool dv_is_output(int64_t output_channels) {
+    return (output_channels > 0);
+}
+
+bool dv_is_mic_choice(int64_t input_channels, bool is_blackhole) {
+    return (dv_is_input(input_channels) && (is_blackhole == false));
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
@@ -1732,6 +1757,18 @@ void test_dv_mic_headset(void) {
     assert((dv_mic_is_output_headset(t, offs, lens, kinds, 4, 2, 9) == false));
 }
 
+void test_dv_moved_out_of_swift(void) {
+    assert((dv_ears(true) == DV_EARS_HEADPHONES));
+    assert((dv_ears(false) == DV_EARS_SYSTEM));
+    assert((dv_is_input(1) == true));
+    assert((dv_is_input(0) == false));
+    assert((dv_is_output(2) == true));
+    assert((dv_is_output((0 - 1)) == false));
+    assert((dv_is_mic_choice(1, false) == true));
+    assert((dv_is_mic_choice(2, true) == false));
+    assert((dv_is_mic_choice(0, false) == false));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1751,7 +1788,8 @@ int main(void) {
     test_dv_hear_menu();
     test_dv_rescue_output();
     test_dv_mic_headset();
-    printf("All %d tests passed.\n", 11);
+    test_dv_moved_out_of_swift();
+    printf("All %d tests passed.\n", 12);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

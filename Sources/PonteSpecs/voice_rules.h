@@ -96,6 +96,7 @@ int64_t vo_fixture(int64_t index, uint8_t out[static 1024], int64_t at);
 int64_t vo_pick_gender(int64_t genders[static 64], int64_t count, int64_t want);
 int64_t vo_switch_gender(int64_t gender);
 int64_t vo_effective_gender(int64_t gender, uint8_t id[static 1024], int64_t len);
+bool vo_gender_reads_stored(bool stored_empty);
 
 /* -------------------------------------------------------
    Function implementations
@@ -318,6 +319,10 @@ int64_t vo_effective_gender(int64_t gender, uint8_t id[static 1024], int64_t len
     return VO_GENDER_UNSPECIFIED;
 }
 
+bool vo_gender_reads_stored(bool stored_empty) {
+    return (stored_empty == false);
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
@@ -426,6 +431,11 @@ void test_vo_moved_rules(void) {
     assert((vo_utterance_rate(1000) == 1.0));
 }
 
+void test_vo_moved_out_of_swift(void) {
+    assert((vo_gender_reads_stored(false) == true));
+    assert((vo_gender_reads_stored(true) == false));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -438,7 +448,8 @@ int main(void) {
     test_vo_rank_rules();
     test_vo_novelty_and_synthesis();
     test_vo_moved_rules();
-    printf("All %d tests passed.\n", 4);
+    test_vo_moved_out_of_swift();
+    printf("All %d tests passed.\n", 5);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

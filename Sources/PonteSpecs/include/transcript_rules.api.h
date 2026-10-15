@@ -67,6 +67,7 @@ static const uint8_t TR_FX_TEXT[515] = { 50, 48, 50, 54, 45, 49, 48, 45, 49, 49,
 static const uint32_t TR_FX_OFFSETS[28] = { 0, 18, 36, 56, 77, 92, 128, 177, 189, 202, 210, 219, 233, 248, 263, 279, 291, 304, 321, 339, 346, 351, 395, 440, 440, 454, 470, 491 };
 static const uint32_t TR_FX_LENGTHS[28] = { 18, 18, 20, 21, 15, 36, 49, 12, 13, 8, 9, 14, 15, 15, 16, 12, 13, 17, 18, 7, 5, 44, 45, 0, 14, 16, 21, 24 };
 #define TR_FIRST_ATTEMPT 1
+#define TR_ATTEMPTS_MAX 999
 /* -------------------------------------------------------
    Function prototypes
    ------------------------------------------------------- */
@@ -79,5 +80,8 @@ bool tr_fits_escape_input(int64_t bytes, int64_t char_bytes);
 bool tr_line_before(double at_a, int64_t index_a, double at_b, int64_t index_b);
 int64_t tr_fixture(int64_t index, uint8_t out[static 4096]);
 bool tr_fixture_matches(int64_t index, uint8_t buf[static 4096], int64_t len);
+int64_t tr_started_ms(bool has_call_start, int64_t call_start_ms, int64_t first_line_ms);
+int32_t tr_next_attempt(int32_t attempt);
+bool tr_attempt_allowed(int32_t attempt);
 /* Function bodies: see the full header. */
 #endif

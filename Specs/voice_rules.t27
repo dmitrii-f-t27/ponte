@@ -288,6 +288,12 @@ pub fn vo_effective_gender(gender: i64, id: [1024]u8, len: i64) -> i64 {
     return VO_GENDER_UNSPECIFIED;
 }
 
+; --- Moved out of Swift 2026-10-15 --------------------------------------------------------------------------------
+; The female/male switch reads the voice stored in the settings, or the language's first voice when none is stored.
+pub fn vo_gender_reads_stored(stored_empty: bool) -> bool {
+    return stored_empty == false;
+}
+
 test vo_gender_switch {
     var g: [64]i64 = [0; 64];
     assert vo_pick_gender(g, 0, VO_GENDER_MALE) == -1;
@@ -390,4 +396,9 @@ test vo_moved_rules {
     assert vo_base_rate_milli(true, 0.5555) == 556;
     assert vo_utterance_rate(500) == 0.5;
     assert vo_utterance_rate(1000) == 1.0;
+}
+
+test vo_moved_out_of_swift {
+    assert vo_gender_reads_stored(false) == true;
+    assert vo_gender_reads_stored(true) == false;
 }

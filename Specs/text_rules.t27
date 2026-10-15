@@ -20,6 +20,8 @@ module PonteTextRules;
 pub const TX_TEXT_MAX : i64 = 8192;
 ; The longest text said at once, in bytes after trimming: about 2000 Cyrillic letters, two minutes of speech.
 pub const TX_MAX_BYTES : i64 = 4000;
+; The note under the field counts Russian letters: two bytes each.
+pub const TX_MAX_LETTERS : i64 = 2000;
 ; A phrase is at least this many bytes: a shorter sentence joins the next one, a shorter tail joins the
 ; phrase before it...
 pub const TX_PHRASE_MIN_BYTES : i64 = 24;
@@ -367,6 +369,7 @@ pub fn tx_fixture_len(index: i64) -> i64 {
 }
 
 test tx_submit_rules {
+    assert TX_MAX_LETTERS * 2 == TX_MAX_BYTES;
     // The order of the checks.
     assert tx_submit_check(false, false, 0, false) == TX_SUBMIT_NOT_RUNNING;
     assert tx_submit_check(false, true, 10, true) == TX_SUBMIT_NOT_RUNNING;

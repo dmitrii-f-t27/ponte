@@ -482,7 +482,7 @@ enum AudioRulesLegacy {
 
     // MARK: - App catalog
 
-    /// Known call apps, sorted by bundle ID; labels are parallel. Must equal AudioApp.knownCallApps.
+    /// Known call apps, sorted by bundle ID; labels are parallel. The app reads only this table.
     static let knownCallAppBundleIDs = [
         "com.apple.FaceTime",
         "com.apple.Safari",
@@ -844,4 +844,13 @@ extension AudioRulesLegacy {
     static func micCycleFits(frames: Int, capacity: Int) -> Bool { frames > 0 && frames <= capacity }
     /// `case tapUpdate where updateTapProcesses(..): return; default: rebuild`.
     static func tapRebuilds(action: Int, updated: Bool) -> Bool { action == 3 || (action == 2 && !updated) }
+
+    // MARK: Devices moved out of Swift 2026-10-15 (AppModel, CoreAudioDeviceCatalog)
+
+    /// `headphonesDevice ?? defaultOutput`: 0 the headphones, 1 the system output.
+    static func ears(headphonesConnected: Bool) -> Int { headphonesConnected ? 0 : 1 }
+    static func isInput(channels: Int) -> Bool { channels > 0 }
+    static func isOutput(channels: Int) -> Bool { channels > 0 }
+    /// `inputChannels > 0 && !isBlackHole(name:)`.
+    static func isMicChoice(inputChannels: Int, isBlackHole: Bool) -> Bool { inputChannels > 0 && !isBlackHole }
 }

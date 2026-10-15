@@ -473,4 +473,29 @@ private typealias L = AnalysisRulesLegacy
             return Array(out[0..<n])
         }
     }
+
+    @Test func movedOutOfSwift() {
+        let log = DiffLog("millis, lineBefore, reportLineCap, coveredProgress, excerptCut, redactsKey, startSource, endMs")
+        var r = DiffRandom(seed: 0xA1A1)
+        for _ in 0..<40_000 {
+            let s = r.double()
+            log.check(F.millis(s), L.millis(s), "\(s)")
+            let a = r.bool() ? r.double() : Double(r.int(0...5)), b = r.bool() ? a : Double(r.int(0...5))
+            let ia = r.int(-3...3), ib = r.int(-3...3)
+            log.check(F.lineBefore(atA: a, indexA: ia, atB: b, indexB: ib), L.lineBefore(atA: a, indexA: ia, atB: b, indexB: ib), "\(a) \(ia) \(b) \(ib)")
+            let cap: Int? = r.bool() ? r.int(-5...500) : nil
+            let count = r.int(-5...500)
+            log.check(F.reportLineCap(maxLines: cap, count: count), L.reportLineCap(maxLines: cap, count: count), "\(String(describing: cap)) \(count)")
+            let covered = r.int(-5...500), remaining = r.int(-5...500)
+            log.check(F.coveredProgress(covered: covered, remaining: remaining), L.coveredProgress(covered: covered, remaining: remaining), "\(covered) \(remaining)")
+            let end: Int64? = r.bool() ? Int64(r.int(0...2_000_000_000)) : nil
+            let now = Int64(r.int(0...2_000_000_000))
+            for running in [false, true] { log.check(F.endMs(running: running, endMs: end, nowMs: now), L.endMs(running: running, endMs: end, nowMs: now), "\(running) \(String(describing: end)) \(now)") }
+        }
+        for n in -5...400 { log.check(F.excerptCut(chars: n), L.excerptCut(chars: n), "\(n)"); log.check(F.redactsKey(chars: n), L.redactsKey(chars: n), "\(n)") }
+        for a in [false, true] { for b in [false, true] { for c in [false, true] {
+            log.check(F.startSource(hasOwn: a, hasApp: b, hasLines: c), L.startSource(hasOwn: a, hasApp: b, hasLines: c), "\(a) \(b) \(c)")
+        } } }
+        log.finish(minimumCases: 200_000)
+    }
 }

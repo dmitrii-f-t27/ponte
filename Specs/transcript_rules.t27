@@ -274,6 +274,24 @@ pub fn tr_fixture_matches(index: i64, buf: [4096]u8, len: i64) -> bool {
     return true;
 }
 
+; --- Moved out of Swift 2026-10-15 --------------------------------------------------------------------------------
+; The transcript starts when the call started, or at its first line when Ponte did not see the start.
+pub fn tr_started_ms(has_call_start: bool, call_start_ms: i64, first_line_ms: i64) -> i64 {
+    if (has_call_start) { return call_start_ms; }
+    return first_line_ms;
+}
+
+; A file name taken: the next attempt is one more; none past TR_ATTEMPTS_MAX (the write fails instead of looping).
+pub const TR_ATTEMPTS_MAX : i32 = 999;
+pub fn tr_next_attempt(attempt: i32) -> i32 {
+    if (attempt < TR_FIRST_ATTEMPT) { return TR_FIRST_ATTEMPT; }
+    if (attempt > TR_ATTEMPTS_MAX) { return attempt; }
+    return attempt + 1;
+}
+pub fn tr_attempt_allowed(attempt: i32) -> bool {
+    return attempt >= TR_FIRST_ATTEMPT and attempt <= TR_ATTEMPTS_MAX;
+}
+
 test tr_file_names {
     var out: [4096]u8 = [0; 4096];
     // rulesTranscriptBytes (file names)
@@ -365,4 +383,16 @@ test tr_moved_rules {
     assert tr_line_before(1.0, 1, 1.0, 0) == false;
     assert tr_line_before(1.0, 1, 1.0, 1) == false;
     assert TR_FIRST_ATTEMPT == 1;
+}
+
+test tr_moved_out_of_swift {
+    assert tr_started_ms(true, 5000, 9000) == 5000;
+    assert tr_started_ms(false, 5000, 9000) == 9000;
+    assert tr_next_attempt(1) == 2;
+    assert tr_next_attempt(0 - 5) == TR_FIRST_ATTEMPT;
+    assert tr_next_attempt(999) == 1000;
+    assert tr_attempt_allowed(1000) == false;
+    assert tr_attempt_allowed(999) == true;
+    assert tr_attempt_allowed(0) == false;
+    assert tr_next_attempt(2147483647) == 2147483647;
 }

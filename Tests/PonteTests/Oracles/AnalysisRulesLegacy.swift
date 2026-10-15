@@ -318,4 +318,25 @@ enum AnalysisRulesLegacy {
         if attempt >= 2 { name += "-\(padded(attempt, 1))" }
         return Array((name + ".txt").utf8)
     }
+
+    // MARK: Moved out of Swift 2026-10-15 (CallAnalyst, CallAnalysisModel)
+
+    /// analysisMillis, now the lane's rule: NaN 0, held to +-1e15 ms.
+    static func millis(_ seconds: Double) -> Int {
+        let ms = seconds * 1000
+        guard !ms.isNaN else { return 0 }
+        return Int(min(max(ms, -1e15), 1e15).rounded())
+    }
+    /// `$0.at != $1.at ? $0.at < $1.at : $0.offset < $1.offset`.
+    static func lineBefore(atA: Double, indexA: Int, atB: Double, indexB: Int) -> Bool { atA != atB ? atA < atB : indexA < indexB }
+    /// `lines.prefix(max(1, maxLines ?? lines.count))`.
+    static func reportLineCap(maxLines: Int?, count: Int) -> Int { max(1, maxLines ?? count) }
+    /// `max(1, min(step.covered, rest.count))`.
+    static func coveredProgress(covered: Int, remaining: Int) -> Int { max(1, min(covered, remaining)) }
+    static func excerptCut(chars: Int) -> Bool { chars > 300 }
+    static func redactsKey(chars: Int) -> Bool { chars >= 4 }
+    /// `callStartedAt ?? host.callStartedAt ?? lines.first?.at ?? Date()`.
+    static func startSource(hasOwn: Bool, hasApp: Bool, hasLines: Bool) -> Int { hasOwn ? 0 : (hasApp ? 1 : (hasLines ? 2 : 3)) }
+    /// `host.isRunning ? nil : (callEndedAt ?? Date())`.
+    static func endMs(running: Bool, endMs: Int64?, nowMs: Int64) -> Int64? { running ? nil : (endMs ?? nowMs) }
 }

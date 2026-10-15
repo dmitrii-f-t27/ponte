@@ -84,13 +84,14 @@ enum AudioConversion {
         var parts: [AVAudioPCMBuffer] = []
         var converter: AVAudioConverter?
         for buffer in buffers where buffer.frameLength > 0 {
-            if buffer.format == target {
+            if SpeechRules.copiesBuffer(sameFormat: buffer.format == target) {
                 if let c = copy(buffer) { parts.append(c) }
                 continue
             }
             if converter == nil || converter?.inputFormat != buffer.format {
                 converter = AVAudioConverter(from: buffer.format, to: target)
-                converter?.downmix = true
+                converter?.downmix = SpeechRules.converterDownmixes(inputChannels: Int(buffer.format.channelCount),
+                                                                    outputChannels: Int(target.channelCount))
             }
             guard let converter else {
                 throw PonteSpeechError.audioConversionFailed("no converter from \(buffer.format)")

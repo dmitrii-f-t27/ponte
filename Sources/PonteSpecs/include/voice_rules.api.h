@@ -90,5 +90,6 @@ int64_t vo_fixture(int64_t index, uint8_t out[static 1024], int64_t at);
 int64_t vo_pick_gender(int64_t genders[static 64], int64_t count, int64_t want);
 int64_t vo_switch_gender(int64_t gender);
 int64_t vo_effective_gender(int64_t gender, uint8_t id[static 1024], int64_t len);
+bool vo_gender_reads_stored(bool stored_empty);
 /* Function bodies: see the full header. */
 #endif

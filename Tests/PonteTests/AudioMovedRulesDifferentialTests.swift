@@ -237,4 +237,15 @@ private typealias L = AudioRulesLegacy
         }
         log.finish(minimumCases: 160_000)
     }
+
+    @Test func devicesMovedOutOfSwift() {
+        let log = DiffLog("ears, isInput, isOutput, isMicChoice")
+        for c in [false, true] { log.check(F.ears(headphonesConnected: c), L.ears(headphonesConnected: c), "\(c)") }
+        for n in Array(-3...70) + [Int.min, Int.max] {
+            log.check(F.isInput(channels: n), L.isInput(channels: n), "\(n)")
+            log.check(F.isOutput(channels: n), L.isOutput(channels: n), "\(n)")
+            for bh in [false, true] { log.check(F.isMicChoice(inputChannels: n, isBlackHole: bh), L.isMicChoice(inputChannels: n, isBlackHole: bh), "\(n) \(bh)") }
+        }
+        log.finish(minimumCases: 300)
+    }
 }

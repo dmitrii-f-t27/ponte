@@ -320,7 +320,8 @@ private final class FakeCatalog: AudioDeviceCatalog {
     #expect(apps[0].isKnownCallApp && apps[0].isPlayingAudio)
     #expect(apps[0].name == "BrowserOS (Meet)")
     #expect(apps[0].pids == [700, 701])
-    #expect(AudioApp.knownCallApps["com.browseros.BrowserClaw"] == "BrowserOS (Meet)")
+    #expect(AudioRules.knownCallAppLabel(bundleID: "com.browseros.BrowserClaw") == "BrowserOS (Meet)")
+    #expect(AudioRules.knownCallAppLabel(bundleID: "com.browseros.BrowserClaw.helper") == nil)
     #expect(AudioRules.isKnownCallApp(bundleID: "com.browseros.BrowserClaw"))
     #expect(!AudioRules.isKnownCallApp(bundleID: "com.browseros.BrowserClaw.helper"))
     #expect(AudioProcesses.objects(forApp: "com.browseros.BrowserClaw", in: processes).map(\.objectID) == [2, 3])
@@ -600,10 +601,10 @@ private final class FakeCatalog: AudioDeviceCatalog {
     // MARK: App catalog
 
     @Test func knownCallAppsMatchContracts() {
-        #expect(R.knownCallAppBundleIDs == AudioApp.knownCallApps.keys.sorted())
+        #expect(R.knownCallAppBundleIDs == DeviceRulesSpecTests.knownCallApps.keys.sorted())
         #expect(R.knownCallAppBundleIDs.count == R.knownCallAppLabels.count)
         for (i, bid) in R.knownCallAppBundleIDs.enumerated() {
-            #expect(R.knownCallAppLabels[i] == AudioApp.knownCallApps[bid])
+            #expect(R.knownCallAppLabels[i] == DeviceRulesSpecTests.knownCallApps[bid])
             #expect(R.knownCallAppIndex(bundleID: bid) == i)
         }
         #expect(R.knownCallAppIndex(bundleID: "com.google.Chrome.helper") == -1)

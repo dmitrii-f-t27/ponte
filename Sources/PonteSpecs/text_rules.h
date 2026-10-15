@@ -20,6 +20,7 @@
 
 #define TX_TEXT_MAX 8192
 #define TX_MAX_BYTES 4000
+#define TX_MAX_LETTERS 2000
 #define TX_PHRASE_MIN_BYTES 24
 #define TX_PHRASE_MAX_BYTES 400
 #define TX_SUBMIT_OK 0
@@ -386,6 +387,7 @@ int64_t tx_fixture_len(int64_t index) {
    ------------------------------------------------------- */
 
 void test_tx_submit_rules(void) {
+    assert(((TX_MAX_LETTERS * 2) == TX_MAX_BYTES));
     assert((tx_submit_check(false, false, 0, false) == TX_SUBMIT_NOT_RUNNING));
     assert((tx_submit_check(false, true, 10, true) == TX_SUBMIT_NOT_RUNNING));
     assert((tx_submit_check(true, false, 10, true) == TX_SUBMIT_NO_LANE));

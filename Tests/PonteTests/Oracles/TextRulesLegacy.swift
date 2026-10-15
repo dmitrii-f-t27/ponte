@@ -5,6 +5,7 @@
 enum TextRulesLegacy {
     static let TEXT_MAX = 8192
     static let MAX_BYTES = 4000
+    static let MAX_LETTERS = 2000
     static let PHRASE_MIN_BYTES = 24
     static let PHRASE_MAX_BYTES = 400
 

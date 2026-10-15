@@ -298,15 +298,22 @@ private struct Samples {
         #expect(info?["CFBundleIdentifier"] as? String == "app.ponte.translator")
     }
 
+    /// The known call apps the spec's table must hold (device_rules.t27; the app reads only the spec).
+    static let knownCallApps: [String: String] = [
+        "com.apple.FaceTime": "FaceTime", "com.apple.Safari": "Safari (Meet)", "com.browseros.BrowserClaw": "BrowserOS (Meet)",
+        "com.google.Chrome": "Chrome (Meet)", "com.microsoft.teams2": "Teams", "net.whatsapp.WhatsApp": "WhatsApp",
+        "org.telegram.desktop": "Telegram Desktop", "ru.keepcoder.Telegram": "Telegram", "us.zoom.xos": "Zoom",
+    ]
+
     @Test func knownCallAppsMatchContracts() {
-        let ids = AudioApp.knownCallApps.keys.sorted()
+        let ids = Self.knownCallApps.keys.sorted()
         #expect(DV_CALL_APPS == ids.count)
         var out = [UInt8](repeating: 0, count: 8192)
         for (i, id) in ids.enumerated() {
             let n = dv_call_app_bundle_id(Int64(i), &out)
             #expect(text(out, n) == id)
             let m = dv_call_app_label(Int64(i), &out)
-            #expect(text(out, m) == AudioApp.knownCallApps[id])
+            #expect(text(out, m) == Self.knownCallApps[id])
             var t = TextBuffer([id])
             #expect(dv_known_call_app_index(&t.bytes, 0, t.len(0)) == Int64(i))
         }

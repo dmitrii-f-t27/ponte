@@ -1,5 +1,6 @@
 import Foundation
 import PonteCore
+import PonteSpeech
 
 /// Writes the call log as Markdown: ~/Documents/Ponte/YYYY-MM-DD-HHMM.md.
 /// File name and escaping come from AppRules; Russian labels and layout are here.
@@ -38,7 +39,7 @@ enum TranscriptExporter {
         let day = formatter("dd.MM.yyyy", timeZone)
         let minute = formatter("HH:mm", timeZone)
         let second = formatter("HH:mm:ss", timeZone)
-        let theirs = lines.filter { $0.direction == .incoming }.count
+        let theirs = lines.filter { Self.isTheirs($0.direction) }.count
         var out = "# Ponte — звонок \(day.string(from: startedAt)), \(minute.string(from: startedAt))\n\n"
         if let sourceName { out += "- Источник звука: \(escaped(sourceName))\n" }
         if let endedAt {
@@ -50,7 +51,7 @@ enum TranscriptExporter {
                                 atB: $1.element.at.timeIntervalSinceReferenceDate, indexB: $1.offset)
         }.map(\.element)
         for line in ordered {
-            let who = line.direction == .incoming ? "Они" : "Я"
+            let who = Self.isTheirs(line.direction) ? "Они" : "Я"
             let route = "\(line.direction.source.rawValue) → \(line.direction.target.rawValue)"
             var header = "\n**\(second.string(from: line.at)) · \(who)** (\(route))"
             if let latency = line.latency {
@@ -67,6 +68,11 @@ enum TranscriptExporter {
         return out
     }
 
+    /// The other side spoke this line (analysis_rules.t27 an_speaker: the incoming lane).
+    static func isTheirs(_ direction: Direction) -> Bool {
+        AnalysisRules.speaker(direction: AnalysisRules.directionCode(direction)) == AnalysisRules.speakerThem
+    }
+
     /// Writes the file and returns its URL. Never overwrites: attempt 2, 3… add "-N".
     @discardableResult
     static func write(lines: [ConversationLine], startedAt: Date, endedAt: Date? = nil,
@@ -75,7 +81,8 @@ enum TranscriptExporter {
         var attempt = AppRules.FIRST_ATTEMPT
         var url = folder.appendingPathComponent(fileName(for: startedAt, attempt: attempt))
         while FileManager.default.fileExists(atPath: url.path) {
-            attempt += 1
+            attempt = AppRules.nextAttempt(attempt)
+            guard AppRules.attemptAllowed(attempt) else { throw CocoaError(.fileWriteFileExists) }
             url = folder.appendingPathComponent(fileName(for: startedAt, attempt: attempt))
         }
         let text = markdown(lines: lines, startedAt: startedAt, endedAt: endedAt, sourceName: sourceName)

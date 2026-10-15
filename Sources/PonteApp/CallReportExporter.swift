@@ -70,7 +70,8 @@ enum CallReportExporter {
         var attempt = AnalysisRules.firstAttempt
         var url = folder.appendingPathComponent(fileName(for: startedAt, attempt: attempt))
         while FileManager.default.fileExists(atPath: url.path) {
-            attempt += 1
+            attempt = AppRules.nextAttempt(attempt)
+            guard AppRules.attemptAllowed(attempt) else { throw CocoaError(.fileWriteFileExists) }
             url = folder.appendingPathComponent(fileName(for: startedAt, attempt: attempt))
         }
         try text.write(to: url, atomically: true, encoding: .utf8)

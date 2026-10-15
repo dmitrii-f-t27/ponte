@@ -147,16 +147,15 @@ struct ListenerWarning {
 
     /// The banner to show after a poll; `mark` is the listener row's AppRules.CK_*, `text` its red text.
     mutating func banner(after current: Banner?, runState: Int32, mark: Int32, now: Date, text: () -> String) -> Banner? {
-        if let id = bannerID, current?.id != id {
-            // Gone from the screen: closed by the owner, or replaced by another banner (which it takes over again).
-            if current == nil { dismissed = true }
-            bannerID = nil
-        }
-        if AppRules.listenerStreak(mark: mark) {
+        // Gone from the screen: closed by the owner (nothing took its place) or replaced by another banner.
+        let gone = bannerID != nil && current?.id != bannerID
+        if gone { bannerID = nil }
+        let streak = AppRules.listenerStreak(mark: mark)
+        dismissed = AppRules.listenerDismissed(dismissed: dismissed, gone: gone, closed: current == nil, streak: streak)
+        if streak {
             if badSince == nil { badSince = now }
         } else {
             badSince = nil
-            dismissed = false
         }
         let msBad = badSince.map { millis(now.timeIntervalSince($0)) } ?? -1
         switch AppRules.listenerBanner(runState: runState, mark: mark, msBad: msBad, shown: bannerID != nil, dismissed: dismissed) {
@@ -262,7 +261,7 @@ final class AppModel {
     func voiceGender(_ lang: Lang) -> Int {
         let voices = SystemSpeechSynth.voices(for: lang)
         let stored = lang == .ptBR ? voicePT : voiceRU
-        let id = stored.isEmpty ? voices.first?.id : stored
+        let id = SpeechRules.genderReadsStored(storedEmpty: stored.isEmpty) ? stored : voices.first?.id
         return SpeechRules.switchGender(voices.first(where: { $0.id == id })?.gender ?? SpeechRules.genderUnspecified)
     }
 
@@ -512,7 +511,7 @@ final class AppModel {
     var incomingLines: [ConversationLine] { lines.filter { $0.direction == .incoming } }
     var outgoingLines: [ConversationLine] { lines.filter { $0.direction == .outgoing } }
     /// The microphone chosen in the settings, if it is connected.
-    var savedMicDevice: AudioDevice? { devices.first { $0.uid == micUID && $0.inputChannels > 0 } }
+    var savedMicDevice: AudioDevice? { devices.first { $0.uid == micUID && AudioRules.isInput(channels: $0.inputChannels) } }
     /// AppRules.MICSRC_*: the setting, the automatic pick, or the system default (no microphone found).
     var micSource: Int32 {
         AppRules.micSource(hasSetting: !micUID.isEmpty, found: savedMicDevice != nil, hasAuto: autoMicDevice != nil)
@@ -525,12 +524,17 @@ final class AppModel {
         default: nil
         }
     }
-    var headphonesDevice: AudioDevice? { devices.first { $0.uid == headphonesUID && $0.outputChannels > 0 } }
-    var inputDevices: [AudioDevice] { devices.filter { $0.inputChannels > 0 && !AudioRules.isBlackHole(name: $0.name) } }
-    var outputDevices: [AudioDevice] { devices.filter { $0.outputChannels > 0 } }
+    var headphonesDevice: AudioDevice? { devices.first { $0.uid == headphonesUID && AudioRules.isOutput(channels: $0.outputChannels) } }
+    var inputDevices: [AudioDevice] {
+        devices.filter { AudioRules.isMicChoice(inputChannels: $0.inputChannels, isBlackHole: AudioRules.isBlackHole(name: $0.name)) }
+    }
+    var outputDevices: [AudioDevice] { devices.filter { AudioRules.isOutput(channels: $0.outputChannels) } }
 
     /// Where the user hears things: chosen headphones or the system output.
-    var listeningDevice: AudioDevice? { headphonesDevice ?? defaultOutput }
+    var listeningDevice: AudioDevice? {
+        let headphones = headphonesDevice
+        return AudioRules.ears(headphonesConnected: headphones != nil) == AudioRules.earsHeadphones ? headphones : defaultOutput
+    }
 
     /// «Звук»: the outputs the owner can pick (device_rules: dv_is_hear_output).
     var hearOutputs: [AudioDevice] {
@@ -563,9 +567,9 @@ final class AppModel {
         } catch {
             log.error("hear on \(device.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
         }
-        if !headphonesUID.isEmpty { headphonesUID = "" }
+        if AppRules.hearPickClearsHeadphones(hasSaved: !headphonesUID.isEmpty) { headphonesUID = "" }
         refreshCatalogs()
-        if defaultOutput?.id != device.id {
+        if AppRules.hearPickFailed(systemIsPicked: defaultOutput?.id == device.id) {
             hearNotice = "macOS не переключил звук на «\(device.name)». Выберите это устройство в Пункте управления → Звук."
         }
     }
@@ -595,13 +599,14 @@ final class AppModel {
     /// The owner's ears are sealed from Ponte's microphone (lane_rules: ln_output_sealed): a jack headphone, or the
     /// headset whose own microphone Ponte uses. Otherwise the mic may hear the other Russians' voices.
     var outputSealed: Bool {
-        guard let output = listeningDevice else { return false }
-        let kind = deviceCatalog.kind(of: output)
+        // No output known: neither a sealed kind nor the mic's own headset.
+        let output = listeningDevice
+        let kind = output.map { deviceCatalog.kind(of: $0) }
         let mic = micDevice.flatMap { m in devices.firstIndex { $0.id == m.id } } ?? -1
-        let out = devices.firstIndex { $0.id == output.id } ?? -1
+        let out = output.flatMap { o in devices.firstIndex { $0.id == o.id } } ?? -1
         let headset = AudioRules.micIsOutputHeadset(names: devices.map(\.name), kinds: devices.map { deviceCatalog.kind(of: $0) },
                                                     micIndex: mic, outputIndex: out)
-        return AppRules.outputSealed(echoRiskNone: AudioRules.echoRisk(kind: kind) == AudioRules.echoNone,
+        return AppRules.outputSealed(echoRiskNone: kind.map { AudioRules.echoRisk(kind: $0) == AudioRules.echoNone } ?? false,
                                      micIsOutputHeadset: headset)
     }
 
@@ -611,7 +616,7 @@ final class AppModel {
         var id = ""
         if case .app(let bundleID) = source { id = bundleID }
         let running = audioApps.first { $0.bundleID == id }?.name
-        let label = AudioApp.knownCallApps[id]
+        let label = AudioRules.knownCallAppLabel(bundleID: id)
         switch AppRules.sourceTitle(isSystem: source == .system, hasRunningName: running != nil, hasLabel: label != nil) {
         case AppRules.TITLE_SYSTEM: return "Весь звук Мака"
         case AppRules.TITLE_RUNNING: return running ?? id
@@ -798,7 +803,7 @@ final class AppModel {
                 if AppRules.pollRefreshesCatalogs(tick: tick) { self.refreshCatalogs() }
                 if AppRules.pollReadsListeners(tick: tick, sheetOpen: self.showChecklist, runState: self.runState.code) {
                     // The open checklist follows plugged headphones within a second, too.
-                    if self.showChecklist { self.refreshDevices() }
+                    if AppRules.listenerTickReadsDevices(sheetOpen: self.showChecklist) { self.refreshDevices() }
                     self.refreshListener()
                 }
                 self.pollListenerBanner()
@@ -1429,7 +1434,9 @@ final class AppModel {
             return nil
         }
         do {
-            let url = try TranscriptExporter.write(lines: lines, startedAt: callStartedAt ?? lines[0].at,
+            let startedMs = AppRules.transcriptStartedMs(callStartMs: callStartedAt.map { AppRules.millis($0.timeIntervalSince1970) },
+                                                         firstLineMs: AppRules.millis(lines[0].at.timeIntervalSince1970))
+            let url = try TranscriptExporter.write(lines: lines, startedAt: Date(timeIntervalSince1970: Double(startedMs) / 1000),
                                                    endedAt: AppRules.transcriptHasEnd(runState: runState.code) ? Date() : nil,
                                                    sourceName: activeSourceName,
                                                    to: launch.transcriptDir ?? TranscriptExporter.defaultFolder)

@@ -1072,6 +1072,29 @@ pub fn dv_fixture_push(index: i64, text: [8192]u8, at: i64, offsets: [256]u32, l
     return at + n;
 }
 
+; --- Moved out of Swift 2026-10-15 --------------------------------------------------------------------------------
+; Where the owner hears Ponte (EARS_*): the headphones chosen in the settings while they are connected, else the
+; system output.
+pub const DV_EARS_HEADPHONES : i64 = 0;
+pub const DV_EARS_SYSTEM : i64 = 1;
+pub fn dv_ears(headphones_connected: bool) -> i64 {
+    if (headphones_connected) { return DV_EARS_HEADPHONES; }
+    return DV_EARS_SYSTEM;
+}
+
+; A device takes part as an input when it has input channels and as an output when it has output channels.
+pub fn dv_is_input(input_channels: i64) -> bool {
+    return input_channels > 0;
+}
+pub fn dv_is_output(output_channels: i64) -> bool {
+    return output_channels > 0;
+}
+
+; The settings' microphone list: inputs other than BlackHole (the call's microphone).
+pub fn dv_is_mic_choice(input_channels: i64, is_blackhole: bool) -> bool {
+    return dv_is_input(input_channels) and is_blackhole == false;
+}
+
 test dv_text_helpers {
     var t: [8192]u8 = [0; 8192];
     var out: [8192]u8 = [0; 8192];
@@ -1716,4 +1739,16 @@ test dv_mic_headset {
     assert dv_mic_is_output_headset(t, offs, lens, kinds, 4, 0, 1) == false;
     assert dv_mic_is_output_headset(t, offs, lens, kinds, 4, -1, 3) == false;
     assert dv_mic_is_output_headset(t, offs, lens, kinds, 4, 2, 9) == false;
+}
+
+test dv_moved_out_of_swift {
+    assert dv_ears(true) == DV_EARS_HEADPHONES;
+    assert dv_ears(false) == DV_EARS_SYSTEM;
+    assert dv_is_input(1) == true;
+    assert dv_is_input(0) == false;
+    assert dv_is_output(2) == true;
+    assert dv_is_output(0 - 1) == false;
+    assert dv_is_mic_choice(1, false) == true;
+    assert dv_is_mic_choice(2, true) == false;
+    assert dv_is_mic_choice(0, false) == false;
 }

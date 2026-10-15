@@ -43,7 +43,6 @@ public struct AudioDevice: Hashable, Identifiable, Sendable {
         self.outputChannels = outputChannels
     }
 
-    public var isVirtualMic: Bool { name.localizedCaseInsensitiveContains("BlackHole") }
 }
 
 public protocol AudioDeviceCatalog: AnyObject {
@@ -77,17 +76,6 @@ public struct AudioApp: Hashable, Identifiable, Sendable {
         self.isKnownCallApp = isKnownCallApp
     }
 
-    public static let knownCallApps: [String: String] = [
-        "us.zoom.xos": "Zoom",
-        "com.google.Chrome": "Chrome (Meet)",
-        "com.apple.Safari": "Safari (Meet)",
-        "com.browseros.BrowserClaw": "BrowserOS (Meet)",
-        "ru.keepcoder.Telegram": "Telegram",
-        "org.telegram.desktop": "Telegram Desktop",
-        "net.whatsapp.WhatsApp": "WhatsApp",
-        "com.apple.FaceTime": "FaceTime",
-        "com.microsoft.teams2": "Teams",
-    ]
 }
 
 public protocol AudioAppCatalog: AnyObject {

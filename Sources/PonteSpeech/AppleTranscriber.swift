@@ -188,13 +188,14 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
         guard let continuation = inputContinuation, let format = analyzerFormat else { return }
         let converted: AVAudioPCMBuffer
         do {
-            if buffer.format == format {
+            if SpeechRules.copiesBuffer(sameFormat: buffer.format == format) {
                 guard let c = AudioConversion.copy(buffer) else { return }
                 converted = c
             } else {
                 if converter == nil || converter?.inputFormat != buffer.format {
                     converter = AVAudioConverter(from: buffer.format, to: format)
-                    converter?.downmix = true
+                    converter?.downmix = SpeechRules.converterDownmixes(inputChannels: Int(buffer.format.channelCount),
+                                                                        outputChannels: Int(format.channelCount))
                 }
                 guard let converter else {
                     lastError = PonteSpeechError.audioConversionFailed("\(buffer.format) → \(format)")
@@ -271,7 +272,7 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
             let duration = Double(n) / rate
             if activity.add(level: level, start: start, duration: duration) {
                 lastVoiceEnd = start + duration
-                if phraseVoiceStart == nil { phraseVoiceStart = start }
+                phraseVoiceStart = SpeechRules.phraseVoiceStart(start: phraseVoiceStart, windowStart: start)
             }
             offset += n
         }
@@ -315,7 +316,7 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
         lastCut = cut
         Task { [self] in
             do {
-                try await analyzer.finalize(through: CMTime(seconds: cut, preferredTimescale: 16_000))
+                try await analyzer.finalize(through: CMTime(seconds: cut, preferredTimescale: SpeechRules.cutTimescale))
             } catch {
                 lock.withLock { if lastError == nil { lastError = error } }
             }
@@ -346,7 +347,10 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
     /// Call with `lock` held.
     private func arrivalTime(ofAudio t: Double) -> Date {
         if let mark = arrivals.first(where: { SpeechRules.arrivalCovers(audioEnd: $0.audioEnd, t: t) }) { return mark.at }
-        return arrivals.last?.at ?? Date()
+        switch SpeechRules.arrivalFallback(hasMarks: !arrivals.isEmpty) {
+        case SpeechRules.arrivalLast: return arrivals[arrivals.count - 1].at
+        default: return Date()
+        }
     }
 
     private func consumeResults(_ module: Module) async {
@@ -363,7 +367,7 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
         // Whatever is still volatile when the analyzer stops becomes a final.
         let (pending, continuation): (TranscriptEvent?, AsyncStream<TranscriptEvent>.Continuation?) = lock.withLock {
             var event: TranscriptEvent?
-            if !volatileText.isEmpty {
+            if SpeechRules.flushesVolatile(hasVolatile: !volatileText.isEmpty) {
                 let id = currentID
                 recordTiming(id: id, tokens: volatileTokens, rangeEnd: phraseStart, forced: false)
                 event = .final(id: id, text: volatileText)

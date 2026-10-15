@@ -532,6 +532,25 @@ public enum SpeechRules {
     public static func setsRate(rate: Float?, ratePercent: Int) -> Bool { vo_sets_rate(rate != nil, Int64(ratePercent)) }
     public static func baseRateMilli(rate: Float?) -> Int { Int(vo_base_rate_milli(rate != nil, rate ?? 0)) }
     public static func utteranceRate(milli: Int) -> Float { vo_utterance_rate(Int64(milli)) }
+
+    // MARK: Moved out of Swift 2026-10-15 (voice_rules, segment_rules; the conversion rules are audio_rules')
+
+    public static let percentNormal = Int32(VO_PERCENT_NORMAL)
+    public static func genderReadsStored(storedEmpty: Bool) -> Bool { vo_gender_reads_stored(storedEmpty) }
+    public static func phraseVoiceStart(start: Double?, windowStart: Double) -> Double {
+        sg_phrase_voice_start(start != nil, start ?? 0, windowStart)
+    }
+    public static let cutTimescale = Int32(SG_CUT_TIMESCALE)
+    public static let arrivalLast = Int(SG_ARRIVAL_LAST)
+    public static let arrivalNow = Int(SG_ARRIVAL_NOW)
+    public static func arrivalFallback(hasMarks: Bool) -> Int { Int(sg_arrival_fallback(hasMarks)) }
+    public static func flushesVolatile(hasVolatile: Bool) -> Bool { sg_flushes_volatile(hasVolatile) }
+    /// A buffer already in the analyzer's format is copied; any other is converted (audio_rules: au_conversion_path).
+    public static func copiesBuffer(sameFormat: Bool) -> Bool { au_conversion_path(sameFormat, false) == AU_CONVERT_NONE }
+    /// The converter mixes channels down when the input has more (audio_rules: au_converter_should_downmix).
+    public static func converterDownmixes(inputChannels: Int, outputChannels: Int) -> Bool {
+        au_converter_should_downmix(Int64(inputChannels), Int64(outputChannels))
+    }
 }
 
 /// Phrase text for `segment_rules`: a buffer of `SG_TEXT_MAX` bytes and the length the C reads.

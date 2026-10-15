@@ -336,4 +336,33 @@ private typealias L = AppRulesLegacy
         }
         log.finish(minimumCases: 20_000)
     }
+
+    @Test func uiAndTranscriptMovedOutOfSwift() {
+        let log = DiffLog("listenerDismissed, hearPick, peerNotes, transcript start and attempts, millis")
+        let bools = [false, true]
+        for a in bools { for b in bools { for c in bools {
+            log.check(F.peerNotes(peerOn: a, running: b, headphonesLike: c), L.peerNotes(peerOn: a, running: b, headphonesLike: c), "\(a) \(b) \(c)")
+            for d in bools {
+                log.check(F.listenerDismissed(dismissed: a, gone: b, closed: c, streak: d), L.listenerDismissed(dismissed: a, gone: b, closed: c, streak: d), "\(a) \(b) \(c) \(d)")
+            }
+        }
+            log.check(F.hearPickClearsHeadphones(hasSaved: a), L.hearPickClearsHeadphones(hasSaved: a), "\(a)")
+            log.check(F.hearPickFailed(systemIsPicked: a), L.hearPickFailed(systemIsPicked: a), "\(a)")
+            log.check(F.listenerTickReadsDevices(sheetOpen: a), L.listenerTickReadsDevices(sheetOpen: a), "\(a)")
+        } }
+        for n in Array(Int32(-5)...Int32(1100)) + [Int32.min, Int32.max, Int32.max - 1] {
+            log.check(F.nextAttempt(n), L.nextAttempt(n), "\(n)")
+            log.check(F.attemptAllowed(n), L.attemptAllowed(n), "\(n)")
+        }
+        var r = DiffRandom(seed: 0x7A5C)
+        for _ in 0..<40_000 {
+            let start: Int64? = r.bool() ? Int64(bitPattern: r.next()) : nil
+            let first = Int64(bitPattern: r.next())
+            log.check(F.transcriptStartedMs(callStartMs: start, firstLineMs: first), L.transcriptStartedMs(callStartMs: start, firstLineMs: first), "\(String(describing: start)) \(first)")
+            let s = r.double()
+            log.check(F.millis(s), L.millis(s), "\(s)")
+        }
+        for s in [Double.nan, .infinity, -.infinity, 1e300, -1e300, 0.0005, -0.0005, 1e12, -1e12] { log.check(F.millis(s), L.millis(s), "\(s)") }
+        log.finish(minimumCases: 80_000)
+    }
 }

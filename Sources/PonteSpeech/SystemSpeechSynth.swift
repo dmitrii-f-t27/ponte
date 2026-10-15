@@ -104,7 +104,7 @@ public final class SystemSpeechSynth: SpeechSynth, @unchecked Sendable {
 
     /// One Float32 mono buffer at the voice's native sample rate (22 050 Hz for the compact voices).
     public func synthesize(_ text: String, lang: Lang) async throws -> [AVAudioPCMBuffer] {
-        try await synthesize(text, lang: lang, ratePercent: 100)
+        try await synthesize(text, lang: lang, ratePercent: SpeechRules.percentNormal)
     }
 
     /// Same at `ratePercent` of the normal speed (`SpeechRules.utteranceRateMilli`), on top of `rate`.

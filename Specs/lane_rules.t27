@@ -406,9 +406,16 @@ pub fn ln_own_talk_drops(phrase_start_ms: i64, phrase_end_ms: i64, talk_start_ms
     return overlap * 1000 >= LN_OWN_TALK_DROP_PERMILLE * duration;
 }
 
-; Seconds to whole milliseconds, rounded half away from zero (TranslationLane.millis).
+; Seconds to whole milliseconds, rounded half away from zero (TranslationLane.millis), for every module (PeerRules,
+; AudioRules and AnalysisRules call it too). NaN reads as 0, and the result is held to +-LN_MS_LIMIT (about 31 700
+; years), so the conversion never overflows.
+pub const LN_MS_LIMIT : f64 = 1000000000000000.0;
 pub fn ln_millis(seconds: f64) -> i64 {
-    return cast_i64(round(seconds * LN_MS_PER_SECOND));
+    var ms: f64 = seconds * LN_MS_PER_SECOND;
+    if (ms != ms) { return 0; }
+    if (ms > LN_MS_LIMIT) { ms = LN_MS_LIMIT; }
+    if (ms < 0.0 - LN_MS_LIMIT) { ms = 0.0 - LN_MS_LIMIT; }
+    return cast_i64(round(ms));
 }
 
 ; EchoGuard: the speech time is recorded when the voice starts, plays on, or stops.
@@ -1003,6 +1010,11 @@ test ln_moved_rules {
 }
 
 test ln_intake_rules {
+    assert ln_millis(1.5) == 1500;
+    assert ln_millis(0.0005) == 1;
+    assert ln_millis(0.0 - 0.0005) == 0 - 1;
+    assert ln_millis(1.0e30) == 1000000000000000;
+    assert ln_millis(0.0 - 1.0e30) == 0 - 1000000000000000;
     assert ln_intake_routes(true, true, false) == LN_ROUTE_RELAY | LN_ROUTE_PEERS;
     assert ln_intake_routes(true, false, false) == LN_ROUTE_RELAY;
     assert ln_intake_routes(false, true, false) == LN_ROUTE_PEERS;
