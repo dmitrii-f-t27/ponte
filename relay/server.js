@@ -68,7 +68,7 @@ function start(port = 0, options = {}) {
 
   const server = http.createServer((req, res) => {
     const status = rules.httpStatus(req.method || '', req.url || '');
-    if (status === 200) {
+    if (status === rules.HTTP_OK) {
       res.writeHead(status, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
       res.end('ok');
       return;
@@ -86,12 +86,13 @@ function start(port = 0, options = {}) {
 
   server.on('upgrade', (req, socket, head) => {
     const url = req.url || '';
-    if (!rules.roomPath(url)) {
-      rejectUpgrade(socket, 400, 'Bad Request');
+    const refusal = rules.upgradeRefusal(url);
+    if (refusal !== 0) {
+      rejectUpgrade(socket, refusal, 'Bad Request');
       return;
     }
     const address = clientAddress(req);
-    wss.handleUpgrade(req, socket, head, (ws) => join(ws, url.slice(3), address));
+    wss.handleUpgrade(req, socket, head, (ws) => join(ws, url.slice(rules.roomIdStart), address));
   });
 
   function join(ws, roomId, address) {

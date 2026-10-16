@@ -674,6 +674,19 @@ pub fn an_key_write_outcome(added: i64) -> i64 {
     return AN_SAVE_FAILED;
 }
 
+; "Delete key" (Udalit klyuch): deleting Ponte's own Keychain item worked when it was deleted or was not there (nothing left to
+; delete); anything else failed and is shown. Moved out of KeychainAnalysisKeyStore.delete on 2026-10-15.
+pub fn an_key_delete_ok(deleted: i64) -> bool {
+    return deleted == AN_KC_OK or deleted == AN_KC_NOT_FOUND;
+}
+
+; "Back to defaults" (Vernut po umolchaniyu) in the settings: offered when the applied base URL or model differs from the spec's defaults
+; of the service, never for the own OpenAI-compatible service (it has no defaults to go back to). Moved out of
+; AnalysisSettingsView on 2026-10-15.
+pub fn an_offers_reset(provider: i64, is_default: bool) -> bool {
+    return is_default == false and an_provider_code(provider) != AN_PROVIDER_CUSTOM;
+}
+
 ; A pasted key, in this order: empty; longer than AN_KEY_MAX; a byte that is not printable ASCII (a space, a
 ; control byte, DEL or any UTF-8) anywhere. A header must never carry a line break.
 pub fn an_key_check(text: [2048]u8, len: i64) -> i64 {
@@ -1711,4 +1724,24 @@ test an_moved_rules {
     assert an_end_ms(true, true, 5, 9) == 0 - 1;
     assert an_end_ms(false, true, 5, 9) == 5;
     assert an_end_ms(false, false, 5, 9) == 9;
+}
+
+test an_completion_rules {
+    // Deleting the key: gone, or never there, is done; a duplicate or any other status failed.
+    assert an_key_delete_ok(AN_KC_OK) == true;
+    assert an_key_delete_ok(AN_KC_NOT_FOUND) == true;
+    assert an_key_delete_ok(AN_KC_DUPLICATE) == false;
+    assert an_key_delete_ok(AN_KC_OTHER) == false;
+    assert an_key_delete_ok(0 - 1) == false;
+    // Saving refuses what deleting accepts: a missing item after an add is a failure.
+    assert an_key_write_outcome(AN_KC_NOT_FOUND) == AN_SAVE_FAILED;
+    // The reset is offered for Z.ai and DeepSeek when changed, never for the own service, never when unchanged.
+    assert an_offers_reset(AN_PROVIDER_ZAI, false) == true;
+    assert an_offers_reset(AN_PROVIDER_DEEPSEEK, false) == true;
+    assert an_offers_reset(AN_PROVIDER_CUSTOM, false) == false;
+    assert an_offers_reset(AN_PROVIDER_ZAI, true) == false;
+    assert an_offers_reset(AN_PROVIDER_DEEPSEEK, true) == false;
+    assert an_offers_reset(AN_PROVIDER_CUSTOM, true) == false;
+    // A stored code the spec does not know reads as the default service (an_provider_code).
+    assert an_offers_reset(99, false) == an_offers_reset(AN_DEFAULT_PROVIDER, false);
 }

@@ -10,7 +10,8 @@ const TEV_COUNT = 6;         // CM_TEV_COUNT
 const RV_COUNT = 3;          // CM_RV_COUNT
 const STAGE_COUNT = 8;       // CM_STAGE_COUNT
 const RENDER_TRIES = 3;      // CM_RENDER_TRIES
-const POLICY_REV = 2;        // CM_POLICY_REV
+const ERROR_RANKS = 3;       // CM_ERROR_RANK_COUNT
+const POLICY_REV = 3;        // CM_POLICY_REV
 const REPORT_NAME = 0;       // CM_REPORT_NAME
 const REPORT_TEXT = 1;       // CM_REPORT_TEXT
 const REPORT_NAME_MAX = 64;  // CM_REPORT_NAME_MAX
@@ -95,10 +96,16 @@ export function buildPolicy(x) {
   for (let has = 0; has < 2; has++) for (let troubled = 0; troubled < 2; troubled++) {
     errorRank.push(Number(x.cm_report_error_rank(has, troubled)));
   }
+  // Whether a report of one rank takes the place of the best so far, by (rank, best, newer).
+  const errorTakes = [];
+  for (let rank = 0; rank < ERROR_RANKS; rank++) for (let best = 0; best < ERROR_RANKS; best++) {
+    for (let newer = 0; newer < 2; newer++) errorTakes.push(x.cm_report_error_takes(BigInt(rank), BigInt(best), newer) !== 0 ? 1 : 0);
+  }
   return {
     rev: POLICY_REV, trk: TRK_COUNT, tev: TEV_COUNT, rv: RV_COUNT, stages: STAGE_COUNT, tries: RENDER_TRIES,
-    nameMax: REPORT_NAME_MAX, textMax: REPORT_TEXT_MAX,
+    ranks: ERROR_RANKS, nameMax: REPORT_NAME_MAX, textMax: REPORT_TEXT_MAX,
     route, stepState, stepAction, failVariant, failFails, failRetry, failState, usable, first, bucket, errorRank,
+    errorTakes,
   };
 }
 
@@ -111,10 +118,16 @@ export const linkCameras = (x, n) => Number(x.cm_link_cameras(BigInt(Math.trunc(
 export const linkVersionTaken = (x, v) => Number.isSafeInteger(v) && x.cm_link_version_taken(BigInt(v)) !== 0;
 // How much a page's error counts when one of several is reported (0: none).
 export const errorRank = (x, hasError, troubled) => Number(x.cm_report_error_rank(flag(hasError), flag(troubled)));
+// Whether a report of `rank` takes the place of the best so far (`best`); among equals only a `newer` one.
+export const errorTakes = (x, rank, best, newer) =>
+  x.cm_report_error_takes(BigInt(Math.trunc(rank)), BigInt(Math.trunc(best)), flag(newer)) !== 0;
 
 // --- The pages' reports ------------------------------------------------------------------------------------------------
 // How long a page's report, msSince old, is still good (0: the page is gone).
 export const pageLeaseLeftMs = (x, msSince) => Number(x.cm_page_lease_left_ms(BigInt(Math.trunc(Number(msSince) || 0))));
+// A page said it is gone (pagehide): whether the tab's report is forgotten.
+export const pageGoneForgets = (x, hasReport, sameDocument, reportHasDocument) =>
+  x.cm_page_gone_forgets(flag(hasReport), flag(sameDocument), flag(reportHasDocument)) !== 0;
 
 // A text a page reported, cleaned by the spec (printable ASCII, at most the limit of its kind).
 function clean(x, text, kind) {

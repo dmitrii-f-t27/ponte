@@ -78,7 +78,8 @@ enum AudioProcesses {
         var current = pid
         for _ in 0..<AudioRules.parentChainMaxDepth {
             guard let ppid = parentPID(current), AudioRules.parentContinues(parentPID: ppid, current: current) else { break }
-            if let app = NSRunningApplication(processIdentifier: ppid), app.activationPolicy == .regular,
+            if let app = NSRunningApplication(processIdentifier: ppid),
+               AudioRules.isRegularApp(policyRegular: app.activationPolicy == .regular, hasBundleID: app.bundleIdentifier != nil),
                let o = owner(of: app) {
                 parentOwner = o
                 break

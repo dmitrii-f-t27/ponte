@@ -87,6 +87,14 @@ function rulesAgainstLegacy() {
   }
   const badPaths = paths.filter((p) => rules.roomPath(p) !== legacy.roomPath(p));
   check(`room paths agree with the old rule (${paths.length} paths)`, badPaths.length === 0, JSON.stringify(badPaths.slice(0, 3)));
+  // The upgrade's answer and the room id (0.1.15): the old `if (!roomPath(url)) reject 400` and `url.slice(3)`.
+  const badUpgrades = paths.filter((p) => rules.upgradeRefusal(p) !== (legacy.roomPath(p) ? 0 : 400));
+  check(`upgrade refusals agree with the old rule (${paths.length} paths)`, badUpgrades.length === 0,
+    JSON.stringify(badUpgrades.slice(0, 3)));
+  const roomIds = paths.filter((p) => legacy.roomPath(p));
+  const badIds = roomIds.filter((p) => p.slice(rules.roomIdStart) !== p.slice(3) || p.slice(rules.roomIdStart).length !== 64);
+  check(`room ids are the path after /r/ (${roomIds.length} room paths)`, roomIds.length > 0 && badIds.length === 0,
+    JSON.stringify(badIds.slice(0, 3)));
   // Admission over a grid around every limit.
   let admitBad = 0;
   let admitCases = 0;

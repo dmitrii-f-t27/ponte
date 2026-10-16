@@ -5,8 +5,8 @@
 // (processed, passing as they came, in trouble) and their last error, and that goes back to Ponte's panel. Without
 // Ponte the last settings stay in storage and keep working; the link is dialled again as cm_dial_wait_ms says.
 // A page counts while its report's lease lasts (cm_page_lease_left_ms): it repeats its report, and says when it goes.
-import { loadRules, decide, dialWaitMs, dialFailuresAfter, linkCameras, linkVersionTaken, errorRank, cleanError,
-  pageLeaseLeftMs } from './policy.js';
+import { loadRules, decide, dialWaitMs, dialFailuresAfter, linkCameras, linkVersionTaken, errorRank, errorTakes,
+  cleanError, pageLeaseLeftMs, pageGoneForgets } from './policy.js';
 
 const PORT = 47839;          // CM_LINK_PORT
 const VERSION = 1;           // CM_LINK_VERSION
@@ -67,7 +67,8 @@ async function pageMap() {
   return pages;
 }
 
-// The pages' cameras added up, and the error of the highest rank (cm_report_error_rank), the newest among equals.
+// The pages' cameras added up, and the error of the highest rank (cm_report_error_rank), the newest among equals
+// (cm_report_error_takes: a page's error is newer when it was first reported later).
 function totals(x) {
   const t = { processed: 0, passing: 0, troubled: 0, error: null, rank: 0, at: -1 };
   for (const p of Object.values(pages ?? {})) {
@@ -75,7 +76,7 @@ function totals(x) {
     t.passing += p.passing;
     t.troubled += p.troubled;
     const rank = errorRank(x, !!p.error, p.troubled > 0);
-    if (rank > t.rank || (rank > 0 && rank === t.rank && p.errorAt > t.at)) {
+    if (errorTakes(x, rank, t.rank, p.errorAt > t.at)) {
       t.error = p.error;
       t.rank = rank;
       t.at = p.errorAt;
@@ -176,8 +177,9 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     const map = await pageMap();
     const tab = sender.tab.id, doc = sender.documentId ?? null, old = map[tab];
     if (message.gone) {
-      // The page left (pagehide): forgotten, unless the tab already reports from its next document.
-      if (old && (old.doc === doc || old.doc == null)) {
+      // The page left (pagehide): forgotten, unless the tab already reports from its next document
+      // (cm_page_gone_forgets).
+      if (pageGoneForgets(x, !!old, !!old && old.doc === doc, old?.doc != null)) {
         delete map[tab];
         savePages();
         sendStatus(false);

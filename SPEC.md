@@ -102,6 +102,24 @@ C через `t27c gen-c`. Swift собирает факты, спрашивае
 Направление перевода (что слышит и на что переводит входящий и исходящий канал) — `ln_dir_source`/`ln_dir_target`
 в `lane_rules.t27`; `Direction.source/.target` в `PonteCore` только переводят код в `Lang` (с 0.1.14).
 
+0.1.15 (2026-10-15): все 70 production-файлов приложения, расширения и релея прочитаны по реестру, сверенному с
+`git ls-files`. 68 автор прочитал целиком; в фасадах `AudioRules.swift` и `SpeechRules.swift` автор просмотрел все
+места с логикой, проверяющий прочитал их целиком. Это вывод проверяющих, не формальное доказательство. Десять решений, которые ещё
+принимались в Swift и JavaScript, перенесены в спеки (`dv_is_headphones_choice`, `dv_is_selectable_output`, `an_key_delete_ok`,
+`an_offers_reset`, `pe_mic_sends`, `pe_frame_accepted` — приём кадра в `PeerLink.open`, `cm_report_error_takes`,
+`cm_page_gone_forgets`,
+`rl_upgrade_refusal`, `rl_room_id_start`; ещё два места теперь вызывают готовые `dv_is_regular_app` и `dv_is_output`).
+Реестр файлов, карта переноса и границы, которые остаются нативными, — `reports/t27-completion-2026-10-15.md`.
+Там же локальные проверки 0.1.15:
+
+- 99 тестовых блоков спек;
+- `swift test`: 341 тест;
+- WebAssembly совпадает с нативным C;
+- релей: 45 проверок;
+- e2e и faults камеры под SwiftShader.
+
+На настоящей камере и GPU проверялась только 0.1.14; живой звонок Meet не проверялся.
+
 Swift-фасады: в каждом модуле один файл правил (`PonteAudio/AudioRules.swift`, `PonteSpeech/SpeechRules.swift`,
 `PonteApp/AppRules.swift`). Пока C не готов, фасад содержит чистый Swift. При сведении тела фасадов
 заменяются вызовами C из `PonteSpecs`, а Swift-версии уходят в тесты как оракул для сравнительных тестов (как в DiskBloom).

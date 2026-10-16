@@ -9,7 +9,7 @@ ROOT="${0:A:h:h}"
 ZIG="${ZIG:-$HOME/local/zig/zig}"
 EXPORTS=(rl_limit rl_hex_digit rl_room_path rl_health_path rl_http_method rl_http_status rl_admit rl_forwarded_hop
          rl_window_restarts rl_rate_allows rl_forwards rl_forward_to rl_ping_action rl_left_action
-         rl_address_after_leave rl_wasm_bytes)
+         rl_address_after_leave rl_room_id_start rl_upgrade_refusal rl_wasm_bytes)
 FLAGS=()
 for E in $EXPORTS; do FLAGS+=("-Wl,--export=$E"); done
 "$ZIG" cc --target=wasm32-wasi -mexec-model=reactor -O2 -DNDEBUG -ffp-contract=off -std=c11 -Wno-parentheses-equality \

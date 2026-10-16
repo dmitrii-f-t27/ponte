@@ -129,7 +129,8 @@
 #define CM_ERROR_RANK_NONE 0
 #define CM_ERROR_RANK_PAST 1
 #define CM_ERROR_RANK_TROUBLE 2
-#define CM_POLICY_REV 2
+#define CM_ERROR_RANK_COUNT 3
+#define CM_POLICY_REV 3
 #define CM_ROW_EXTENSION_ORIGIN 0
 #define CM_ROW_OTHER_EXTENSION 1
 #define CM_ROW_MEET_PAGE 2
@@ -171,6 +172,7 @@ int64_t cm_link_cameras(int64_t reported);
 bool cm_panel_install_open(int64_t status);
 bool cm_link_version_taken(int64_t v);
 int64_t cm_report_error_rank(bool has_error, bool troubled);
+bool cm_report_error_takes(int64_t rank, int64_t best, bool newer);
 int64_t cm_link_status(bool listening, bool failed, int64_t clients, int64_t active_cameras);
 int64_t cm_link_panel(bool listening, bool failed, int64_t clients, int64_t processed, int64_t passing, int64_t troubled);
 int64_t cm_ws_handshake_status(bool is_get, bool upgrade, bool has_key, bool origin_allowed, int64_t open_clients);
@@ -185,6 +187,7 @@ int64_t cm_dial_delay_ms(int64_t failures, int64_t pages);
 int64_t cm_dial_wait_ms(int64_t reason, int64_t ms_since, int64_t failures, int64_t pages);
 int64_t cm_dial_failures_after(int64_t failures, bool opened);
 int64_t cm_page_lease_left_ms(int64_t ms_since);
+bool cm_page_gone_forgets(bool has_report, bool same_document, bool report_has_document);
 int64_t cm_trk_route(int64_t state, bool needs, bool due, bool sized);
 bool cm_render_usable(int64_t variant, bool color_identity);
 bool cm_trk_settings_restart(int64_t state, bool usable);

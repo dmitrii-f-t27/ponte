@@ -66,12 +66,12 @@ public final class CoreAudioDeviceCatalog: AudioDeviceCatalog {
     }
 
     /// macOS lets the output become the system output: not hidden (AirPods playing to another device are listed
-    /// hidden) and allowed as a default device.
+    /// hidden) and allowed as a default device (AudioRules.isSelectableOutput).
     public func isSelectableOutput(_ device: AudioDevice) -> Bool {
         let hidden = (try? HAL.get(device.id, HAL.address(kAudioDevicePropertyIsHidden), default: UInt32(0))) ?? 0
         let canDefault = (try? HAL.get(device.id, HAL.address(kAudioDevicePropertyDeviceCanBeDefaultDevice,
                                                               kAudioObjectPropertyScopeOutput), default: UInt32(0))) ?? 0
-        return hidden == 0 && canDefault != 0
+        return AudioRules.isSelectableOutput(hidden: hidden != 0, canBeDefault: canDefault != 0)
     }
 
     /// The owner's ears when the system output is the call's virtual mic or Ponte's tap (AudioRules.pickRescueOutputIndex).

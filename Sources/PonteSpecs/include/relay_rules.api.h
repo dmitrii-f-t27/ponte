@@ -29,6 +29,7 @@
 #define RL_MAX_BUFFERED 65536
 #define RL_ROOM_HEX 64
 #define RL_ROOM_PATH_BYTES 67
+#define RL_ROOM_PREFIX_BYTES 3
 #define RL_PATH_MAX 256
 #define RL_K_PORT 0
 #define RL_K_MAX_PAYLOAD 1
@@ -62,6 +63,8 @@
 int64_t rl_limit(int64_t key);
 bool rl_hex_digit(uint8_t b);
 bool rl_room_path(uint8_t text[static 256], int64_t len);
+int64_t rl_room_id_start(void);
+int64_t rl_upgrade_refusal(bool room_path);
 bool rl_health_path(uint8_t text[static 256], int64_t len);
 int64_t rl_http_method(uint8_t text[static 256], int64_t len);
 int64_t rl_http_status(int64_t method, bool health);

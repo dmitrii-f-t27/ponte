@@ -40,6 +40,8 @@ pub const RL_MAX_BUFFERED : i64 = 65536;
 ; A room is "/r/" and a SHA-256 digest as 64 lowercase hex characters.
 pub const RL_ROOM_HEX : i64 = 64;
 pub const RL_ROOM_PATH_BYTES : i64 = 67;
+; The bytes of "/r/" before the room's digits.
+pub const RL_ROOM_PREFIX_BYTES : i64 = 3;
 pub const RL_PATH_MAX : i64 = 256;
 
 ; The limits by key (K_*), so the server reads every number from here.
@@ -106,12 +108,25 @@ pub fn rl_hex_digit(b: u8) -> bool {
 pub fn rl_room_path(text: [256]u8, len: i64) -> bool {
     if (len != RL_ROOM_PATH_BYTES) { return false; }
     if (text[0] != 47 or text[1] != 114 or text[2] != 47) { return false; }
-    var k: i64 = 3;
+    var k: i64 = RL_ROOM_PREFIX_BYTES;
     while (k < RL_ROOM_PATH_BYTES) {
         if (rl_hex_digit(text[k]) == false) { return false; }
         k = k + 1;
     }
     return true;
+}
+
+; Where the room's id starts in a room path: after "/r/". server.js keys its rooms by the rest of the path (it wrote
+; url.slice(3) itself before 2026-10-15).
+pub fn rl_room_id_start() -> i64 {
+    return RL_ROOM_PREFIX_BYTES;
+}
+
+; An upgrade request: 0 when its path names a room (the WebSocket handshake goes on), else the HTTP answer that
+; refuses it (server.js wrote 400 itself before 2026-10-15).
+pub fn rl_upgrade_refusal(room_path: bool) -> i64 {
+    if (room_path) { return 0; }
+    return RL_HTTP_BAD_REQUEST;
 }
 
 ; The health path, exactly "/healthz".
@@ -344,4 +359,25 @@ test rl_frame_rules {
     assert rl_address_after_leave(1) == 0;
     assert rl_address_after_leave(0) == 0;
     assert rl_address_after_leave(3) == 2;
+}
+
+test rl_completion_rules {
+    // The room id is the path after "/r/": exactly its RL_ROOM_HEX digits.
+    assert rl_room_id_start() == 3;
+    assert RL_ROOM_PATH_BYTES - rl_room_id_start() == RL_ROOM_HEX;
+    // An upgrade to a room goes on; any other path is a bad request (not "not found", which answers plain HTTP).
+    assert rl_upgrade_refusal(true) == 0;
+    assert rl_upgrade_refusal(false) == RL_HTTP_BAD_REQUEST;
+    assert rl_upgrade_refusal(false) != RL_HTTP_NOT_FOUND;
+    var t: [256]u8 = [0; 256];
+    t[0] = 47;
+    t[1] = 114;
+    t[2] = 47;
+    var k: i64 = 3;
+    while (k < 67) {
+        t[k] = 48;
+        k = k + 1;
+    }
+    assert rl_upgrade_refusal(rl_room_path(t, 67)) == 0;
+    assert rl_upgrade_refusal(rl_room_path(t, 66)) == RL_HTTP_BAD_REQUEST;
 }

@@ -13,6 +13,8 @@
 //   k kind n b0 .. b(n-1)     -> cm_report_clean (hex bytes in and out), cm_report_stage (n)
 //   g since                   -> cm_page_lease_left_ms
 //   v version has troubled    -> cm_link_version_taken (version), cm_report_error_rank (has, troubled)
+//   t rank best newer         -> cm_report_error_takes
+//   o has same named          -> cm_page_gone_forgets
 #include <stdio.h>
 #include <string.h>
 #include "camera_rules.h"
@@ -89,6 +91,14 @@ int main(void) {
             long long v; int has, troubled;
             if (scanf("%lld %d %d", &v, &has, &troubled) != 3) return 1;
             printf("%d %lld\n", cm_link_version_taken(v) ? 1 : 0, (long long)cm_report_error_rank(has, troubled));
+        } else if (kind == 't') {
+            long long rank, best; int newer;
+            if (scanf("%lld %lld %d", &rank, &best, &newer) != 3) return 1;
+            printf("%d\n", cm_report_error_takes(rank, best, newer) ? 1 : 0);
+        } else if (kind == 'o') {
+            int has, same, named;
+            if (scanf("%d %d %d", &has, &same, &named) != 3) return 1;
+            printf("%d\n", cm_page_gone_forgets(has, same, named) ? 1 : 0);
         } else return 1;
     }
     return 0;

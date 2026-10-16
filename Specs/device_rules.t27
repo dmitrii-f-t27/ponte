@@ -1095,6 +1095,21 @@ pub fn dv_is_mic_choice(input_channels: i64, is_blackhole: bool) -> bool {
     return dv_is_input(input_channels) and is_blackhole == false;
 }
 
+; --- Moved out of Swift 2026-10-15 (completion audit) --------------------------------------------------------------
+; The settings' headphones list ("My headphones"): outputs other than BlackHole (the call's microphone), so the
+; Russian voice is never put into the call by the setting. SettingsView filtered the outputs itself before.
+pub fn dv_is_headphones_choice(output_channels: i64, is_blackhole: bool) -> bool {
+    return dv_is_output(output_channels) and is_blackhole == false;
+}
+
+; macOS lets an output become the system output: it is not hidden (AirPods playing to another device are listed
+; hidden) and it may be a default device (kAudioDevicePropertyIsHidden, kAudioDevicePropertyDeviceCanBeDefaultDevice
+; in the output scope). The `selectable` fact of dv_is_hear_output and dv_pick_rescue_output_index;
+; CoreAudioDeviceCatalog.isSelectableOutput combined the two flags itself before.
+pub fn dv_is_selectable_output(hidden: bool, can_be_default: bool) -> bool {
+    return hidden == false and can_be_default;
+}
+
 test dv_text_helpers {
     var t: [8192]u8 = [0; 8192];
     var out: [8192]u8 = [0; 8192];
@@ -1751,4 +1766,32 @@ test dv_moved_out_of_swift {
     assert dv_is_mic_choice(1, false) == true;
     assert dv_is_mic_choice(2, true) == false;
     assert dv_is_mic_choice(0, false) == false;
+}
+
+test dv_completion_rules {
+    // The headphones list: any output but BlackHole; a device without output channels never.
+    assert dv_is_headphones_choice(2, false) == true;
+    assert dv_is_headphones_choice(1, false) == true;
+    assert dv_is_headphones_choice(2, true) == false;
+    assert dv_is_headphones_choice(0, false) == false;
+    assert dv_is_headphones_choice(0 - 1, false) == false;
+    assert dv_is_headphones_choice(0, true) == false;
+    // The same device kinds as the microphone list, on the output side.
+    var ch: i64 = 0 - 2;
+    var bad: u32 = 0;
+    while (ch <= 16) {
+        if (dv_is_headphones_choice(ch, true)) { bad = bad + 1; }
+        if (dv_is_headphones_choice(ch, false) != dv_is_output(ch)) { bad = bad + 1; }
+        if (dv_is_mic_choice(ch, false) != dv_is_input(ch)) { bad = bad + 1; }
+        ch = ch + 1;
+    }
+    assert bad == 0;
+    // Selectable as the system output: only shown and allowed as default.
+    assert dv_is_selectable_output(false, true) == true;
+    assert dv_is_selectable_output(true, true) == false;
+    assert dv_is_selectable_output(false, false) == false;
+    assert dv_is_selectable_output(true, false) == false;
+    // A hidden output (AirPods playing elsewhere) is never offered in the "Meet sound" menu.
+    assert dv_is_hear_output(DV_KIND_BLUETOOTH, 2, dv_is_selectable_output(true, true)) == false;
+    assert dv_is_hear_output(DV_KIND_BLUETOOTH, 2, dv_is_selectable_output(false, true)) == true;
 }

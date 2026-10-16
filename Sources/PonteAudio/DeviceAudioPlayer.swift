@@ -500,7 +500,8 @@ public final class DeviceAudioPlayer: AudioPlayer, @unchecked Sendable {
                     }
                 }
                 if let device = self.device {
-                    guard let live = CoreAudioDeviceCatalog().device(uid: device.uid), live.outputChannels > 0 else {
+                    guard let live = CoreAudioDeviceCatalog().device(uid: device.uid),
+                          AudioRules.isOutput(channels: live.outputChannels) else {
                         throw PonteAudioError.deviceNotFound(device.name)
                     }
                     guard let au = engine.outputNode.audioUnit else { throw PonteAudioError.engine("output node has no audio unit") }

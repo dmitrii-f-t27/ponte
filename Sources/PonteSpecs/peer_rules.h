@@ -189,6 +189,7 @@ int64_t pe_secret_normalized(uint8_t text[static 4096], int64_t len, uint8_t out
 int64_t pe_secret_display(uint8_t text[static 4096], int64_t len, uint8_t out[static 16]);
 bool pe_gap_over(int64_t hi, int64_t lo, int64_t limit);
 bool pe_frame_fresh(int64_t sent_ms, int64_t now_ms);
+bool pe_frame_accepted(bool is_self, int64_t sent_ms, int64_t now_ms);
 int64_t pe_voice_local_ms(int64_t at_ms, int64_t sent_ms, int64_t now_ms);
 bool pe_seq_newer(uint32_t seq, uint32_t last_seq, bool has_last);
 int64_t pe_window_end_ms(int64_t end_ms, int64_t last_seen_ms, int64_t now_ms, bool refreshed);
@@ -215,6 +216,7 @@ int64_t pe_window_record(int64_t state, bool has_open, bool same_text);
 bool pe_window_forgotten(int64_t window_end_ms, int64_t now_ms);
 bool pe_window_compares_text(int64_t kind);
 int64_t pe_mic_gate_step(bool sends, bool was_sending);
+bool pe_mic_sends(bool link_up, bool muted, bool headphones_like, bool key_held, bool has_signal, int64_t ms_since_signal);
 int64_t pe_fixture(int64_t index, uint8_t out[static 4096]);
 int64_t pe_fixture_words(int64_t index);
 int64_t pe_fixture_containment(int64_t phrase, int64_t said);
@@ -478,6 +480,10 @@ bool pe_gap_over(int64_t hi, int64_t lo, int64_t limit) {
 
 bool pe_frame_fresh(int64_t sent_ms, int64_t now_ms) {
     return ((pe_gap_over(now_ms, sent_ms, PE_MAX_SKEW_MS) == false) && (pe_gap_over(sent_ms, now_ms, PE_MAX_SKEW_MS) == false));
+}
+
+bool pe_frame_accepted(bool is_self, int64_t sent_ms, int64_t now_ms) {
+    return ((is_self == false) && pe_frame_fresh(sent_ms, now_ms));
 }
 
 int64_t pe_voice_local_ms(int64_t at_ms, int64_t sent_ms, int64_t now_ms) {
@@ -748,6 +754,10 @@ int64_t pe_mic_gate_step(bool sends, bool was_sending) {
         return PE_GATE_FLUSH;
     }
     return PE_GATE_NONE;
+}
+
+bool pe_mic_sends(bool link_up, bool muted, bool headphones_like, bool key_held, bool has_signal, int64_t ms_since_signal) {
+    return (pe_sends_mic(link_up, muted, headphones_like, key_held) && pe_vad_sends(has_signal, ms_since_signal));
 }
 
 int64_t pe_fixture(int64_t index, uint8_t out[static 4096]) {
@@ -1565,6 +1575,61 @@ void test_pe_window_book_rules(void) {
     assert((pe_mic_gate_step(false, false) == PE_GATE_NONE));
 }
 
+void test_pe_completion_rules(void) {
+    assert((pe_mic_sends(true, false, true, false, true, 0) == true));
+    assert((pe_mic_sends(true, false, true, false, false, (PE_VAD_HANGOVER_MS - 1)) == true));
+    assert((pe_mic_sends(true, false, true, false, false, PE_VAD_HANGOVER_MS) == false));
+    assert((pe_mic_sends(true, false, true, false, false, (0 - 1)) == false));
+    assert((pe_mic_sends(true, false, false, false, true, 0) == false));
+    assert((pe_mic_sends(true, false, false, true, true, 0) == true));
+    assert((pe_mic_sends(true, true, true, true, true, 0) == false));
+    assert((pe_mic_sends(false, false, true, true, true, 0) == false));
+    int64_t bits = 0;
+    uint32_t bad = 0;
+    while ((bits < 32)) {
+        bool up = ((bits & 1) == 1);
+        bool mute = ((bits & 2) == 2);
+        bool phones = ((bits & 4) == 4);
+        bool key = ((bits & 8) == 8);
+        bool voice = ((bits & 16) == 16);
+        int64_t ms = (0 - 1);
+        while ((ms <= (PE_VAD_HANGOVER_MS + 1))) {
+            bool want = (pe_sends_mic(up, mute, phones, key) && pe_vad_sends(voice, ms));
+            if ((pe_mic_sends(up, mute, phones, key, voice, ms) != want)) {
+                bad = (bad + 1);
+            }
+            ms = (ms + 50);
+        }
+        bits = (bits + 1);
+    }
+    assert((bad == 0));
+    int64_t i64_max = 9223372036854775807;
+    int64_t i64_min = ((0 - 9223372036854775807) - 1);
+    assert((pe_frame_accepted(false, 1000, 1000) == true));
+    assert((pe_frame_accepted(true, 1000, 1000) == false));
+    assert((pe_frame_accepted(false, 0, PE_MAX_SKEW_MS) == true));
+    assert((pe_frame_accepted(false, 0, (PE_MAX_SKEW_MS + 1)) == false));
+    assert((pe_frame_accepted(false, PE_MAX_SKEW_MS, 0) == true));
+    assert((pe_frame_accepted(false, (PE_MAX_SKEW_MS + 1), 0) == false));
+    assert((pe_frame_accepted(true, 0, PE_MAX_SKEW_MS) == false));
+    assert((pe_frame_accepted(true, 0, (PE_MAX_SKEW_MS + 1)) == false));
+    assert((pe_frame_accepted(false, i64_min, i64_max) == false));
+    assert((pe_frame_accepted(false, i64_max, i64_min) == false));
+    assert((pe_frame_accepted(false, i64_max, i64_max) == true));
+    int64_t sent = (0 - 40000);
+    uint32_t wrong = 0;
+    while ((sent <= 40000)) {
+        if ((pe_frame_accepted(false, sent, 0) != pe_frame_fresh(sent, 0))) {
+            wrong = (wrong + 1);
+        }
+        if (pe_frame_accepted(true, sent, 0)) {
+            wrong = (wrong + 1);
+        }
+        sent = (sent + 250);
+    }
+    assert((wrong == 0));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1585,7 +1650,8 @@ int main(void) {
     test_pe_phrase_drop_rules();
     test_pe_wire_rules();
     test_pe_window_book_rules();
-    printf("All %d tests passed.\n", 12);
+    test_pe_completion_rules();
+    printf("All %d tests passed.\n", 13);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

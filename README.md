@@ -27,7 +27,7 @@ The call analysis is optional too. In Settings → «Анализ звонка»
 
 ## Written in t27
 
-Ponte's business rules and policy (thresholds, limits, timers, state machines, recovery, routing choices) are written in [t27](https://github.com/gHashTag/t27), the spec language of the Trinity stack, and compiled to C by `t27c`. Swift and JavaScript collect facts (audio levels, device lists, recognizer results, camera frames, what you clicked), ask a spec, and carry out the answer through the platform APIs, which stay in Swift and JavaScript. The audit that moved the remaining rules was selective (pattern searches and reading of suspect places), not a line-by-line proof. The `Specs/` folder holds these specs:
+Ponte's business rules and policy (thresholds, limits, timers, state machines, recovery, routing choices) are written in [t27](https://github.com/gHashTag/t27), the spec language of the Trinity stack, and compiled to C by `t27c`. Swift and JavaScript collect facts (audio levels, device lists, recognizer results, camera frames, what you clicked), ask a spec, and carry out the answer through the platform APIs, which stay in Swift and JavaScript. The audits up to 0.1.14 were selective (pattern searches and reading of suspect places). The 0.1.15 audit was a full pass over the 70 tracked production files with a registry; two facades were read at every place with logic by the author and whole by the reviewer. Both are reviewers' conclusions, not formal proofs. The `Specs/` folder holds these specs:
 
 | Spec | Decides |
 |---|---|
@@ -90,6 +90,22 @@ This is a work in progress. These parts are verified on a Mac:
 - Speech synthesis.
 - The decisions run in the C generated from the t27 specs (0.1.14: 13 specs, 94 spec test blocks passing). The Swift rules facades only pass values to it; the system APIs (Core Audio, AVFoundation, Speech, the browser's camera and WebGL APIs, Node's network) stay in Swift and JavaScript adapters. The Swift the facades replaced, or a separate plain-Swift version, is kept as a test oracle and compared bit for bit.
 - 0.1.14: `swift test` passes 333 tests in 41 suites (0.1.13: 327).
+- 0.1.15: a full pass over the app, the extension and the relay moved into the specs the ten decisions still written
+  in Swift or JavaScript, each compared with the code it replaced:
+  - the headphones list and selectable outputs;
+  - key deletion and the settings' reset;
+  - the microphone to the other Russians, and whether a peer link frame is taken (not this link's own, and fresh);
+  - which camera error is shown, and which tab report a Meet page's pagehide removes;
+  - the relay's upgrade refusal and room id.
+
+  What stays native, and why, is in `reports/t27-completion-2026-10-15.md`. Checked locally on 0.1.15:
+  - 13 specs, 99 spec test blocks;
+  - `swift test`: 341 tests in 42 suites;
+  - the WebAssembly equals the native C (157 951 cases), plus 82 cases against the replaced JavaScript;
+  - relay: 45 checks;
+  - camera e2e (also with Ponte's own link) and the fault checks (SwiftShader).
+
+  Not checked on 0.1.15: the real camera and GPU (the hardware check passed on 0.1.14), and a live Meet call.
 - The camera extension up to 0.1.13: its WebAssembly equals the native C bit for bit (`node camera/test/wasm-vectors.mjs`), and in a headless Chrome with a fake camera and SwiftShader the shader's colours equal `cm_apply_pixel` (`node camera/test/e2e.mjs`, also with Ponte's own link: `PONTE_LINK=1`). On the owner's Mac (BrowserOS, real camera, Apple GPU) 0.1.13 logged «passing frames unchanged [object DOMException]»; its cause is still not known. 0.1.14 reports the failing step and the error, recovers by itself and never hands Meet a closed frame. Checked locally:
   - the WebAssembly equals the native C (157 845 cases);
   - e2e with the fake camera passes, with Ponte's own link too: the shader equals `cm_apply_pixel` within 0/255;

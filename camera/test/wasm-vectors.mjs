@@ -104,6 +104,15 @@ for (const v of [-1, 0, 1, 2, 3, 9007199254740991]) for (let has = 0; has < 2; h
   input.push(`v ${v} ${has} ${tr}`);
   wasm.push(`${x.cm_link_version_taken(B(v))} ${n(x.cm_report_error_rank(has, tr))}`);
 }
+// The choice among reports and the pagehide rule (0.1.15): every rank pair with values just outside, every flag.
+for (const rank of around(3)) for (const best of around(3)) for (let newer = 0; newer < 2; newer++) {
+  input.push(`t ${rank} ${best} ${newer}`);
+  wasm.push(`${x.cm_report_error_takes(B(rank), B(best), newer)}`);
+}
+for (let has = 0; has < 2; has++) for (let same = 0; same < 2; same++) for (let named = 0; named < 2; named++) {
+  input.push(`o ${has} ${same} ${named}`);
+  wasm.push(`${x.cm_page_gone_forgets(has, same, named)}`);
+}
 
 writeFileSync(join(work, 'in.txt'), input.join('\n') + '\n');
 const native = execFileSync(join(work, 'vectors'), { input: readFileSync(join(work, 'in.txt')), maxBuffer: 1 << 28 })
@@ -113,4 +122,23 @@ for (let i = 0; i < wasm.length; i++) {
   if (native[i] !== wasm[i]) { if (bad++ < 5) console.log(`MISMATCH ${input[i]}\n  native ${native[i]}\n  wasm   ${wasm[i]}`); }
 }
 console.log(`${wasm.length} cases, ${bad} mismatches`);
-process.exit(bad === 0 && native.length === wasm.length ? 0 : 1);
+
+// The JavaScript the 0.1.15 rules replaced (sw.js totals and pagehide, page.js report), as it was written, against
+// cm.wasm over their whole domains: the move changed no answer.
+let legacyCases = 0, legacyBad = 0;
+const legacy = (got, want, what) => { legacyCases += 1; if (got !== want && legacyBad++ < 5) console.log(`LEGACY ${what}: wasm ${got}, before ${want}`); };
+for (let rank = 0; rank < 3; rank++) for (let best = 0; best < 3; best++) for (const [at, bestAt] of [[5, 4], [4, 4], [4, 5], [undefined, -1]]) {
+  // sw.js: rank > t.rank || (rank > 0 && rank === t.rank && p.errorAt > t.at)
+  const sw = rank > best || (rank > 0 && rank === best && at > bestAt);
+  legacy(x.cm_report_error_takes(B(rank), B(best), at > bestAt ? 1 : 0) !== 0, sw, `sw ${rank} ${best} ${at} ${bestAt}`);
+  // page.js and CameraLink: r > best (no times)
+  legacy(x.cm_report_error_takes(B(rank), B(best), 0) !== 0, rank > best, `page ${rank} ${best}`);
+}
+for (const old of [undefined, { doc: 'a' }, { doc: 'b' }, { doc: null }, {}]) for (const doc of ['a', null]) {
+  // sw.js: old && (old.doc === doc || old.doc == null)
+  const before = !!(old && (old.doc === doc || old.doc == null));
+  legacy(x.cm_page_gone_forgets(old ? 1 : 0, old && old.doc === doc ? 1 : 0, old?.doc != null ? 1 : 0) !== 0, before,
+    `gone ${JSON.stringify(old)} ${doc}`);
+}
+console.log(`${legacyCases} cases against the replaced JavaScript, ${legacyBad} mismatches`);
+process.exit(bad === 0 && legacyBad === 0 && native.length === wasm.length ? 0 : 1);

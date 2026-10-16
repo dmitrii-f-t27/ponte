@@ -161,7 +161,7 @@ public final class KeychainAnalysisKeyStore: AnalysisKeyStore, @unchecked Sendab
     public func delete(for provider: Int) throws {
         let service = AnalysisRules.keychainService(provider)
         let status = calls.delete(service, Self.account)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
+        guard AnalysisRules.keyDeleteOK(deleted: Self.statusCode(status)) else {
             throw AnalysisKeychainError(outcome: AnalysisRules.saveFailed, status: status, service: service)
         }
     }

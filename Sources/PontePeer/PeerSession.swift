@@ -195,8 +195,8 @@ public final class PeerMicGate: @unchecked Sendable {
         let (target, wasSending, sends): (PeerLink?, Bool, Bool) = lock.withLock {
             if voice { lastSignalAt = now }
             let since = lastSignalAt.map { PeerRules.millis(now.timeIntervalSince($0)) } ?? -1
-            let open = PeerRules.sendsMic(linkUp: linkUp, muted: muted, headphonesLike: headphonesLike, keyHeld: keyHeld)
-            let sends = open && PeerRules.vadSends(hasSignal: voice, msSinceSignal: since)
+            let sends = PeerRules.micSends(linkUp: linkUp, muted: muted, headphonesLike: headphonesLike, keyHeld: keyHeld,
+                                           hasSignal: voice, msSinceSignal: since)
             defer { sending = sends }
             return (link, sending, sends)
         }
