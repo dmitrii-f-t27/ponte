@@ -70,15 +70,43 @@ final class AppTestTranscriber: Transcriber {
     func append(_ buffer: AVAudioPCMBuffer) { lock.withLock { appendedFrames += buffer.frameLength } }
 
     func finish() async {
+        if finishHangs {
+            // Like a stalled analyzer: finishing never returns until the session is cancelled.
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in lock.withLock { hangingFinish = c } }
+            return
+        }
         lock.withLock {
             if let text = finalOnFinish { continuation?.yield(.final(id: UUID(), text: text)) }
             continuation?.finish()
             finished = true
         }
     }
+    var finishHangs = false
+    private var hangingFinish: CheckedContinuation<Void, Never>?
 
     func emit(_ event: TranscriptEvent) { _ = lock.withLock { continuation?.yield(event) } }
     func say(_ text: String) { emit(.final(id: UUID(), text: text)) }
+
+    /// What `health()` reports (the lane's stall check reads it).
+    var healthValue = TranscriberHealth()
+    func health() -> TranscriberHealth { lock.withLock { healthValue } }
+    private(set) var cancelled = false
+    func cancel() async {
+        let hanging: CheckedContinuation<Void, Never>? = lock.withLock {
+            cancelled = true
+            continuation?.finish()
+            defer { hangingFinish = nil }
+            return hangingFinish
+        }
+        hanging?.resume()
+    }
+    /// The recognizer stops on its own, as SpeechAnalyzer did in the live call of 2026-10-16.
+    func endByItself(error: String? = "analyzer stopped") {
+        lock.withLock {
+            healthValue.error = error
+            continuation?.finish()
+        }
+    }
 }
 
 struct AppTestPacksMissing: Error {}
@@ -181,7 +209,7 @@ final class AppTestRig {
     let lane: TranslationLane
 
     init(direction: Direction = .outgoing, mode: CaptureMode = .continuous, speak: Bool = true,
-         memory: ConversationMemory = ConversationMemory()) {
+         memory: ConversationMemory = ConversationMemory(), finishWaitMs: Int64 = AppRules.SESSION_FINISH_WAIT_MS) {
         translator.clock = clock
         let box = AppTestBox()
         lane = TranslationLane(direction: direction, source: source,
@@ -192,7 +220,7 @@ final class AppTestRig {
                                },
                                translator: translator, synth: synth, player: player,
                                memory: memory, mode: mode, speechOutputEnabled: speak,
-                               clock: clock.function)
+                               clock: clock.function, finishWaitMs: finishWaitMs)
         self.box = box
         lane.onEvent = { [weak self] in self?.events.append($0) }
     }
@@ -1072,4 +1100,106 @@ private typealias R = AppRules
     #expect(frames >= 3_200 + 4 * 1_600)          // about 0.5 s of silence after the file
     try await Task.sleep(for: .milliseconds(250))
     #expect(box.lock.withLock { box.frames } <= frames + 1_600)   // stopped
+}
+
+// MARK: - Lost recognition sessions (live call 2026-10-16)
+
+/// The Brazilian's lane went silent at 11:18 for the rest of the call: its one recognition session stopped by
+/// itself while the gate stayed open. Now a new session opens and the next phrases are translated and spoken.
+@MainActor @Test func aSessionThatEndsByItselfIsReplaced() async throws {
+    let rig = AppTestRig(direction: .incoming)
+    try await rig.lane.start()
+    let first = try #require(rig.current)
+    first.say("um")
+    try await appTestWait("first phrase") { rig.translatedLines.count == 1 }
+
+    rig.clock.advance(Double(AppRules.SESSION_HEALTHY_MS) / 1000)       // it lived long: the next one opens at once
+    first.endByItself()
+    try await appTestWait("a new session") { rig.allTranscribers.count == 2 && rig.current?.startCount == 1 }
+    let second = try #require(rig.current)
+    #expect(second !== first)
+    let firstHeard = first.appendedFrames
+    rig.source.push()
+    #expect(second.appendedFrames > 0)                                  // the audio goes to the new session
+    #expect(first.appendedFrames == firstHeard)
+    second.say("dois")
+    try await appTestWait("second phrase spoken") { rig.spokenTexts == ["T(um)", "T(dois)"] }
+    #expect(rig.lane.audioStats.listeningSince != nil)
+    await rig.lane.stop()
+    #expect(second.finished)
+}
+
+/// Sessions that end right after they open wait before the next (AppRules.sessionRetryMs): no hot loop.
+@MainActor @Test func sessionsThatKeepEndingWaitBeforeTheNext() async throws {
+    let rig = AppTestRig(direction: .incoming)
+    try await rig.lane.start()
+    rig.current?.endByItself()                                          // lived 0 ms: one failure, wait 1 s
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(rig.allTranscribers.count == 1)
+    try await appTestWait("a new session after the wait", timeout: .seconds(3)) { rig.allTranscribers.count == 2 }
+    await rig.lane.stop()
+}
+
+/// A session given voice that answers nothing is replaced from the poll; the stalled one is cancelled, not waited for.
+@MainActor @Test func aStalledSessionIsReplaced() async throws {
+    let rig = AppTestRig(direction: .incoming)
+    try await rig.lane.start()
+    try await appTestWait("listening") { rig.current?.startCount == 1 }
+    let stalled = try #require(rig.current)
+    rig.lane.checkSession()
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(rig.allTranscribers.count == 1)                             // healthy: kept
+
+    stalled.healthValue = TranscriberHealth(voiceSinceResult: Double(AppRules.SESSION_STALL_VOICE_MS) / 1000)
+    rig.lane.checkSession()
+    rig.lane.checkSession()                                             // a second poll before the gate acted
+    try await appTestWait("replaced") { rig.allTranscribers.count == 2 && stalled.cancelled }
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(rig.allTranscribers.count == 2)                             // one new session, not two
+    rig.source.push()
+    #expect((rig.current?.appendedFrames ?? 0) > 0)
+    rig.current?.say("três")
+    try await appTestWait("spoken") { rig.spokenTexts == ["T(três)"] }
+    await rig.lane.stop()
+}
+
+/// A session the gate closes (push-to-talk key up, Stop) is not reopened.
+@MainActor @Test func aSessionTheGateClosedIsNotReopened() async throws {
+    let rig = AppTestRig(direction: .outgoing, mode: .pushToTalk)
+    try await rig.lane.start()
+    rig.lane.setKeyHeld(true)
+    try await appTestWait("listening") { rig.current?.startCount == 1 }
+    rig.lane.setKeyHeld(false)
+    try await appTestWait("closed") { rig.current?.finished == true }
+    rig.clock.advance(60)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(rig.allTranscribers.count == 1)
+    #expect(rig.lane.audioStats.listeningSince == nil)
+    await rig.lane.stop()
+}
+
+/// «Стоп» hung at «Остановка…» on 2026-10-16: closing the session waited for a stalled recognizer forever. Now it
+/// waits at most the finish wait, then cancels the session; push-to-talk key-up and Stop both go on.
+@MainActor @Test func closingAStalledSessionDoesNotHang() async throws {
+    let rig = AppTestRig(direction: .incoming, finishWaitMs: 50)
+    try await rig.lane.start()
+    try await appTestWait("listening") { rig.current?.startCount == 1 }
+    let stalled = try #require(rig.current)
+    stalled.finishHangs = true
+    let began = ContinuousClock.now
+    await rig.lane.stop()
+    #expect(ContinuousClock.now - began < .seconds(2))
+    #expect(stalled.cancelled)
+    #expect(!rig.lane.isRunning)
+
+    let ptt = AppTestRig(direction: .outgoing, mode: .pushToTalk, finishWaitMs: 50)
+    try await ptt.lane.start()
+    ptt.lane.setKeyHeld(true)
+    try await appTestWait("listening") { ptt.current?.startCount == 1 }
+    ptt.current?.finishHangs = true
+    ptt.lane.setKeyHeld(false)
+    try await appTestWait("closed") { ptt.current?.cancelled == true && ptt.lane.audioStats.listeningSince == nil }
+    ptt.lane.setKeyHeld(true)                                           // the next key press still opens a session
+    try await appTestWait("listening again") { ptt.allTranscribers.count == 2 && ptt.current?.startCount == 1 }
+    await ptt.lane.stop()
 }

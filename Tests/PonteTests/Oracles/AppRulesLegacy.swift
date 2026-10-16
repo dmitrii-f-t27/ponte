@@ -49,10 +49,12 @@ enum AppRulesLegacy {
     static let GEV_KEY: Int32 = 5                // push-to-talk key changed (keyHeld is the new value)
     static let GEV_PAUSE: Int32 = 6              // pause changed (paused is the new value)
     static let GEV_MODE: Int32 = 7               // mode changed (mode is the new value)
+    static let GEV_SESSION_LOST: Int32 = 8       // the open session ended by itself or stalled
 
     static let GACT_NONE: Int32 = 0
     static let GACT_OPEN_SEGMENT: Int32 = 1
     static let GACT_CLOSE_SEGMENT: Int32 = 2     // flush the session: its last phrase becomes final
+    static let GACT_REOPEN_SEGMENT: Int32 = 3    // a new session in place of the lost one
 
     /// Audio is transcribed only while running, not paused, and in «Авто» or with the key held.
     static func gateWantsOpen(mode: Int32, keyHeld: Bool, paused: Bool) -> Bool {
@@ -77,6 +79,8 @@ enum AppRulesLegacy {
             return want ? pack(GATE_OPEN, GACT_OPEN_SEGMENT) : pack(GATE_CLOSED, GACT_NONE)
         case (GATE_OPEN, GEV_KEY), (GATE_OPEN, GEV_PAUSE), (GATE_OPEN, GEV_MODE):
             return want ? pack(GATE_OPEN, GACT_NONE) : pack(GATE_CLOSED, GACT_CLOSE_SEGMENT)
+        case (GATE_OPEN, GEV_SESSION_LOST):
+            return want ? pack(GATE_OPEN, GACT_REOPEN_SEGMENT) : pack(GATE_CLOSED, GACT_CLOSE_SEGMENT)
         default:
             return pack(state, GACT_NONE)
         }
@@ -315,6 +319,30 @@ enum AppRulesLegacy {
     /// `msSinceAttempt` < 0 = never tried.
     static func retryTranslatorPrepare(prepared: Bool, msSinceAttempt: Int64) -> Bool {
         !prepared && (msSinceAttempt < 0 || msSinceAttempt >= PREPARE_RETRY_MS)
+    }
+
+    // MARK: - Transcriber session health
+
+    static let SESSION_STALL_VOICE_MS: Int64 = 12_000
+    static let SESSION_START_MAX_MS: Int64 = 20_000
+    static let SESSION_HEALTHY_MS: Int64 = 30_000
+    /// Waits by failures in a row: 1, 2, 4, 8, 16 s, then 30 s.
+    static let SESSION_RETRY_STEPS_MS: [Int64] = [1_000, 2_000, 4_000, 8_000, 16_000]
+    static let SESSION_RETRY_MAX_MS: Int64 = 30_000
+    static let SESSION_FAILURES_MAX: Int64 = 16
+
+    static func sessionStalled(started: Bool, msSinceOpen: Int64, voiceMsSinceResult: Int64) -> Bool {
+        started ? voiceMsSinceResult >= SESSION_STALL_VOICE_MS : msSinceOpen >= SESSION_START_MAX_MS
+    }
+
+    static func sessionFailuresAfter(failures: Int64, livedMs: Int64) -> Int64 {
+        guard (0..<SESSION_HEALTHY_MS).contains(livedMs) else { return 0 }
+        return min(max(failures, 0), SESSION_FAILURES_MAX - 1) + 1
+    }
+
+    static func sessionRetryMs(failures: Int64) -> Int64 {
+        guard failures > 0 else { return 0 }
+        return failures <= Int64(SESSION_RETRY_STEPS_MS.count) ? SESSION_RETRY_STEPS_MS[Int(failures) - 1] : SESSION_RETRY_MAX_MS
     }
 
     static func autosaveOnStop(lines: Int32) -> Bool { lines > 0 }

@@ -223,6 +223,12 @@ final class TranslationLane {
     private var segment: Segment?
     private var gateChange: Task<Void, Never>?
     private var openSegments: [Segment] = []
+    /// When the open session was opened (its age when it ends by itself, AppRules.sessionFailuresAfter).
+    private var segmentOpenedAt: Date?
+    /// Sessions in a row that ended by themselves soon after they opened (AppRules.sessionRetryMs).
+    private var sessionFailures: Int64 = 0
+    /// How long closing a session waits for its last phrase (AppRules.SESSION_FINISH_WAIT_MS; shorter in tests).
+    private let finishWaitMs: Int64
     private var lastPartialAt: [UUID: Date] = [:]
 
     private var translateInput: AsyncStream<PendingPhrase>.Continuation?
@@ -246,8 +252,10 @@ final class TranslationLane {
          memory: ConversationMemory = ConversationMemory(),
          mode: CaptureMode = .continuous,
          speechOutputEnabled: Bool = true,
-         clock: @escaping @Sendable () -> Date = { Date() }) {
+         clock: @escaping @Sendable () -> Date = { Date() },
+         finishWaitMs: Int64 = AppRules.SESSION_FINISH_WAIT_MS) {
         self.direction = direction
+        self.finishWaitMs = finishWaitMs
         self.source = source
         self.makeTranscriber = makeTranscriber
         self.translator = translator
@@ -423,11 +431,13 @@ final class TranslationLane {
 
     /// Feeds one event to AppRules.gateStep and performs its action. Serialized, so quick
     /// key taps cannot interleave.
-    private func gateEvent(_ event: Int32) async {
+    /// `expected`: the event is about that session (GEV_SESSION_LOST) and is dropped once another one is open.
+    private func gateEvent(_ event: Int32, expected: Segment? = nil) async {
         let previous = gateChange
         let change = Task { [weak self] in
             await previous?.value
             guard let self else { return }
+            if let expected, self.segment !== expected { return }
             let step = AppRules.gateStep(state: self.gatePhase, event: event, mode: self.mode.ruleCode, keyHeld: self.isKeyHeld,
                                          paused: AppRules.gateHeld(paused: self.isPaused, ownVoice: self.ownVoice))
             self.gatePhase = AppRules.stepState(step)
@@ -436,6 +446,12 @@ final class TranslationLane {
                 self.openSegment()
             case AppRules.GACT_CLOSE_SEGMENT:
                 if let segment = self.segment { await self.close(segment) }
+            case AppRules.GACT_REOPEN_SEGMENT:
+                // The new session takes the audio at once; the lost one is dropped without waiting for it.
+                let lost = self.segment
+                self.onEvent(.partial(""))
+                self.openSegment()
+                if let lost, lost.markClosed() { Task { await lost.transcriber.cancel() } }
             default:
                 break
             }
@@ -450,6 +466,7 @@ final class TranslationLane {
         preparedTranscriber = nil
         let segment = Segment(transcriber: transcriber)
         self.segment = segment
+        segmentOpenedAt = clock()
         openSegments.append(segment)
         intake.setSegment(segment)
         segment.consumer = Task { [weak self] in
@@ -467,7 +484,38 @@ final class TranslationLane {
                 self?.onEvent(.problem("Распознавание: \(error.localizedDescription)"))
             }
             self?.openSegments.removeAll { $0 === segment }
+            self?.sessionEnded(segment)
         }
+    }
+
+    /// The session's results ended. Closed by the gate: nothing to do. Still the gate's session: it ended by itself
+    /// (the analyzer stopped or failed), so a new one opens after AppRules.sessionRetryMs. Live call 2026-10-16:
+    /// without this the Brazilian's lane went silent at 11:18 for the rest of the call.
+    private func sessionEnded(_ segment: Segment) {
+        guard self.segment === segment, !segment.isClosed else { return }
+        let lived = segmentOpenedAt.map { millis(clock().timeIntervalSince($0)) } ?? -1
+        sessionFailures = AppRules.sessionFailuresAfter(failures: sessionFailures, livedMs: lived)
+        let wait = AppRules.sessionRetryMs(failures: sessionFailures)
+        let error = segment.transcriber.health().error ?? "none"
+        log.error("transcriber session ended by itself \(self.direction.rawValue, privacy: .public): \(error, privacy: .public)")
+        PonteDiagnostics.log("\(direction.rawValue) transcriber session ended by itself after \(lived) ms (error: \(error)); new session in \(wait) ms")
+        Task { [weak self] in
+            if wait > 0 { try? await Task.sleep(for: .milliseconds(wait)) }
+            await self?.gateEvent(AppRules.GEV_SESSION_LOST, expected: segment)
+        }
+    }
+
+    /// From the app's poll: a session that never got ready, or that was given voice and answers nothing
+    /// (AppRules.sessionStalled), is replaced by a new one.
+    func checkSession() {
+        guard let segment, !segment.isClosed else { return }
+        let health = segment.transcriber.health()
+        let sinceOpen = segmentOpenedAt.map { millis(clock().timeIntervalSince($0)) } ?? -1
+        let voiceMs = millis(health.voiceSinceResult)
+        guard AppRules.sessionStalled(started: segment.isStarted, msSinceOpen: sinceOpen, voiceMsSinceResult: voiceMs) else { return }
+        log.error("transcriber session stalled \(self.direction.rawValue, privacy: .public)")
+        PonteDiagnostics.log("\(direction.rawValue) transcriber session stalled: started \(segment.isStarted), open \(sinceOpen) ms, \(voiceMs) ms of voice without a result (error: \(health.error ?? "none")); new session")
+        Task { await gateEvent(AppRules.GEV_SESSION_LOST, expected: segment) }
     }
 
     private func close(_ segment: Segment) async {
@@ -476,7 +524,27 @@ final class TranslationLane {
             intake.setSegment(nil)
         }
         if segment.markClosed() {
-            await segment.transcriber.finish()
+            await finishOrCancel(segment.transcriber)
+        }
+    }
+
+    /// Waits for the session's last phrase at most `finishWaitMs`. A stalled recognizer never finishes its input
+    /// (2026-10-16: «Стоп» hung at «Остановка…» for good), so it is then cancelled and the gate goes on without it.
+    private func finishOrCancel(_ transcriber: Transcriber) async {
+        let wait = finishWaitMs
+        let direction = self.direction
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            let once = ResumeOnce(done)
+            Task {
+                await transcriber.finish()
+                once.resume()
+            }
+            Task {
+                try? await Task.sleep(for: .milliseconds(wait))
+                guard once.resume() else { return }
+                PonteDiagnostics.log("\(direction.rawValue) transcriber did not finish in \(wait) ms; cancelled")
+                await transcriber.cancel()
+            }
         }
     }
 
@@ -841,6 +909,25 @@ final class AudioIntake: @unchecked Sendable {
     }
 }
 
+/// Resumes a continuation once, from whichever of several tasks comes first.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(_ continuation: CheckedContinuation<Void, Never>) { self.continuation = continuation }
+
+    /// True for the call that resumed it.
+    @discardableResult
+    func resume() -> Bool {
+        let c: CheckedContinuation<Void, Never>? = lock.withLock {
+            defer { continuation = nil }
+            return continuation
+        }
+        c?.resume()
+        return c != nil
+    }
+}
+
 /// One transcriber session. Audio that arrives before `start()` returned is kept
 /// and replayed in order.
 final class Segment: @unchecked Sendable {
@@ -852,6 +939,9 @@ final class Segment: @unchecked Sendable {
     private var pending: [AVAudioPCMBuffer] = []
 
     init(transcriber: Transcriber) { self.transcriber = transcriber }
+
+    var isStarted: Bool { lock.withLock { started } }
+    var isClosed: Bool { lock.withLock { closed } }
 
     func append(_ buffer: AVAudioPCMBuffer) {
         lock.lock()

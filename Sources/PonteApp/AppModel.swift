@@ -843,6 +843,8 @@ final class AppModel {
         if isRunning {
             // A translator not ready is tried again every LN_PREPARE_RETRY_MS (the rule decides; a ready one is left).
             for lane in [incomingLane, outgoingLane].compactMap({ $0 }) { lane.retryTranslatorIfNeeded() }
+            // A recognition session that never got ready, or hears voice and answers nothing, is replaced (lane_rules).
+            for lane in [incomingLane, outgoingLane].compactMap({ $0 }) { lane.checkSession() }
             translatorsFailed = Int32([incomingLane, outgoingLane].compactMap { $0 }.filter { $0.translatorError != nil }.count)
             // A pack macOS reported missing for a moment at launch is ready now: its banner goes by itself.
             let packsStep = WizardStep(code: AppRules.bannerStep(banner: AppRules.BAN_NO_PACKS))

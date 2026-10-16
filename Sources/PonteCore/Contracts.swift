@@ -198,10 +198,29 @@ public protocol Transcriber: AnyObject {
     /// Timing of a phrase already emitted as `.final` (non-empty text); nil if unknown.
     /// Available by the time the `.final` event is delivered.
     func timing(for id: UUID) -> PhraseTiming?
+    /// What the lane's watchdog reads (lane_rules ln_session_stalled).
+    func health() -> TranscriberHealth
+    /// Drops the session without waiting for it: a stalled recognizer may never finish its input.
+    func cancel() async
+}
+
+/// The running session as the lane sees it.
+public struct TranscriberHealth: Sendable, Equatable {
+    /// Seconds of voice (the level meter's) given to the session since its last result, or since it started.
+    public var voiceSinceResult: Double
+    /// Why the session stopped early, if it did.
+    public var error: String?
+
+    public init(voiceSinceResult: Double = 0, error: String? = nil) {
+        self.voiceSinceResult = voiceSinceResult
+        self.error = error
+    }
 }
 
 extension Transcriber {
     public func timing(for id: UUID) -> PhraseTiming? { nil }
+    public func health() -> TranscriberHealth { TranscriberHealth() }
+    public func cancel() async { await finish() }
 }
 
 public protocol Translator: AnyObject {
