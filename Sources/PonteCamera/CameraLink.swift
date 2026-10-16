@@ -365,11 +365,12 @@ public final class CameraLink: @unchecked Sendable {
         status.processed = open.reduce(0) { $0 + $1.processed }
         status.passing = open.reduce(0) { $0 + $1.passing }
         status.troubled = open.reduce(0) { $0 + $1.troubled }
-        // The error of the highest rank; among equal ranks the first client's.
+        // The error of the highest rank (CameraRules.reportErrorTakes); the clients' reports carry no times, so among
+        // equal ranks the first client's stays.
         var rank = 0
         for client in open {
             let r = CameraRules.reportErrorRank(hasError: client.error != nil, troubled: client.troubled > 0)
-            if r > rank { rank = r; status.error = client.error }
+            if CameraRules.reportErrorTakes(rank: r, best: rank, newer: false) { rank = r; status.error = client.error }
         }
         if let error = status.error, error != lastLoggedError {
             lastLoggedError = error

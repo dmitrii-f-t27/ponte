@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ponte Camera",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Light, colour and framing of your camera in Google Meet, set from Ponte.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA08RUnKYZsxDd6qWNcMUDat4plIBAGexXvX2HlxxIITx+a0IZ/I9q8S/05Lzrreec+H/oPT1kB8w878tVokWQHHHZZLaCt77HqLVQbyp6t2lhQ1o0ZQ49RwOwgmXcL/ZTEqrSzGyO5kCg4KmoIDvxnywxhyHXSXmA2GI6G8TCjxbnnWldVAyEfiub165NrjrNqxMC9LbEkHZ98eVOEvtTxf851JA05xRD3VYBA8ZDr14ocfgAF/CHKl5HsjBPaiXd7COlbsicPC13GyoVE4aceH5y/dLjPs5bFXnRFrw05JWoVYXe1MDq29JoPMPNJYaEfy1VLa4LvBudT8XxFusk+wIDAQAB",
   "minimum_chrome_version": "116",

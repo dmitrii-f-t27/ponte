@@ -349,7 +349,7 @@ public final class PeerLink: @unchecked Sendable {
         let frameSeq = UInt32(truncatingIfNeeded: Self.uint(bytes, at: PeerRules.hdrSeq, count: 4))
         let sentMs = Int64(bitPattern: Self.uint(bytes, at: PeerRules.hdrSent, count: 8))
         let now = Date()
-        guard peer != sender, PeerRules.frameFresh(sentMs: sentMs, nowMs: Self.ms(now)) else { return }
+        guard PeerRules.frameAccepted(isSelf: peer == sender, sentMs: sentMs, nowMs: Self.ms(now)) else { return }
         let last = lastSeq[peer]
         guard PeerRules.seqNewer(seq: frameSeq, lastSeq: last ?? 0, hasLast: last != nil) else { return }
         let known = peers[peer] != nil

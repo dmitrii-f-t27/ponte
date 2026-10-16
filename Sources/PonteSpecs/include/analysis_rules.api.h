@@ -265,6 +265,8 @@ int64_t an_bind_check(bool has_bound, bool same_as_bound, int64_t provider, bool
 int64_t an_config_check(int64_t key_bytes, int64_t url_check, int64_t model_bytes, int64_t bind);
 int64_t an_model_check(uint8_t text[static 2048], int64_t len);
 int64_t an_key_write_outcome(int64_t added);
+bool an_key_delete_ok(int64_t deleted);
+bool an_offers_reset(int64_t provider, bool is_default);
 int64_t an_key_check(uint8_t text[static 2048], int64_t len);
 bool an_analysis_on(bool has_stored, bool stored, bool has_key, bool test_mode);
 int64_t an_speaker(int64_t direction);

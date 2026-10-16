@@ -33,6 +33,7 @@
 #define RL_MAX_BUFFERED 65536
 #define RL_ROOM_HEX 64
 #define RL_ROOM_PATH_BYTES 67
+#define RL_ROOM_PREFIX_BYTES 3
 #define RL_PATH_MAX 256
 #define RL_K_PORT 0
 #define RL_K_MAX_PAYLOAD 1
@@ -68,6 +69,8 @@
 int64_t rl_limit(int64_t key);
 bool rl_hex_digit(uint8_t b);
 bool rl_room_path(uint8_t text[static 256], int64_t len);
+int64_t rl_room_id_start(void);
+int64_t rl_upgrade_refusal(bool room_path);
 bool rl_health_path(uint8_t text[static 256], int64_t len);
 int64_t rl_http_method(uint8_t text[static 256], int64_t len);
 int64_t rl_http_status(int64_t method, bool health);
@@ -139,7 +142,7 @@ bool rl_room_path(uint8_t text[static 256], int64_t len) {
     if ((((text[0] != 47) || (text[1] != 114)) || (text[2] != 47))) {
         return false;
     }
-    int64_t k = 3;
+    int64_t k = RL_ROOM_PREFIX_BYTES;
     while ((k < RL_ROOM_PATH_BYTES)) {
         if ((rl_hex_digit(text[k]) == false)) {
             return false;
@@ -147,6 +150,17 @@ bool rl_room_path(uint8_t text[static 256], int64_t len) {
         k = (k + 1);
     }
     return true;
+}
+
+int64_t rl_room_id_start(void) {
+    return RL_ROOM_PREFIX_BYTES;
+}
+
+int64_t rl_upgrade_refusal(bool room_path) {
+    if (room_path) {
+        return 0;
+    }
+    return RL_HTTP_BAD_REQUEST;
 }
 
 bool rl_health_path(uint8_t text[static 256], int64_t len) {
@@ -384,6 +398,25 @@ void test_rl_frame_rules(void) {
     assert((rl_address_after_leave(3) == 2));
 }
 
+void test_rl_completion_rules(void) {
+    assert((rl_room_id_start() == 3));
+    assert(((RL_ROOM_PATH_BYTES - rl_room_id_start()) == RL_ROOM_HEX));
+    assert((rl_upgrade_refusal(true) == 0));
+    assert((rl_upgrade_refusal(false) == RL_HTTP_BAD_REQUEST));
+    assert((rl_upgrade_refusal(false) != RL_HTTP_NOT_FOUND));
+    uint8_t t[256] = { [0 ... (256) - 1] = 0 };
+    t[0] = 47;
+    t[1] = 114;
+    t[2] = 47;
+    int64_t k = 3;
+    while ((k < 67)) {
+        t[k] = 48;
+        k = (k + 1);
+    }
+    assert((rl_upgrade_refusal(rl_room_path(t, 67)) == 0));
+    assert((rl_upgrade_refusal(rl_room_path(t, 66)) == RL_HTTP_BAD_REQUEST));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -396,7 +429,8 @@ int main(void) {
     test_rl_path_rules();
     test_rl_admit_rules();
     test_rl_frame_rules();
-    printf("All %d tests passed.\n", 4);
+    test_rl_completion_rules();
+    printf("All %d tests passed.\n", 5);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

@@ -133,7 +133,8 @@
 #define CM_ERROR_RANK_NONE 0
 #define CM_ERROR_RANK_PAST 1
 #define CM_ERROR_RANK_TROUBLE 2
-#define CM_POLICY_REV 2
+#define CM_ERROR_RANK_COUNT 3
+#define CM_POLICY_REV 3
 #define CM_ROW_EXTENSION_ORIGIN 0
 #define CM_ROW_OTHER_EXTENSION 1
 #define CM_ROW_MEET_PAGE 2
@@ -177,6 +178,7 @@ int64_t cm_link_cameras(int64_t reported);
 bool cm_panel_install_open(int64_t status);
 bool cm_link_version_taken(int64_t v);
 int64_t cm_report_error_rank(bool has_error, bool troubled);
+bool cm_report_error_takes(int64_t rank, int64_t best, bool newer);
 int64_t cm_link_status(bool listening, bool failed, int64_t clients, int64_t active_cameras);
 int64_t cm_link_panel(bool listening, bool failed, int64_t clients, int64_t processed, int64_t passing, int64_t troubled);
 int64_t cm_ws_handshake_status(bool is_get, bool upgrade, bool has_key, bool origin_allowed, int64_t open_clients);
@@ -191,6 +193,7 @@ int64_t cm_dial_delay_ms(int64_t failures, int64_t pages);
 int64_t cm_dial_wait_ms(int64_t reason, int64_t ms_since, int64_t failures, int64_t pages);
 int64_t cm_dial_failures_after(int64_t failures, bool opened);
 int64_t cm_page_lease_left_ms(int64_t ms_since);
+bool cm_page_gone_forgets(bool has_report, bool same_document, bool report_has_document);
 int64_t cm_trk_route(int64_t state, bool needs, bool due, bool sized);
 bool cm_render_usable(int64_t variant, bool color_identity);
 bool cm_trk_settings_restart(int64_t state, bool usable);
@@ -522,6 +525,13 @@ int64_t cm_report_error_rank(bool has_error, bool troubled) {
     return CM_ERROR_RANK_PAST;
 }
 
+bool cm_report_error_takes(int64_t rank, int64_t best, bool newer) {
+    if ((rank > best)) {
+        return true;
+    }
+    return (((rank > CM_ERROR_RANK_NONE) && (rank == best)) && newer);
+}
+
 int64_t cm_link_status(bool listening, bool failed, int64_t clients, int64_t active_cameras) {
     if (failed) {
         return CM_LINK_FAILED;
@@ -692,6 +702,10 @@ int64_t cm_page_lease_left_ms(int64_t ms_since) {
         return CM_PAGE_LEASE_MS;
     }
     return (CM_PAGE_LEASE_MS - ms_since);
+}
+
+bool cm_page_gone_forgets(bool has_report, bool same_document, bool report_has_document) {
+    return (has_report && (same_document || (report_has_document == false)));
 }
 
 int64_t cm_trk_route(int64_t state, bool needs, bool due, bool sized) {
@@ -1600,6 +1614,42 @@ void test_cm_report_rules(void) {
     assert((cm_report_limit(CM_REPORT_NAME) == 64));
 }
 
+void test_cm_completion_rules(void) {
+    assert((cm_report_error_takes(CM_ERROR_RANK_TROUBLE, CM_ERROR_RANK_PAST, false) == true));
+    assert((cm_report_error_takes(CM_ERROR_RANK_PAST, CM_ERROR_RANK_NONE, false) == true));
+    assert((cm_report_error_takes(CM_ERROR_RANK_PAST, CM_ERROR_RANK_TROUBLE, true) == false));
+    assert((cm_report_error_takes(CM_ERROR_RANK_NONE, CM_ERROR_RANK_NONE, true) == false));
+    assert((cm_report_error_takes(CM_ERROR_RANK_PAST, CM_ERROR_RANK_PAST, true) == true));
+    assert((cm_report_error_takes(CM_ERROR_RANK_PAST, CM_ERROR_RANK_PAST, false) == false));
+    assert((cm_report_error_takes(CM_ERROR_RANK_TROUBLE, CM_ERROR_RANK_TROUBLE, true) == true));
+    int64_t rank = 0;
+    uint32_t bad = 0;
+    while ((rank < CM_ERROR_RANK_COUNT)) {
+        int64_t best = 0;
+        while ((best < CM_ERROR_RANK_COUNT)) {
+            if (((rank < best) && cm_report_error_takes(rank, best, true))) {
+                bad = (bad + 1);
+            }
+            if (((rank > best) && (cm_report_error_takes(rank, best, false) == false))) {
+                bad = (bad + 1);
+            }
+            if (((rank == best) && cm_report_error_takes(rank, best, false))) {
+                bad = (bad + 1);
+            }
+            best = (best + 1);
+        }
+        rank = (rank + 1);
+    }
+    assert((bad == 0));
+    assert((cm_report_error_rank(true, true) < CM_ERROR_RANK_COUNT));
+    assert((cm_page_gone_forgets(true, true, true) == true));
+    assert((cm_page_gone_forgets(true, false, false) == true));
+    assert((cm_page_gone_forgets(true, true, false) == true));
+    assert((cm_page_gone_forgets(true, false, true) == false));
+    assert((cm_page_gone_forgets(false, true, true) == false));
+    assert((cm_page_gone_forgets(false, false, false) == false));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1617,7 +1667,8 @@ int main(void) {
     test_cm_page_rules();
     test_cm_pipeline_rules();
     test_cm_report_rules();
-    printf("All %d tests passed.\n", 9);
+    test_cm_completion_rules();
+    printf("All %d tests passed.\n", 10);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

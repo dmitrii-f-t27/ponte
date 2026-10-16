@@ -51,7 +51,7 @@ private struct DevicesSettings: View {
                              devices: model.inputDevices)
                 DevicePicker(title: "Мои наушники", uid: $model.headphonesUID,
                              automatic: "Системный выход (\(model.defaultOutput?.name ?? "—"))",
-                             devices: model.outputDevices.filter { !AudioRules.isBlackHole(name: $0.name) })
+                             devices: model.headphoneChoices)
                 DevicePicker(title: "Вывод в звонок", uid: $model.callOutputUID,
                              automatic: AppRules.callOutputLabel(hasBlackHole: model.blackHoleDevice != nil,
                                                                  hasSetting: !model.callOutputUID.isEmpty) == AppRules.COL_FOUND

@@ -13,7 +13,7 @@ EXPORTS=(cm_setting_min cm_setting_max cm_setting_default cm_clamp_setting cm_pr
          cm_trk_route cm_trk_step_state cm_trk_step_action cm_trk_bucket cm_render_usable cm_render_variant_held
          cm_render_next_variant cm_render_next_fails cm_render_retry_ms cm_render_next_state cm_render_first
          cm_report_stage cm_report_clean cm_page_lease_left_ms cm_link_version_taken cm_report_error_rank
-         cm_wasm_floats cm_wasm_bytes)
+         cm_report_error_takes cm_page_gone_forgets cm_wasm_floats cm_wasm_bytes)
 FLAGS=()
 for E in $EXPORTS; do FLAGS+=("-Wl,--export=$E"); done
 "$ZIG" cc --target=wasm32-wasi -mexec-model=reactor -O2 -DNDEBUG -ffp-contract=off -std=c11 -Wno-parentheses-equality \

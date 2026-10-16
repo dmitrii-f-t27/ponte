@@ -205,6 +205,10 @@ public enum CameraRules {
     public static func reportErrorRank(hasError: Bool, troubled: Bool) -> Int {
         Int(cm_report_error_rank(hasError, troubled))
     }
+    /// A report of `rank` takes the place of the best so far (`best`, 0 before any); among equals only a `newer` one.
+    public static func reportErrorTakes(rank: Int, best: Int, newer: Bool) -> Bool {
+        cm_report_error_takes(Int64(rank), Int64(best), newer)
+    }
 
     /// A reported name or message cleaned by the spec: printable ASCII, at most the limit of its kind.
     public static func reportClean(_ text: String, kind: Int) -> String {

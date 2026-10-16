@@ -529,6 +529,12 @@ final class AppModel {
         devices.filter { AudioRules.isMicChoice(inputChannels: $0.inputChannels, isBlackHole: AudioRules.isBlackHole(name: $0.name)) }
     }
     var outputDevices: [AudioDevice] { devices.filter { AudioRules.isOutput(channels: $0.outputChannels) } }
+    /// «Мои наушники»: outputs other than BlackHole (device_rules: dv_is_headphones_choice).
+    var headphoneChoices: [AudioDevice] {
+        devices.filter {
+            AudioRules.isHeadphonesChoice(outputChannels: $0.outputChannels, isBlackHole: AudioRules.isBlackHole(name: $0.name))
+        }
+    }
 
     /// Where the user hears things: chosen headphones or the system output.
     var listeningDevice: AudioDevice? {

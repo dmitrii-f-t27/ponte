@@ -129,6 +129,12 @@ public enum PeerRules {
     /// |nowMs - sentMs| <= `maxSkewMs` (any Int64 times, no overflow).
     public static func frameFresh(sentMs: Int64, nowMs: Int64) -> Bool { pe_frame_fresh(sentMs, nowMs) }
 
+    /// A decrypted frame passes the first admission check: not from this link itself (`isSelf`: its sender ID is the
+    /// link's own) and fresh.
+    public static func frameAccepted(isSelf: Bool, sentMs: Int64, nowMs: Int64) -> Bool {
+        pe_frame_accepted(isSelf, sentMs, nowMs)
+    }
+
     /// When a peer's voice started or ended (`atMs`, its clock), on this Mac's clock: the gap to its frame's `sentMs`
     /// counted back from the arrival `nowMs`, so the two Macs' clocks need not agree.
     public static func voiceLocalMs(atMs: Int64, sentMs: Int64, nowMs: Int64) -> Int64 {
@@ -346,6 +352,12 @@ public enum PeerRules {
     public static let gateSend = Int(PE_GATE_SEND)
     public static let gateFlush = Int(PE_GATE_FLUSH)
     public static func micGateStep(sends: Bool, wasSending: Bool) -> Int { Int(pe_mic_gate_step(sends, wasSending)) }
+    /// PeerMicGate: a buffer goes to the peers when `sendsMic` opens the gate and `vadSends` hears voice
+    /// (`msSinceSignal` < 0: no voice yet).
+    public static func micSends(linkUp: Bool, muted: Bool, headphonesLike: Bool, keyHeld: Bool, hasSignal: Bool,
+                                msSinceSignal: Int64) -> Bool {
+        pe_mic_sends(linkUp, muted, headphonesLike, keyHeld, hasSignal, msSinceSignal)
+    }
 }
 
 /// A text in the fixed buffer the C takes: the first PE_TEXT_MAX bytes, with the whole text's length.

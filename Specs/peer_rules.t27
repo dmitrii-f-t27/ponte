@@ -500,6 +500,14 @@ pub fn pe_frame_fresh(sent_ms: i64, now_ms: i64) -> bool {
     return pe_gap_over(now_ms, sent_ms, PE_MAX_SKEW_MS) == false and pe_gap_over(sent_ms, now_ms, PE_MAX_SKEW_MS) == false;
 }
 
+; The first admission check of a decrypted frame (PeerLink.open, before the sequence number, the peer limit and the
+; frame's kind): a frame is taken only from another Ponte (`is_self`: its sender ID is this link's own; the relay
+; never echoes, but a frame of this link coming back is never this link's peer) and only when it is fresh
+; (pe_frame_fresh). PeerLink wrote `peer != sender, frameFresh(...)` itself before 2026-10-15.
+pub fn pe_frame_accepted(is_self: bool, sent_ms: i64, now_ms: i64) -> bool {
+    return is_self == false and pe_frame_fresh(sent_ms, now_ms);
+}
+
 ; When a voice started or ended (at_ms, sender's clock), on this Mac's clock: the sender stamps the event and the frame
 ; (sent_ms) on the same clock, so the gap between them needs no agreement between the two Macs' clocks; the event
 ; happened that long before the frame arrived (now_ms; the relay's delay is not subtracted). A gap below 0 or above
@@ -811,6 +819,14 @@ pub fn pe_mic_gate_step(sends: bool, was_sending: bool) -> i64 {
     if (sends) { return PE_GATE_SEND; }
     if (was_sending) { return PE_GATE_FLUSH; }
     return PE_GATE_NONE;
+}
+
+; PeerMicGate: a microphone buffer goes to the other Russians when the gate is open (pe_sends_mic: link up, not
+; muted, headphones or the talk key) and the voice detector sends (pe_vad_sends: voice now, or within the hangover).
+; `ms_since_signal` < 0: no voice yet. The `sends` of pe_mic_gate_step; PeerMicGate joined the two itself before
+; 2026-10-15.
+pub fn pe_mic_sends(link_up: bool, muted: bool, headphones_like: bool, key_held: bool, has_signal: bool, ms_since_signal: i64) -> bool {
+    return pe_sends_mic(link_up, muted, headphones_like, key_held) and pe_vad_sends(has_signal, ms_since_signal);
 }
 
 ; --- Texts for the tests ------------------------------------------------------------------------------------------
@@ -1613,4 +1629,58 @@ test pe_window_book_rules {
     assert pe_mic_gate_step(true, true) == PE_GATE_SEND;
     assert pe_mic_gate_step(false, true) == PE_GATE_FLUSH;
     assert pe_mic_gate_step(false, false) == PE_GATE_NONE;
+}
+
+test pe_completion_rules {
+    // With headphones a voice frame goes out, and the hangover keeps the end of a word.
+    assert pe_mic_sends(true, false, true, false, true, 0) == true;
+    assert pe_mic_sends(true, false, true, false, false, PE_VAD_HANGOVER_MS - 1) == true;
+    assert pe_mic_sends(true, false, true, false, false, PE_VAD_HANGOVER_MS) == false;
+    // Silence before any voice, room noise: nothing.
+    assert pe_mic_sends(true, false, true, false, false, 0 - 1) == false;
+    // Without headphones only with the talk key; muted or the link down: never, voice or not.
+    assert pe_mic_sends(true, false, false, false, true, 0) == false;
+    assert pe_mic_sends(true, false, false, true, true, 0) == true;
+    assert pe_mic_sends(true, true, true, true, true, 0) == false;
+    assert pe_mic_sends(false, false, true, true, true, 0) == false;
+    // Every combination is the gate and the detector together.
+    var bits: i64 = 0;
+    var bad: u32 = 0;
+    while (bits < 32) {
+        var up: bool = (bits & 1) == 1;
+        var mute: bool = (bits & 2) == 2;
+        var phones: bool = (bits & 4) == 4;
+        var key: bool = (bits & 8) == 8;
+        var voice: bool = (bits & 16) == 16;
+        var ms: i64 = 0 - 1;
+        while (ms <= PE_VAD_HANGOVER_MS + 1) {
+            var want: bool = pe_sends_mic(up, mute, phones, key) and pe_vad_sends(voice, ms);
+            if (pe_mic_sends(up, mute, phones, key, voice, ms) != want) { bad = bad + 1; }
+            ms = ms + 50;
+        }
+        bits = bits + 1;
+    }
+    assert bad == 0;
+    // Admission: a frame of this link itself is never taken, fresh or not; another Ponte's only within the skew.
+    var i64_max: i64 = 9223372036854775807;
+    var i64_min: i64 = 0 - 9223372036854775807 - 1;
+    assert pe_frame_accepted(false, 1000, 1000) == true;
+    assert pe_frame_accepted(true, 1000, 1000) == false;
+    assert pe_frame_accepted(false, 0, PE_MAX_SKEW_MS) == true;
+    assert pe_frame_accepted(false, 0, PE_MAX_SKEW_MS + 1) == false;
+    assert pe_frame_accepted(false, PE_MAX_SKEW_MS, 0) == true;
+    assert pe_frame_accepted(false, PE_MAX_SKEW_MS + 1, 0) == false;
+    assert pe_frame_accepted(true, 0, PE_MAX_SKEW_MS) == false;
+    assert pe_frame_accepted(true, 0, PE_MAX_SKEW_MS + 1) == false;
+    assert pe_frame_accepted(false, i64_min, i64_max) == false;
+    assert pe_frame_accepted(false, i64_max, i64_min) == false;
+    assert pe_frame_accepted(false, i64_max, i64_max) == true;
+    var sent: i64 = 0 - 40000;
+    var wrong: u32 = 0;
+    while (sent <= 40000) {
+        if (pe_frame_accepted(false, sent, 0) != pe_frame_fresh(sent, 0)) { wrong = wrong + 1; }
+        if (pe_frame_accepted(true, sent, 0)) { wrong = wrong + 1; }
+        sent = sent + 250;
+    }
+    assert wrong == 0;
 }

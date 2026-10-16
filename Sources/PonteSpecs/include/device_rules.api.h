@@ -276,5 +276,7 @@ int64_t dv_ears(bool headphones_connected);
 bool dv_is_input(int64_t input_channels);
 bool dv_is_output(int64_t output_channels);
 bool dv_is_mic_choice(int64_t input_channels, bool is_blackhole);
+bool dv_is_headphones_choice(int64_t output_channels, bool is_blackhole);
+bool dv_is_selectable_output(bool hidden, bool can_be_default);
 /* Function bodies: see the full header. */
 #endif

@@ -271,6 +271,8 @@ int64_t an_bind_check(bool has_bound, bool same_as_bound, int64_t provider, bool
 int64_t an_config_check(int64_t key_bytes, int64_t url_check, int64_t model_bytes, int64_t bind);
 int64_t an_model_check(uint8_t text[static 2048], int64_t len);
 int64_t an_key_write_outcome(int64_t added);
+bool an_key_delete_ok(int64_t deleted);
+bool an_offers_reset(int64_t provider, bool is_default);
 int64_t an_key_check(uint8_t text[static 2048], int64_t len);
 bool an_analysis_on(bool has_stored, bool stored, bool has_key, bool test_mode);
 int64_t an_speaker(int64_t direction);
@@ -653,6 +655,14 @@ int64_t an_key_write_outcome(int64_t added) {
         return AN_SAVE_FOREIGN;
     }
     return AN_SAVE_FAILED;
+}
+
+bool an_key_delete_ok(int64_t deleted) {
+    return ((deleted == AN_KC_OK) || (deleted == AN_KC_NOT_FOUND));
+}
+
+bool an_offers_reset(int64_t provider, bool is_default) {
+    return ((is_default == false) && (an_provider_code(provider) != AN_PROVIDER_CUSTOM));
 }
 
 int64_t an_key_check(uint8_t text[static 2048], int64_t len) {
@@ -1771,6 +1781,22 @@ void test_an_moved_rules(void) {
     assert((an_end_ms(false, false, 5, 9) == 9));
 }
 
+void test_an_completion_rules(void) {
+    assert((an_key_delete_ok(AN_KC_OK) == true));
+    assert((an_key_delete_ok(AN_KC_NOT_FOUND) == true));
+    assert((an_key_delete_ok(AN_KC_DUPLICATE) == false));
+    assert((an_key_delete_ok(AN_KC_OTHER) == false));
+    assert((an_key_delete_ok((0 - 1)) == false));
+    assert((an_key_write_outcome(AN_KC_NOT_FOUND) == AN_SAVE_FAILED));
+    assert((an_offers_reset(AN_PROVIDER_ZAI, false) == true));
+    assert((an_offers_reset(AN_PROVIDER_DEEPSEEK, false) == true));
+    assert((an_offers_reset(AN_PROVIDER_CUSTOM, false) == false));
+    assert((an_offers_reset(AN_PROVIDER_ZAI, true) == false));
+    assert((an_offers_reset(AN_PROVIDER_DEEPSEEK, true) == false));
+    assert((an_offers_reset(AN_PROVIDER_CUSTOM, true) == false));
+    assert((an_offers_reset(99, false) == an_offers_reset(AN_DEFAULT_PROVIDER, false)));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1790,7 +1816,8 @@ int main(void) {
     test_an_reply_rules();
     test_an_file_names();
     test_an_moved_rules();
-    printf("All %d tests passed.\n", 11);
+    test_an_completion_rules();
+    printf("All %d tests passed.\n", 12);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

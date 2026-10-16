@@ -183,6 +183,7 @@ int64_t pe_secret_normalized(uint8_t text[static 4096], int64_t len, uint8_t out
 int64_t pe_secret_display(uint8_t text[static 4096], int64_t len, uint8_t out[static 16]);
 bool pe_gap_over(int64_t hi, int64_t lo, int64_t limit);
 bool pe_frame_fresh(int64_t sent_ms, int64_t now_ms);
+bool pe_frame_accepted(bool is_self, int64_t sent_ms, int64_t now_ms);
 int64_t pe_voice_local_ms(int64_t at_ms, int64_t sent_ms, int64_t now_ms);
 bool pe_seq_newer(uint32_t seq, uint32_t last_seq, bool has_last);
 int64_t pe_window_end_ms(int64_t end_ms, int64_t last_seen_ms, int64_t now_ms, bool refreshed);
@@ -209,6 +210,7 @@ int64_t pe_window_record(int64_t state, bool has_open, bool same_text);
 bool pe_window_forgotten(int64_t window_end_ms, int64_t now_ms);
 bool pe_window_compares_text(int64_t kind);
 int64_t pe_mic_gate_step(bool sends, bool was_sending);
+bool pe_mic_sends(bool link_up, bool muted, bool headphones_like, bool key_held, bool has_signal, int64_t ms_since_signal);
 int64_t pe_fixture(int64_t index, uint8_t out[static 4096]);
 int64_t pe_fixture_words(int64_t index);
 int64_t pe_fixture_containment(int64_t phrase, int64_t said);

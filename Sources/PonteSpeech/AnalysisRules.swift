@@ -241,6 +241,10 @@ public enum AnalysisRules {
 
     /// What saving a key did, from what adding the Keychain item returned (AnalysisRules.kc*).
     public static func keyWriteOutcome(added: Int) -> Int { Int(an_key_write_outcome(Int64(added))) }
+    /// Deleting the key worked: the Keychain item was deleted or was not there (AnalysisRules.kc*).
+    public static func keyDeleteOK(deleted: Int) -> Bool { an_key_delete_ok(Int64(deleted)) }
+    /// «Вернуть по умолчанию» is offered: the settings differ from the service's defaults, and it has defaults.
+    public static func offersReset(provider: Int, isDefault: Bool) -> Bool { an_offers_reset(Int64(provider), isDefault) }
 
     /// «Анализировать звонок»: never without a key or in test mode; else the stored choice, on by default.
     public static func analysisOn(hasStored: Bool, stored: Bool, hasKey: Bool, testMode: Bool) -> Bool {

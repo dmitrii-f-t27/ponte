@@ -913,6 +913,13 @@ public enum AudioRules {
     public static func isInput(channels: Int) -> Bool { dv_is_input(Int64(channels)) }
     public static func isOutput(channels: Int) -> Bool { dv_is_output(Int64(channels)) }
     public static func isMicChoice(inputChannels: Int, isBlackHole: Bool) -> Bool { dv_is_mic_choice(Int64(inputChannels), isBlackHole) }
+    /// The settings' headphones list: outputs other than BlackHole (moved out of SettingsView 2026-10-15).
+    public static func isHeadphonesChoice(outputChannels: Int, isBlackHole: Bool) -> Bool {
+        dv_is_headphones_choice(Int64(outputChannels), isBlackHole)
+    }
+    /// macOS lets the output become the system output: not hidden, allowed as default (moved out of
+    /// CoreAudioDeviceCatalog 2026-10-15).
+    public static func isSelectableOutput(hidden: Bool, canBeDefault: Bool) -> Bool { dv_is_selectable_output(hidden, canBeDefault) }
     /// The label of a known call app (the spec's table), or nil.
     public static func knownCallAppLabel(bundleID: String) -> String? {
         let i = knownCallAppIndex(bundleID: bundleID)

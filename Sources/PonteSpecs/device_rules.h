@@ -282,6 +282,8 @@ int64_t dv_ears(bool headphones_connected);
 bool dv_is_input(int64_t input_channels);
 bool dv_is_output(int64_t output_channels);
 bool dv_is_mic_choice(int64_t input_channels, bool is_blackhole);
+bool dv_is_headphones_choice(int64_t output_channels, bool is_blackhole);
+bool dv_is_selectable_output(bool hidden, bool can_be_default);
 
 /* -------------------------------------------------------
    Function implementations
@@ -1121,6 +1123,14 @@ bool dv_is_mic_choice(int64_t input_channels, bool is_blackhole) {
     return (dv_is_input(input_channels) && (is_blackhole == false));
 }
 
+bool dv_is_headphones_choice(int64_t output_channels, bool is_blackhole) {
+    return (dv_is_output(output_channels) && (is_blackhole == false));
+}
+
+bool dv_is_selectable_output(bool hidden, bool can_be_default) {
+    return ((hidden == false) && can_be_default);
+}
+
 /* -------------------------------------------------------
    Tests
    ------------------------------------------------------- */
@@ -1769,6 +1779,36 @@ void test_dv_moved_out_of_swift(void) {
     assert((dv_is_mic_choice(0, false) == false));
 }
 
+void test_dv_completion_rules(void) {
+    assert((dv_is_headphones_choice(2, false) == true));
+    assert((dv_is_headphones_choice(1, false) == true));
+    assert((dv_is_headphones_choice(2, true) == false));
+    assert((dv_is_headphones_choice(0, false) == false));
+    assert((dv_is_headphones_choice((0 - 1), false) == false));
+    assert((dv_is_headphones_choice(0, true) == false));
+    int64_t ch = (0 - 2);
+    uint32_t bad = 0;
+    while ((ch <= 16)) {
+        if (dv_is_headphones_choice(ch, true)) {
+            bad = (bad + 1);
+        }
+        if ((dv_is_headphones_choice(ch, false) != dv_is_output(ch))) {
+            bad = (bad + 1);
+        }
+        if ((dv_is_mic_choice(ch, false) != dv_is_input(ch))) {
+            bad = (bad + 1);
+        }
+        ch = (ch + 1);
+    }
+    assert((bad == 0));
+    assert((dv_is_selectable_output(false, true) == true));
+    assert((dv_is_selectable_output(true, true) == false));
+    assert((dv_is_selectable_output(false, false) == false));
+    assert((dv_is_selectable_output(true, false) == false));
+    assert((dv_is_hear_output(DV_KIND_BLUETOOTH, 2, dv_is_selectable_output(true, true)) == false));
+    assert((dv_is_hear_output(DV_KIND_BLUETOOTH, 2, dv_is_selectable_output(false, true)) == true));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1789,7 +1829,8 @@ int main(void) {
     test_dv_rescue_output();
     test_dv_mic_headset();
     test_dv_moved_out_of_swift();
-    printf("All %d tests passed.\n", 12);
+    test_dv_completion_rules();
+    printf("All %d tests passed.\n", 13);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

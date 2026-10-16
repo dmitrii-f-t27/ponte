@@ -37,6 +37,7 @@ const JOIN = 0; // RL_JOIN
 const PING_TERMINATE = 0; // RL_PING_TERMINATE
 const PING_SEND = 1; // RL_PING_SEND
 const LEFT_DELETE = 0; // RL_LEFT_DELETE
+const HTTP_OK = 200; // RL_HTTP_OK
 
 // A text's UTF-8 bytes in the spec's buffer; the real length is passed, so a longer text matches nothing. Returns
 // the rule's answer as a number.
@@ -59,7 +60,12 @@ module.exports = {
   PING_TERMINATE,
   PING_SEND,
   LEFT_DELETE,
+  HTTP_OK,
   roomPath: (url) => withPath(url, x.rl_room_path),
+  // Where the room's id starts in a room path (after "/r/").
+  roomIdStart: Number(x.rl_room_id_start()),
+  // An upgrade request: 0 when it goes on, else the HTTP status that refuses it.
+  upgradeRefusal: (url) => Number(x.rl_upgrade_refusal(withPath(url, x.rl_room_path) ? 1 : 0)),
   healthPath,
   httpMethod,
   // The answer to a plain HTTP request, from its method and path as node:http gives them.

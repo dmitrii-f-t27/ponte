@@ -64,7 +64,7 @@ struct AnalysisSettingsView: View {
                             .textSelection(.enabled)
                     }
                     Spacer()
-                    if !analysis.isDefault, analysis.provider != AnalysisRules.providerCustom {
+                    if AnalysisRules.offersReset(provider: analysis.provider, isDefault: analysis.isDefault) {
                         Button("Вернуть по умолчанию") {
                             analysis.resetToDefaults()
                             syncDrafts()

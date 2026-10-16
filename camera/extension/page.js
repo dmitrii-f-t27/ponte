@@ -43,7 +43,7 @@
   const BUCKET_PASSING = 1;      // CM_BUCKET_PASSING
   const BUCKET_PROCESSED = 2;    // CM_BUCKET_PROCESSED
   const BUCKET_TROUBLE = 3;      // CM_BUCKET_TROUBLE
-  const POLICY_REV = 2;          // CM_POLICY_REV
+  const POLICY_REV = 3;          // CM_POLICY_REV
   const REPORT_NAME_MAX = 64;    // CM_REPORT_NAME_MAX
   const REPORT_TEXT_MAX = 200;   // CM_REPORT_TEXT_MAX
   // Names for the console, by CM_STAGE_* and CM_RV_*.
@@ -65,7 +65,8 @@
     const fail = p.rv * p.tries * p.stages * 4;
     const sizes = [[p.route, p.trk * 8], [p.stepState, p.trk * p.tev * 2], [p.stepAction, p.trk * p.tev * 2],
       [p.failVariant, fail], [p.failFails, fail], [p.failRetry, fail], [p.failState, fail],
-      [p.usable, p.rv * 2], [p.first, (p.rv + 1) * 2], [p.bucket, p.trk], [p.errorRank, 4]];
+      [p.usable, p.rv * 2], [p.first, (p.rv + 1) * 2], [p.bucket, p.trk], [p.errorRank, 4],
+      [p.errorTakes, p.ranks * p.ranks * 2]];
     return sizes.every(([a, n]) => Array.isArray(a) && a.length === n) ? p : null;
   }
 
@@ -89,15 +90,16 @@
   const firstRenderer = () => (policy ? policy.first[(lastGood + 1) * 2 + colorKept()] : RV_FIRST);
 
   // The page's report: cameras by bucket, the error of the highest rank (cm_report_error_rank: a camera in trouble
-  // before one that is not, the last ended track's counting as not in trouble; the first among equals), and each
-  // track's state for the diagnostic page.
+  // before one that is not, the last ended track's counting as not in trouble; cm_report_error_takes without times:
+  // the first among equals), and each track's state for the diagnostic page.
   function report() {
     const n = { processed: 0, passing: 0, troubled: 0 };
     const rank = (error, troubled) => (policy ? policy.errorRank[(error ? 2 : 0) + (troubled ? 1 : 0)] : 0);
+    const takes = (r, b) => (policy ? policy.errorTakes[(r * policy.ranks + b) * 2] === 1 : false);
     let error = null, best = 0;
     const consider = (e, troubled) => {
       const r = rank(e, troubled);
-      if (r > best) { best = r; error = e; }
+      if (takes(r, best)) { best = r; error = e; }
     };
     for (const t of tracks) {
       const b = bucket(t);
