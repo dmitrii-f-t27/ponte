@@ -30,9 +30,11 @@
 #define LN_GEV_KEY 5
 #define LN_GEV_PAUSE 6
 #define LN_GEV_MODE 7
+#define LN_GEV_SESSION_LOST 8
 #define LN_GACT_NONE 0
 #define LN_GACT_OPEN_SEGMENT 1
 #define LN_GACT_CLOSE_SEGMENT 2
+#define LN_GACT_REOPEN_SEGMENT 3
 #define LN_PH_LISTENING 0
 #define LN_PH_TRANSLATING 1
 #define LN_PH_SYNTH_QUEUED 2
@@ -83,6 +85,13 @@
 #define LN_END_LAST_PARTIAL 2
 #define LN_END_TRANSCRIBER 3
 #define LN_PREPARE_RETRY_MS 5000
+#define LN_SESSION_STALL_VOICE_MS 12000
+#define LN_SESSION_START_MAX_MS 20000
+#define LN_SESSION_HEALTHY_MS 30000
+#define LN_SESSION_RETRY_BASE_MS 1000
+#define LN_SESSION_RETRY_MAX_MS 30000
+#define LN_SESSION_FAILURES_MAX 16
+#define LN_SESSION_FINISH_WAIT_MS 5000
 #define LN_CONTEXT_PHRASES 4
 #define LN_PTT_RIGHT_OPTION 0
 #define LN_PTT_RIGHT_COMMAND 1
@@ -148,6 +157,9 @@ bool ln_echo_guard_blocks_mic(bool speaker_output, bool incoming_speaking, int64
 bool ln_echo_guard_applies(bool speaker_output, bool mic_is_live);
 int32_t ln_phrase_end_choice(int64_t ms_since_timed_end, int64_t ms_since_partial);
 bool ln_retry_translator_prepare(bool prepared, int64_t ms_since_attempt);
+bool ln_session_stalled(bool started, int64_t ms_since_open, int64_t voice_ms_since_result);
+int64_t ln_session_failures_after(int64_t failures, int64_t lived_ms);
+int64_t ln_session_retry_ms(int64_t failures);
 int64_t ln_latency_ms(int64_t end_ms, int64_t ready_ms);
 int32_t ln_context_overflow(int32_t count);
 bool ln_ptt_key_down(int32_t key, uint64_t flags);

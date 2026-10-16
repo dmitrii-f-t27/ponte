@@ -68,6 +68,8 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
     private var volatileText = ""
     private var lastPartialText = ""
     private var lastCut: Double?
+    /// Seconds of voice fed since the analyzer's last result (TranscriberHealth, lane_rules ln_session_stalled).
+    private var voiceSinceResult: Double = 0
     private var timings: [UUID: PhraseTiming] = [:]
     private var timingOrder: [UUID] = []
 
@@ -150,6 +152,7 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
         lastPartialText = ""
         lastCut = nil
         lastError = nil
+        voiceSinceResult = 0
 
         let (inputStream, inputContinuation) = AsyncStream.makeStream(of: AnalyzerInput.self)
         let (events, eventContinuation) = AsyncStream.makeStream(of: TranscriptEvent.self)
@@ -242,6 +245,24 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
         }
     }
 
+    public func health() -> TranscriberHealth {
+        lock.withLock { TranscriberHealth(voiceSinceResult: voiceSinceResult, error: lastError.map { String(describing: $0) }) }
+    }
+
+    /// Drops the session at once: no more input, the analyzer is cancelled and its result stream ends (what it was
+    /// still holding as volatile text becomes a final, see `consumeResults`). Used for a stalled session, whose
+    /// `finish()` might never return.
+    public func cancel() async {
+        let (analyzer, monitorTask): (SpeechAnalyzer?, Task<Void, Never>?) = lock.withLock {
+            finishing = true
+            inputContinuation?.finish()
+            inputContinuation = nil
+            return (self.analyzer, self.monitorTask)
+        }
+        monitorTask?.cancel()
+        await analyzer?.cancelAndFinishNow()
+    }
+
     // MARK: - Internals
 
     private func makeModule(locale: Locale) -> Module {
@@ -271,6 +292,7 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
             let start = Double(framesFed + AVAudioFramePosition(offset)) / rate
             let duration = Double(n) / rate
             if activity.add(level: level, start: start, duration: duration) {
+                voiceSinceResult += duration
                 lastVoiceEnd = start + duration
                 phraseVoiceStart = SpeechRules.phraseVoiceStart(start: phraseVoiceStart, windowStart: start)
             }
@@ -392,6 +414,7 @@ public final class AppleTranscriber: Transcriber, @unchecked Sendable {
             Self.log("\(isFinal ? "final" : "volatile") range \(f(rangeStart))–\(f(rangeEnd)) \(span) fed \(f(audioTimeFed)): \(plain)")
         }
         lock.lock()
+        voiceSinceResult = 0
         let continuation = eventContinuation
         var event: TranscriptEvent?
         // Drops text without letters, and words "heard" in silence the level meter disagrees with.

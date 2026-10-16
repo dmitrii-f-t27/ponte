@@ -106,6 +106,18 @@ This is a work in progress. These parts are verified on a Mac:
   - camera e2e (also with Ponte's own link) and the fault checks (SwiftShader).
 
   Not checked on 0.1.15: the real camera and GPU (the hardware check passed on 0.1.14), and a live Meet call.
+- 0.1.16: a lost recognition session is replaced. In a live Meet call on 2026-10-16 the Brazilian's translation
+  stopped at 11:18 for the rest of the call: the capture kept delivering his voice, but the one recognition session
+  of the incoming lane had stopped, and nothing opened a new one. Now (`lane_rules.t27`):
+  - a session that ends by itself while the lane listens is replaced at once, or after 1 s doubling to 30 s when
+    sessions keep ending within 30 s;
+  - a session given 12 s of voice without a single result, or not started 20 s after it opened, is replaced too;
+  - closing a session (key up, pause, «Стоп») waits at most 5 s for its last phrase, then cancels it: the stalled
+    session of that call kept «Стоп» at «Остановка…» for good;
+  - each case is written to `~/Library/Logs/Ponte/ponte.log` with the recognizer's error.
+
+  Checked locally: 13 specs, 100 spec test blocks; `swift test` 347 tests; `SpeechProbe health` on the real
+  pt-BR recognizer (at most 1 s of voice without a result while it works; `cancel()` ends its results in 0.1 s).
 - The camera extension up to 0.1.13: its WebAssembly equals the native C bit for bit (`node camera/test/wasm-vectors.mjs`), and in a headless Chrome with a fake camera and SwiftShader the shader's colours equal `cm_apply_pixel` (`node camera/test/e2e.mjs`, also with Ponte's own link: `PONTE_LINK=1`). On the owner's Mac (BrowserOS, real camera, Apple GPU) 0.1.13 logged «passing frames unchanged [object DOMException]»; its cause is still not known. 0.1.14 reports the failing step and the error, recovers by itself and never hands Meet a closed frame. Checked locally:
   - the WebAssembly equals the native C (157 845 cases);
   - e2e with the fake camera passes, with Ponte's own link too: the shader equals `cm_apply_pixel` within 0/255;

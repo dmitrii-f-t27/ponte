@@ -43,10 +43,12 @@ enum AppRules {
     static let GEV_KEY: Int32 = LN_GEV_KEY                        // push-to-talk key changed (keyHeld is the new value)
     static let GEV_PAUSE: Int32 = LN_GEV_PAUSE                    // pause changed (paused is the new value)
     static let GEV_MODE: Int32 = LN_GEV_MODE                      // mode changed (mode is the new value)
+    static let GEV_SESSION_LOST: Int32 = LN_GEV_SESSION_LOST      // the open session ended by itself or stalled
 
     static let GACT_NONE: Int32 = LN_GACT_NONE
     static let GACT_OPEN_SEGMENT: Int32 = LN_GACT_OPEN_SEGMENT
     static let GACT_CLOSE_SEGMENT: Int32 = LN_GACT_CLOSE_SEGMENT  // flush the session: its last phrase becomes final
+    static let GACT_REOPEN_SEGMENT: Int32 = LN_GACT_REOPEN_SEGMENT // a new session in place of the lost one
 
     /// Audio is transcribed only while running, not paused, and in «Авто» or with the key held.
     static func gateWantsOpen(mode: Int32, keyHeld: Bool, paused: Bool) -> Bool {
@@ -228,6 +230,29 @@ enum AppRules {
     /// `msSinceAttempt` < 0 = never tried.
     static func retryTranslatorPrepare(prepared: Bool, msSinceAttempt: Int64) -> Bool {
         ln_retry_translator_prepare(prepared, msSinceAttempt)
+    }
+
+    // MARK: - Transcriber session health (lane_rules: SESSION_*)
+
+    static let SESSION_STALL_VOICE_MS = Int64(LN_SESSION_STALL_VOICE_MS)
+    static let SESSION_HEALTHY_MS = Int64(LN_SESSION_HEALTHY_MS)
+    /// Closing a session waits this long for its last phrase; a stalled recognizer is then cancelled.
+    static let SESSION_FINISH_WAIT_MS = Int64(LN_SESSION_FINISH_WAIT_MS)
+
+    /// The open session must be replaced: not started SESSION_START_MAX_MS after it opened, or given
+    /// SESSION_STALL_VOICE_MS of voice since its last result without answering.
+    static func sessionStalled(started: Bool, msSinceOpen: Int64, voiceMsSinceResult: Int64) -> Bool {
+        ln_session_stalled(started, msSinceOpen, voiceMsSinceResult)
+    }
+
+    /// Sessions in a row that ended by themselves sooner than SESSION_HEALTHY_MS, this one included; `livedMs` < 0 = unknown.
+    static func sessionFailuresAfter(failures: Int64, livedMs: Int64) -> Int64 {
+        ln_session_failures_after(failures, livedMs)
+    }
+
+    /// The wait before a new session after `failures` short ones (0 after a healthy one).
+    static func sessionRetryMs(failures: Int64) -> Int64 {
+        ln_session_retry_ms(failures)
     }
 
     static func autosaveOnStop(lines: Int32) -> Bool { ui_autosave_on_stop(lines) }

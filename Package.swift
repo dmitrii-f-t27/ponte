@@ -24,7 +24,7 @@ let package = Package(
         .target(name: "PonteCamera", dependencies: ["PonteSpecs", "PonteAudio"]),
         .executableTarget(name: "PonteApp", dependencies: ["PonteCore", "PonteAudio", "PonteSpeech", "PonteSpecs", "PontePeer", "PonteCamera"]),
         .executableTarget(name: "AudioProbe", dependencies: ["PonteCore", "PonteAudio"]),
-        .executableTarget(name: "SpeechProbe", dependencies: ["PonteCore", "PonteSpeech"]),
+        .executableTarget(name: "SpeechProbe", dependencies: ["PonteCore", "PonteSpeech", "PonteSpecs"]),
         .executableTarget(name: "PeerProbe", dependencies: ["PonteAudio", "PontePeer"]),
         .executableTarget(name: "CameraProbe", dependencies: ["PonteCamera"]),
         .testTarget(name: "PonteTests", dependencies: ["PonteCore", "PonteAudio", "PonteSpeech", "PonteSpecs", "PonteApp", "PontePeer", "PonteCamera"]),

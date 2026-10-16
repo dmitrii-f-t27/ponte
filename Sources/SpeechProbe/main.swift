@@ -13,6 +13,7 @@ import AVFoundation
 import Foundation
 import PonteCore
 import PonteSpeech
+import PonteSpecs
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
@@ -25,7 +26,7 @@ struct Args {
     var positional: [String] = []
 
     static let valueOptions: Set<String> = ["--lang", "--from", "--to", "--engine", "--out", "--voice",
-                                            "--direction", "--tail", "--rate", "--hold"]
+                                            "--direction", "--tail", "--rate", "--hold", "--cancel-at"]
 
     init(_ argv: [String]) {
         var it = argv.dropFirst().makeIterator()
@@ -68,6 +69,7 @@ usage:
   SpeechProbe pipeline --direction incoming|outgoing [--engine auto|apple|claude] [--tail 2] [--out file.wav]
                        [--no-fast] [--no-cuts] file
   SpeechProbe packs
+  SpeechProbe health --lang pt-BR|ru-RU [--cancel-at S] file
 """
 
 // MARK: - Helpers
@@ -213,6 +215,53 @@ func cmdTranscribe(_ lang: Lang, file: URL, realtime: Bool, fast: Bool, tail: Do
     await t.finish()
     await printer.value
     if let e = t.lastError { print("transcriber error: \(describe(e))") }
+}
+
+/// The session's health as the lane's watchdog reads it (lane_rules ln_session_stalled), on the real analyzer:
+/// the voice since the last result stays far below the stall threshold while the file is recognized, and
+/// `cancel()` (how the lane drops a lost session) ends the result stream at once, without `finish()`.
+func cmdHealth(_ lang: Lang, file: URL, cancelAt: Double) async {
+    let t = makeTranscriber(lang, fast: true)
+    do { try await t.prepare() } catch { fail("prepare: \(describe(error))") }
+    let events: AsyncStream<TranscriptEvent>
+    do { events = try t.start() } catch { fail("start: \(describe(error))") }
+    let clock = ContinuousClock.now
+    let results = Counter()
+    let reader = Task {
+        for await e in events {
+            results.add()
+            if case .final(_, let text) = e, !text.isEmpty { print("[\(f2(secs(ContinuousClock.now - clock)))s] FINAL: \(text)") }
+        }
+        return ContinuousClock.now
+    }
+    let worst = Counter()
+    let watch = Task {
+        while !Task.isCancelled {
+            worst.max(Int(t.health().voiceSinceResult * 1000))
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+    let feeder = Task.detached { try? feed(file: file, into: t, realtime: true, tail: 30, clockStart: clock) }
+    try? await Task.sleep(for: .milliseconds(Int(cancelAt * 1000)))
+    let cancelled = ContinuousClock.now
+    print("[\(f2(secs(cancelled - clock)))s] cancel(): \(results.value) results so far, at most \(worst.value) ms of voice without a result")
+    await t.cancel()
+    let ended = await reader.value
+    watch.cancel()
+    feeder.cancel()
+    let wait = secs(ended - cancelled)
+    print("result stream ended \(f2(wait)) s after cancel(); error: \(t.health().error ?? "none")")
+    let stall = Int(LN_SESSION_STALL_VOICE_MS)
+    guard results.value > 0, worst.value < stall, wait < 3 else { fail("FAIL: results \(results.value), worst \(worst.value) ms, wait \(f2(wait)) s") }
+    print("PASS")
+}
+
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    var value: Int { lock.withLock { n } }
+    func add() { lock.withLock { n += 1 } }
+    func max(_ x: Int) { lock.withLock { n = Swift.max(n, x) } }
 }
 
 func cmdTranslate(from: Lang, to: Lang, text: String, engine: String?) async {
@@ -404,6 +453,9 @@ case "pipeline":
                       out: args.options["--out"].map { URL(fileURLWithPath: $0) }, fast: !args.flags.contains("--no-fast"))
 case "packs":
     runPackDownloader()
+case "health":
+    guard let lang = args.lang("--lang"), let path = args.positional.first else { fail(usage) }
+    await cmdHealth(lang, file: URL(fileURLWithPath: path), cancelAt: args.options["--cancel-at"].flatMap(Double.init) ?? 4)
 default:
     fail(usage)
 }

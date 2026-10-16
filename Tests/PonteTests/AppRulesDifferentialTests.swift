@@ -162,6 +162,35 @@ private typealias L = AppRulesLegacy
         log.finish(minimumCases: 1_000_000)
     }
 
+    /// A lost recognition session (live call 2026-10-16): when it counts as stalled, how many short ones in a row,
+    /// how long to wait before the next. Edges, every value near the thresholds, and seeded random times.
+    @Test func sessionHealth() {
+        let log = DiffLog("sessionStalled, sessionFailuresAfter, sessionRetryMs")
+        let edges: [Int64] = [.min, -30_001, -1, 0, 1, 999, 1_000, 11_999, 12_000, 12_001, 19_999, 20_000, 20_001,
+                              29_999, 30_000, 30_001, .max]
+        var times = edges + Array(stride(from: Int64(-2_000), through: 40_000, by: 250))
+        var r = DiffRandom(seed: 0x5E55_1011)
+        for _ in 0..<5_000 { times.append(Int64(truncatingIfNeeded: r.next()) >> Int64(r.int(0...60))) }
+        for started in [false, true] {
+            for open in times {
+                for voice in edges + [Int64(r.int(-50_000...50_000))] {
+                    log.check(F.sessionStalled(started: started, msSinceOpen: open, voiceMsSinceResult: voice),
+                              L.sessionStalled(started: started, msSinceOpen: open, voiceMsSinceResult: voice),
+                              describe(started, open, voice))
+                }
+            }
+        }
+        let counts: [Int64] = [.min, -5, -1, 0, 1, 2, 3, 4, 5, 6, 7, 15, 16, 17, 100, .max]
+        for failures in counts + Array(Int64(-3)...40) {
+            log.check(F.sessionRetryMs(failures: failures), L.sessionRetryMs(failures: failures), "\(failures)")
+            for lived in times {
+                log.check(F.sessionFailuresAfter(failures: failures, livedMs: lived),
+                          L.sessionFailuresAfter(failures: failures, livedMs: lived), describe(failures, lived))
+            }
+        }
+        log.finish(minimumCases: 400_000)
+    }
+
     @Test func runButtonsLights() {
         let log = DiffLog("run state, banners, buttons, lights, latency colour, sources, translator")
         for state in Int32(-1)...5 {

@@ -34,9 +34,11 @@
 #define LN_GEV_KEY 5
 #define LN_GEV_PAUSE 6
 #define LN_GEV_MODE 7
+#define LN_GEV_SESSION_LOST 8
 #define LN_GACT_NONE 0
 #define LN_GACT_OPEN_SEGMENT 1
 #define LN_GACT_CLOSE_SEGMENT 2
+#define LN_GACT_REOPEN_SEGMENT 3
 #define LN_PH_LISTENING 0
 #define LN_PH_TRANSLATING 1
 #define LN_PH_SYNTH_QUEUED 2
@@ -87,6 +89,13 @@
 #define LN_END_LAST_PARTIAL 2
 #define LN_END_TRANSCRIBER 3
 #define LN_PREPARE_RETRY_MS 5000
+#define LN_SESSION_STALL_VOICE_MS 12000
+#define LN_SESSION_START_MAX_MS 20000
+#define LN_SESSION_HEALTHY_MS 30000
+#define LN_SESSION_RETRY_BASE_MS 1000
+#define LN_SESSION_RETRY_MAX_MS 30000
+#define LN_SESSION_FAILURES_MAX 16
+#define LN_SESSION_FINISH_WAIT_MS 5000
 #define LN_CONTEXT_PHRASES 4
 #define LN_PTT_RIGHT_OPTION 0
 #define LN_PTT_RIGHT_COMMAND 1
@@ -154,6 +163,9 @@ bool ln_echo_guard_blocks_mic(bool speaker_output, bool incoming_speaking, int64
 bool ln_echo_guard_applies(bool speaker_output, bool mic_is_live);
 int32_t ln_phrase_end_choice(int64_t ms_since_timed_end, int64_t ms_since_partial);
 bool ln_retry_translator_prepare(bool prepared, int64_t ms_since_attempt);
+bool ln_session_stalled(bool started, int64_t ms_since_open, int64_t voice_ms_since_result);
+int64_t ln_session_failures_after(int64_t failures, int64_t lived_ms);
+int64_t ln_session_retry_ms(int64_t failures);
 int64_t ln_latency_ms(int64_t end_ms, int64_t ready_ms);
 int32_t ln_context_overflow(int32_t count);
 bool ln_ptt_key_down(int32_t key, uint64_t flags);
@@ -250,6 +262,12 @@ int32_t ln_gate_step(int32_t state, int32_t event, int32_t mode, bool key_held, 
     }
     if (((state == LN_GATE_OPEN) && (event == LN_GEV_STOP))) {
         return ln_pack(LN_GATE_STOPPED, LN_GACT_CLOSE_SEGMENT);
+    }
+    if (((state == LN_GATE_OPEN) && (event == LN_GEV_SESSION_LOST))) {
+        if (want) {
+            return ln_pack(LN_GATE_OPEN, LN_GACT_REOPEN_SEGMENT);
+        }
+        return ln_pack(LN_GATE_CLOSED, LN_GACT_CLOSE_SEGMENT);
     }
     bool change = (((event == LN_GEV_KEY) || (event == LN_GEV_PAUSE)) || (event == LN_GEV_MODE));
     if (((state == LN_GATE_CLOSED) && change)) {
@@ -388,6 +406,43 @@ int32_t ln_phrase_end_choice(int64_t ms_since_timed_end, int64_t ms_since_partia
 
 bool ln_retry_translator_prepare(bool prepared, int64_t ms_since_attempt) {
     return ((prepared == false) && ((ms_since_attempt < 0) || (ms_since_attempt >= LN_PREPARE_RETRY_MS)));
+}
+
+bool ln_session_stalled(bool started, int64_t ms_since_open, int64_t voice_ms_since_result) {
+    if ((started == false)) {
+        return (ms_since_open >= LN_SESSION_START_MAX_MS);
+    }
+    return (voice_ms_since_result >= LN_SESSION_STALL_VOICE_MS);
+}
+
+int64_t ln_session_failures_after(int64_t failures, int64_t lived_ms) {
+    if (((lived_ms < 0) || (lived_ms >= LN_SESSION_HEALTHY_MS))) {
+        return 0;
+    }
+    int64_t f = failures;
+    if ((f < 0)) {
+        f = 0;
+    }
+    if ((f >= LN_SESSION_FAILURES_MAX)) {
+        return LN_SESSION_FAILURES_MAX;
+    }
+    return (f + 1);
+}
+
+int64_t ln_session_retry_ms(int64_t failures) {
+    if ((failures <= 0)) {
+        return 0;
+    }
+    int64_t ms = LN_SESSION_RETRY_BASE_MS;
+    int64_t i = 1;
+    while (((i < failures) && (ms < LN_SESSION_RETRY_MAX_MS))) {
+        ms = (ms * 2);
+        i = (i + 1);
+    }
+    if ((ms > LN_SESSION_RETRY_MAX_MS)) {
+        return LN_SESSION_RETRY_MAX_MS;
+    }
+    return ms;
 }
 
 int64_t ln_latency_ms(int64_t end_ms, int64_t ready_ms) {
@@ -826,6 +881,13 @@ void test_ln_gate_rules(void) {
     assert((ln_gate_step(LN_GATE_CLOSED, LN_GEV_STOP, 0, false, false) == ln_pack(LN_GATE_STOPPED, LN_GACT_NONE)));
     assert((ln_gate_step(LN_GATE_STOPPED, LN_GEV_KEY, 0, true, false) == ln_pack(LN_GATE_STOPPED, LN_GACT_NONE)));
     assert((ln_gate_step(LN_GATE_OPEN, LN_GEV_START, 0, false, false) == ln_pack(LN_GATE_OPEN, LN_GACT_NONE)));
+    assert((ln_gate_step(LN_GATE_OPEN, LN_GEV_SESSION_LOST, 0, false, false) == ln_pack(LN_GATE_OPEN, LN_GACT_REOPEN_SEGMENT)));
+    assert((ln_gate_step(LN_GATE_OPEN, LN_GEV_SESSION_LOST, 1, true, false) == ln_pack(LN_GATE_OPEN, LN_GACT_REOPEN_SEGMENT)));
+    assert((ln_gate_step(LN_GATE_OPEN, LN_GEV_SESSION_LOST, 1, false, false) == ln_pack(LN_GATE_CLOSED, LN_GACT_CLOSE_SEGMENT)));
+    assert((ln_gate_step(LN_GATE_OPEN, LN_GEV_SESSION_LOST, 0, false, true) == ln_pack(LN_GATE_CLOSED, LN_GACT_CLOSE_SEGMENT)));
+    assert((ln_gate_step(LN_GATE_CLOSED, LN_GEV_SESSION_LOST, 0, false, false) == ln_pack(LN_GATE_CLOSED, LN_GACT_NONE)));
+    assert((ln_gate_step(LN_GATE_STOPPED, LN_GEV_SESSION_LOST, 0, false, false) == ln_pack(LN_GATE_STOPPED, LN_GACT_NONE)));
+    assert((ln_gate_step(LN_GATE_STARTING, LN_GEV_SESSION_LOST, 0, false, false) == ln_pack(LN_GATE_STARTING, LN_GACT_NONE)));
     int32_t s = 0;
     uint32_t bad = 0;
     while ((s < 4)) {
@@ -843,6 +905,9 @@ void test_ln_gate_rules(void) {
                     bad = (bad + 1);
                 }
                 if (((act == LN_GACT_CLOSE_SEGMENT) && (next == LN_GATE_OPEN))) {
+                    bad = (bad + 1);
+                }
+                if (((act == LN_GACT_REOPEN_SEGMENT) && ((s != LN_GATE_OPEN) || (next != LN_GATE_OPEN)))) {
                     bad = (bad + 1);
                 }
                 if (((e == LN_GEV_STOP) && (next != LN_GATE_STOPPED))) {
@@ -1163,6 +1228,32 @@ void test_ln_intake_rules(void) {
     assert((ln_test_holds_key(false, true) == false));
 }
 
+void test_ln_session_health(void) {
+    assert((ln_session_stalled(false, 19999, 99999) == false));
+    assert((ln_session_stalled(false, 20000, 0) == true));
+    assert((ln_session_stalled(false, (0 - 1), 0) == false));
+    assert((ln_session_stalled(true, 99999, 11999) == false));
+    assert((ln_session_stalled(true, 0, 12000) == true));
+    assert((ln_session_stalled(true, 99999, 0) == false));
+    assert((ln_session_stalled(true, 99999, (0 - 5)) == false));
+    assert((ln_session_failures_after(0, 500) == 1));
+    assert((ln_session_failures_after(3, 29999) == 4));
+    assert((ln_session_failures_after(3, 30000) == 0));
+    assert((ln_session_failures_after(3, (0 - 1)) == 0));
+    assert((ln_session_failures_after((0 - 7), 10) == 1));
+    assert((ln_session_failures_after(16, 10) == 16));
+    assert((ln_session_failures_after(9223372036854775807, 10) == 16));
+    assert((ln_session_retry_ms(0) == 0));
+    assert((ln_session_retry_ms((0 - 1)) == 0));
+    assert((ln_session_retry_ms(1) == 1000));
+    assert((ln_session_retry_ms(2) == 2000));
+    assert((ln_session_retry_ms(5) == 16000));
+    assert((ln_session_retry_ms(6) == 30000));
+    assert((ln_session_retry_ms(16) == 30000));
+    assert((ln_session_retry_ms(9223372036854775807) == 30000));
+    assert((LN_SESSION_FINISH_WAIT_MS == 5000));
+}
+
 
 /* -------------------------------------------------------
    Test runner (compile with -DT27_TEST_MAIN to execute)
@@ -1178,7 +1269,8 @@ int main(void) {
     test_ln_own_talk();
     test_ln_moved_rules();
     test_ln_intake_rules();
-    printf("All %d tests passed.\n", 7);
+    test_ln_session_health();
+    printf("All %d tests passed.\n", 8);
     return 0;
 }
 #endif /* T27_TEST_MAIN */

@@ -34,10 +34,16 @@ pub const LN_GEV_STOP : i32 = 4;
 pub const LN_GEV_KEY : i32 = 5;
 pub const LN_GEV_PAUSE : i32 = 6;
 pub const LN_GEV_MODE : i32 = 7;
+; The open session was lost: its result stream ended by itself (the analyzer stopped or failed) or it stalled
+; (ln_session_stalled). Live call 2026-10-16: the Brazilian's lane went silent at 11:18 for the rest of the
+; call, its one session having stopped while the gate stayed open.
+pub const LN_GEV_SESSION_LOST : i32 = 8;
 pub const LN_GACT_NONE : i32 = 0;
 pub const LN_GACT_OPEN_SEGMENT : i32 = 1;
 ; Flush the session: its last phrase becomes final.
 pub const LN_GACT_CLOSE_SEGMENT : i32 = 2;
+; Open a new session in place of the lost one, which is dropped without waiting for it.
+pub const LN_GACT_REOPEN_SEGMENT : i32 = 3;
 
 ; --- Phrase pipeline: one final phrase from transcript to speech (PH_*, PEV_*, PACT_*, PF_*) ---------------
 pub const LN_PH_LISTENING : i32 = 0;
@@ -120,6 +126,22 @@ pub const LN_END_TRANSCRIBER : i32 = 3;
 ; The lane still transcribes; before each phrase it prepares again, at most once per 5 s.
 pub const LN_PREPARE_RETRY_MS : i64 = 5000;
 
+; --- Transcriber session health (SESSION_*) ------------------------------------------------------------------------
+; A live session answers speech within about a second (volatile results). One given this much voice since its
+; last result (or its start) without a single answer has stalled.
+pub const LN_SESSION_STALL_VOICE_MS : i64 = 12000;
+; A session whose model never got ready this long after it opened has stalled too.
+pub const LN_SESSION_START_MAX_MS : i64 = 20000;
+; A session that lived this long was healthy: when it ends by itself, the next one opens at once.
+pub const LN_SESSION_HEALTHY_MS : i64 = 30000;
+; Sessions that end sooner wait before the next: 1 s, doubling, at most 30 s.
+pub const LN_SESSION_RETRY_BASE_MS : i64 = 1000;
+pub const LN_SESSION_RETRY_MAX_MS : i64 = 30000;
+pub const LN_SESSION_FAILURES_MAX : i64 = 16;
+; Closing a session (key up, pause, Stop) waits this long for its last phrase. A stalled recognizer never finishes
+; its input, so it is then cancelled and the gate goes on: on 2026-10-16 Stop hung at «Остановка...» for good.
+pub const LN_SESSION_FINISH_WAIT_MS : i64 = 5000;
+
 ; --- Context (CONTEXT_PHRASES) ----------------------------------------------------------------------------------
 pub const LN_CONTEXT_PHRASES : i32 = 4;
 
@@ -178,6 +200,10 @@ pub fn ln_gate_step(state: i32, event: i32, mode: i32, key_held: bool, paused: b
     }
     if (state == LN_GATE_CLOSED and event == LN_GEV_STOP) { return ln_pack(LN_GATE_STOPPED, LN_GACT_NONE); }
     if (state == LN_GATE_OPEN and event == LN_GEV_STOP) { return ln_pack(LN_GATE_STOPPED, LN_GACT_CLOSE_SEGMENT); }
+    if (state == LN_GATE_OPEN and event == LN_GEV_SESSION_LOST) {
+        if (want) { return ln_pack(LN_GATE_OPEN, LN_GACT_REOPEN_SEGMENT); }
+        return ln_pack(LN_GATE_CLOSED, LN_GACT_CLOSE_SEGMENT);
+    }
     var change: bool = event == LN_GEV_KEY or event == LN_GEV_PAUSE or event == LN_GEV_MODE;
     if (state == LN_GATE_CLOSED and change) {
         if (want) { return ln_pack(LN_GATE_OPEN, LN_GACT_OPEN_SEGMENT); }
@@ -286,6 +312,38 @@ pub fn ln_phrase_end_choice(ms_since_timed_end: i64, ms_since_partial: i64) -> i
 ; retryTranslatorPrepare: not prepared, and never tried (negative) or tried at least PREPARE_RETRY_MS ago.
 pub fn ln_retry_translator_prepare(prepared: bool, ms_since_attempt: i64) -> bool {
     return prepared == false and (ms_since_attempt < 0 or ms_since_attempt >= LN_PREPARE_RETRY_MS);
+}
+
+; sessionStalled: the open session must be replaced (GEV_SESSION_LOST). Not started: its model is still not
+; ready SESSION_START_MAX_MS after it opened. Started: it was given SESSION_STALL_VOICE_MS of voice since its
+; last result without answering.
+pub fn ln_session_stalled(started: bool, ms_since_open: i64, voice_ms_since_result: i64) -> bool {
+    if (started == false) { return ms_since_open >= LN_SESSION_START_MAX_MS; }
+    return voice_ms_since_result >= LN_SESSION_STALL_VOICE_MS;
+}
+
+; sessionFailuresAfter: sessions in a row that ended by themselves before SESSION_HEALTHY_MS, this one included
+; (at most SESSION_FAILURES_MAX). One that lived longer, or of unknown age (negative), starts the count again.
+pub fn ln_session_failures_after(failures: i64, lived_ms: i64) -> i64 {
+    if (lived_ms < 0 or lived_ms >= LN_SESSION_HEALTHY_MS) { return 0; }
+    var f: i64 = failures;
+    if (f < 0) { f = 0; }
+    if (f >= LN_SESSION_FAILURES_MAX) { return LN_SESSION_FAILURES_MAX; }
+    return f + 1;
+}
+
+; sessionRetryMs: how long to wait before the new session: 0 after a healthy one, else SESSION_RETRY_BASE_MS
+; doubled for each earlier failure, at most SESSION_RETRY_MAX_MS.
+pub fn ln_session_retry_ms(failures: i64) -> i64 {
+    if (failures <= 0) { return 0; }
+    var ms: i64 = LN_SESSION_RETRY_BASE_MS;
+    var i: i64 = 1;
+    while (i < failures and ms < LN_SESSION_RETRY_MAX_MS) {
+        ms = ms * 2;
+        i = i + 1;
+    }
+    if (ms > LN_SESSION_RETRY_MAX_MS) { return LN_SESSION_RETRY_MAX_MS; }
+    return ms;
 }
 
 ; latencyMs: max(0, ready - end).
@@ -749,6 +807,14 @@ test ln_gate_rules {
     assert ln_gate_step(LN_GATE_CLOSED, LN_GEV_STOP, 0, false, false) == ln_pack(LN_GATE_STOPPED, LN_GACT_NONE);
     assert ln_gate_step(LN_GATE_STOPPED, LN_GEV_KEY, 0, true, false) == ln_pack(LN_GATE_STOPPED, LN_GACT_NONE);
     assert ln_gate_step(LN_GATE_OPEN, LN_GEV_START, 0, false, false) == ln_pack(LN_GATE_OPEN, LN_GACT_NONE);
+    // A lost session: replaced while the gate wants to listen, closed if it no longer does, ignored otherwise.
+    assert ln_gate_step(LN_GATE_OPEN, LN_GEV_SESSION_LOST, 0, false, false) == ln_pack(LN_GATE_OPEN, LN_GACT_REOPEN_SEGMENT);
+    assert ln_gate_step(LN_GATE_OPEN, LN_GEV_SESSION_LOST, 1, true, false) == ln_pack(LN_GATE_OPEN, LN_GACT_REOPEN_SEGMENT);
+    assert ln_gate_step(LN_GATE_OPEN, LN_GEV_SESSION_LOST, 1, false, false) == ln_pack(LN_GATE_CLOSED, LN_GACT_CLOSE_SEGMENT);
+    assert ln_gate_step(LN_GATE_OPEN, LN_GEV_SESSION_LOST, 0, false, true) == ln_pack(LN_GATE_CLOSED, LN_GACT_CLOSE_SEGMENT);
+    assert ln_gate_step(LN_GATE_CLOSED, LN_GEV_SESSION_LOST, 0, false, false) == ln_pack(LN_GATE_CLOSED, LN_GACT_NONE);
+    assert ln_gate_step(LN_GATE_STOPPED, LN_GEV_SESSION_LOST, 0, false, false) == ln_pack(LN_GATE_STOPPED, LN_GACT_NONE);
+    assert ln_gate_step(LN_GATE_STARTING, LN_GEV_SESSION_LOST, 0, false, false) == ln_pack(LN_GATE_STARTING, LN_GACT_NONE);
     // Every input: an opened segment always lands OPEN, a closed one CLOSED or STOPPED; STOP never
     // leaves the gate running; the gate is open after a step exactly when it wants to be (once running).
     var s: i32 = 0;
@@ -766,6 +832,7 @@ test ln_gate_rules {
                 var act: i32 = ln_step_action(step);
                 if (act == LN_GACT_OPEN_SEGMENT and next != LN_GATE_OPEN) { bad = bad + 1; }
                 if (act == LN_GACT_CLOSE_SEGMENT and next == LN_GATE_OPEN) { bad = bad + 1; }
+                if (act == LN_GACT_REOPEN_SEGMENT and (s != LN_GATE_OPEN or next != LN_GATE_OPEN)) { bad = bad + 1; }
                 if (e == LN_GEV_STOP and next != LN_GATE_STOPPED) { bad = bad + 1; }
                 if ((s == LN_GATE_OPEN or s == LN_GATE_CLOSED) and (e == LN_GEV_KEY or e == LN_GEV_PAUSE or e == LN_GEV_MODE)) {
                     if ((next == LN_GATE_OPEN) != ln_gate_wants_open(mode, key, paused)) { bad = bad + 1; }
@@ -1080,4 +1147,35 @@ test ln_intake_rules {
     assert ln_backlog_after_queue(2147483647) == 2147483647;
     assert ln_test_holds_key(true, true) == true;
     assert ln_test_holds_key(false, true) == false;
+}
+
+test ln_session_health {
+    // Not started: stalled only once the model has had SESSION_START_MAX_MS.
+    assert ln_session_stalled(false, 19999, 99999) == false;
+    assert ln_session_stalled(false, 20000, 0) == true;
+    assert ln_session_stalled(false, 0 - 1, 0) == false;
+    // Started: voice without any result.
+    assert ln_session_stalled(true, 99999, 11999) == false;
+    assert ln_session_stalled(true, 0, 12000) == true;
+    assert ln_session_stalled(true, 99999, 0) == false;
+    assert ln_session_stalled(true, 99999, 0 - 5) == false;
+    // Failures in a row: short sessions count, a healthy or unknown one starts again, capped.
+    assert ln_session_failures_after(0, 500) == 1;
+    assert ln_session_failures_after(3, 29999) == 4;
+    assert ln_session_failures_after(3, 30000) == 0;
+    assert ln_session_failures_after(3, 0 - 1) == 0;
+    assert ln_session_failures_after(0 - 7, 10) == 1;
+    assert ln_session_failures_after(16, 10) == 16;
+    assert ln_session_failures_after(9223372036854775807, 10) == 16;
+    // Waits: none after a healthy session, then 1 s doubling to 30 s.
+    assert ln_session_retry_ms(0) == 0;
+    assert ln_session_retry_ms(0 - 1) == 0;
+    assert ln_session_retry_ms(1) == 1000;
+    assert ln_session_retry_ms(2) == 2000;
+    assert ln_session_retry_ms(5) == 16000;
+    assert ln_session_retry_ms(6) == 30000;
+    assert ln_session_retry_ms(16) == 30000;
+    assert ln_session_retry_ms(9223372036854775807) == 30000;
+    // Closing never waits for a stalled session longer than this.
+    assert LN_SESSION_FINISH_WAIT_MS == 5000;
 }
