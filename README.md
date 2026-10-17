@@ -118,6 +118,17 @@ This is a work in progress. These parts are verified on a Mac:
 
   Checked locally: 13 specs, 100 spec test blocks; `swift test` 347 tests; `SpeechProbe health` on the real
   pt-BR recognizer (at most 1 s of voice without a result while it works; `cancel()` ends its results in 0.1 s).
+- 0.1.17: fixes from the tech-debt audit of 2026-10-17 (F01–F04):
+  - «Стоп» and quitting never wait forever. Pending translations, open sessions, the segment consumer and the
+    translator timeout now wait with a real deadline and leave stuck work behind. Quitting gives up after
+    `UI_QUIT_WAIT_MAX_MS` (60 s, `ui_rules.t27`). Each case is written to `ponte.log`;
+  - a tap rebuild that fails halfway is torn down and tried again at the microphone's pace (`rebuildFailuresNext`,
+    `restartDelayMs`). Before, it could report capturing with nothing running;
+  - the synth's voices and rate are kept under its lock: the settings changed them while the lanes read them;
+  - the HAL audio callbacks (app audio and microphone) no longer allocate memory in the downmix. It copies through
+    a buffer made before the callback starts (`AudioRules.DownmixScratch`).
+
+  Checked locally: 13 specs, 100 spec test blocks; `swift test` 356 tests.
 - The camera extension up to 0.1.13: its WebAssembly equals the native C bit for bit (`node camera/test/wasm-vectors.mjs`), and in a headless Chrome with a fake camera and SwiftShader the shader's colours equal `cm_apply_pixel` (`node camera/test/e2e.mjs`, also with Ponte's own link: `PONTE_LINK=1`). On the owner's Mac (BrowserOS, real camera, Apple GPU) 0.1.13 logged «passing frames unchanged [object DOMException]»; its cause is still not known. 0.1.14 reports the failing step and the error, recovers by itself and never hands Meet a closed frame. Checked locally:
   - the WebAssembly equals the native C (157 845 cases);
   - e2e with the fake camera passes, with Ponte's own link too: the shader equals `cm_apply_pixel` within 0/255;
