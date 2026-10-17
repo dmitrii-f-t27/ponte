@@ -676,6 +676,12 @@ pub fn ui_quit_waits(run_state: i32, analysis_work: bool, peer_on: bool) -> bool
     return run_state == UI_RUN_RUNNING or analysis_work or peer_on;
 }
 
+; Whatever the stop, the goodbye and the report do, a quit never waits longer than this (2026-10-17): past it Ponte
+; quits anyway and writes so to ponte.log. A normal quit stays well below it: two lanes stopping one after the other
+; (each at most LN_SESSION_FINISH_WAIT_MS, LN_STOP_SEGMENT_WAIT_MS per open session and LN_STOP_TRANSLATE_WAIT_MS),
+; the goodbye on the Russians' link, and AN_QUIT_WAIT_MS for a report still being written.
+pub const UI_QUIT_WAIT_MAX_MS : i64 = 60000;
+
 ; --- The checklist "before the call" (owner 2026-10-13) ----------------------------------------------------------
 ; A sheet with live marks that opens at launch (by default) and from the toolbar and the call menu. Its rows, in
 ; the order shown: who listens to BlackHole; the call app's microphone is on (cannot be detected: a reminder);
@@ -1129,6 +1135,7 @@ test ui_moved_rules {
     assert ui_quit_waits(UI_RUN_IDLE, false, false) == false;
     assert ui_quit_waits(UI_RUN_IDLE, true, false) == true;
     assert ui_quit_waits(UI_RUN_IDLE, false, true) == true;
+    assert UI_QUIT_WAIT_MAX_MS == 60000;
     assert UI_DEFAULT_TRANSLATOR == UI_TR_APPLE;
 }
 

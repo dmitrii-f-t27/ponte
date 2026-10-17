@@ -64,15 +64,25 @@ public enum VoiceRanking {
 /// Speech synthesis with AVSpeechSynthesizer rendered to PCM (`write(_:toBufferCallback:)`), not played.
 public final class SystemSpeechSynth: SpeechSynth, @unchecked Sendable {
     /// Lang → AVSpeechSynthesisVoice.identifier chosen in settings. Missing → best installed voice.
-    public var voiceIdentifiers: [Lang: String]
-    /// AVSpeechUtterance rate (0...1, default 0.5). Nil keeps the system default.
-    public var rate: Float?
+    /// The app changes it on the main actor during a call (Ж/М, the voice pickers) while both lanes
+    /// synthesize elsewhere, so it lives under `lock`.
+    public var voiceIdentifiers: [Lang: String] {
+        get { lock.withLock { _voiceIdentifiers } }
+        set { lock.withLock { _voiceIdentifiers = newValue } }
+    }
+    /// AVSpeechUtterance rate (0...1, default 0.5). Nil keeps the system default. Under `lock` too.
+    public var rate: Float? {
+        get { lock.withLock { _rate } }
+        set { lock.withLock { _rate = newValue } }
+    }
 
     private let lock = NSLock()
+    private var _voiceIdentifiers: [Lang: String]
+    private var _rate: Float?
     private var active: [UUID: Render] = [:]
 
     public init(voiceIdentifiers: [Lang: String] = [:]) {
-        self.voiceIdentifiers = voiceIdentifiers
+        _voiceIdentifiers = voiceIdentifiers
     }
 
     /// Installed voices for the language, best first.
@@ -115,6 +125,7 @@ public final class SystemSpeechSynth: SpeechSynth, @unchecked Sendable {
 
         let utterance = AVSpeechUtterance(string: phrase)
         utterance.voice = voice
+        let rate = self.rate   // one reading for both rules
         if SpeechRules.setsRate(rate: rate, ratePercent: Int(ratePercent)) {
             let milli = SpeechRules.utteranceRateMilli(ratePercent: Int(ratePercent), baseRateMilli: SpeechRules.baseRateMilli(rate: rate))
             utterance.rate = SpeechRules.utteranceRate(milli: milli)

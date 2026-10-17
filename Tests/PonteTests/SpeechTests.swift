@@ -481,3 +481,36 @@ private final class FakeTranslator: Translator, @unchecked Sendable {
     #expect(n > 0 && f > 0)
     #expect(f < n * 0.85)
 }
+
+/// A translator that ignores cancellation (a stalled Apple Translation) cannot hold the lane past the engine's
+/// timeout: the attempt is left behind, not awaited (2026-10-17).
+@Test(.timeLimit(.minutes(1))) func translationTimeoutDoesNotWaitForAStuckTranslator() async {
+    let gate = TestGate()
+    do {
+        _ = try await RoutingTranslator.withTimeout(ms: 100, name: "stuck") { () -> String in
+            await gate.wait()
+            return "late"
+        }
+        Issue.record("expected a timeout")
+    } catch {
+        #expect(RoutingTranslator.errorCode(error) == R.errorTimeout)
+    }
+    #expect(gate.passed == 0)
+    gate.open()
+}
+
+/// The app changes voices and rate on the main actor while both lanes synthesize elsewhere (2026-10-17):
+/// reads and writes from many threads at once must be safe.
+@Test func systemSynthSettingsSurviveConcurrentChanges() {
+    let synth = SystemSpeechSynth()
+    DispatchQueue.concurrentPerform(iterations: 20_000) { i in
+        if i % 2 == 0 {
+            synth.voiceIdentifiers = [.ptBR: "voice-\(i)", .ru: "голос-\(i)"]
+            synth.rate = Float(i % 100) / 100
+        } else {
+            _ = synth.voiceIdentifiers[.ptBR]
+            _ = synth.rate
+        }
+    }
+    #expect(synth.voiceIdentifiers.count == 2)
+}

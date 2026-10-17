@@ -132,17 +132,10 @@ public final class RoutingTranslator: Translator, @unchecked Sendable {
         }
     }
 
+    /// One attempt within the engine's timeout. The timeout is a real limit: the attempt is cancelled and left
+    /// behind, never awaited (a task group would wait for a translator that ignores cancellation).
     static func withTimeout<T: Sendable>(ms: Int, name: String, _ work: @escaping @Sendable () async throws -> T) async throws -> T {
         guard SpeechRules.hasTimeout(ms: ms) else { return try await work() }
-        return try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await work() }
-            group.addTask {
-                try await Task.sleep(for: .milliseconds(ms))
-                throw PonteSpeechError.translationTimedOut(name, ms: ms)
-            }
-            defer { group.cancelAll() }
-            guard let first = try await group.next() else { throw PonteSpeechError.translationTimedOut(name, ms: ms) }
-            return first
-        }
+        return try await withDeadline(ms: Int64(ms), onTimeout: { PonteSpeechError.translationTimedOut(name, ms: ms) }, work)
     }
 }

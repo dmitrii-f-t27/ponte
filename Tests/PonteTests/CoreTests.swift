@@ -53,3 +53,54 @@ private final class CoreTestTranscriber: Transcriber {
     let decoded = try JSONDecoder().decode(ConversationLine.self, from: JSONEncoder().encode(line))
     #expect(decoded.translationError == nil && decoded.original == "Olá")
 }
+
+// MARK: - Deadlines (the Stop and Quit waits, 2026-10-17)
+// The work waits on a TestGate the test opens only after its checks: if a helper waited for the work, the test
+// would hang and hit its time limit. No wall-clock thresholds, so a busy machine cannot make them flaky.
+
+@Test func deadlineReturnsTheResultInTime() async throws {
+    let value = try await withDeadline(ms: 2_000, onTimeout: { DeadlineExceeded(ms: 2_000) }) { 42 }
+    #expect(value == 42)
+}
+
+@Test(.timeLimit(.minutes(1))) func deadlineDoesNotWaitForWorkThatIgnoresCancellation() async {
+    let gate = TestGate()
+    await #expect(throws: DeadlineExceeded.self) {
+        try await withDeadline(ms: 100, onTimeout: { DeadlineExceeded(ms: 100) }) { () -> Int in
+            await gate.wait()
+            return 1
+        }
+    }
+    #expect(gate.passed == 0)   // the deadline answered while the work was still stuck
+    gate.open()
+}
+
+@Test(.timeLimit(.minutes(1))) func deadlineEndsAtOnceWhenTheCallerIsCancelled() async {
+    let gate = TestGate()
+    let caller = Task {
+        try await withDeadline(ms: 600_000, onTimeout: { DeadlineExceeded(ms: 600_000) }) { () -> Int in
+            await gate.wait()
+            return 1
+        }
+    }
+    await gate.waitForWaiter()
+    caller.cancel()
+    let result = await caller.result
+    #expect(throws: CancellationError.self) { try result.get() }
+    #expect(gate.passed == 0)
+    gate.open()
+}
+
+@Test(.timeLimit(.minutes(1))) func waitAtMostSaysWhetherTheTaskEndedInTime() async {
+    let quick = Task { 7 }
+    #expect(await waitAtMost(quick, ms: 600_000))
+    let gate = TestGate()
+    let slow = Task { () -> Bool in
+        await gate.wait()
+        return Task.isCancelled
+    }
+    #expect(await waitAtMost(slow, ms: 100) == false)
+    #expect(gate.passed == 0)
+    gate.open()
+    #expect(await slow.value == true)   // cancelled at the deadline, and left to end by itself
+}

@@ -159,6 +159,7 @@ static const uint32_t UI_ROW_LENGTHS[5] = { 6, 4, 3, 4, 1 };
 #define UI_LINE_PENDING 2
 #define UI_WORD_MAX 64
 #define UI_KEY_MAX 4096
+#define UI_QUIT_WAIT_MAX_MS 60000
 #define UI_CKI_LISTENER 0
 #define UI_CKI_CALL_MIC 1
 #define UI_CKI_HEADPHONES 2

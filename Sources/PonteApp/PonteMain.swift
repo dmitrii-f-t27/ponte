@@ -1,4 +1,6 @@
 import AppKit
+import PonteAudio
+import PonteCore
 import SwiftUI
 
 @main
@@ -60,7 +62,7 @@ final class PonteAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     /// Stops both lanes first so the transcript of a running call is saved; an unsaved call report goes to a file and
-    /// the other Russians get a goodbye.
+    /// the other Russians get a goodbye. However that goes, the app quits after AppRules.QUIT_WAIT_MAX_MS at most.
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model, AppRules.quitWaits(runState: model.runState.code, analysisWork: model.analysis.quitHasWork,
@@ -68,7 +70,10 @@ final class PonteAppDelegate: NSObject, NSApplicationDelegate {
             return .terminateNow
         }
         Task { @MainActor in
-            await model.prepareToQuit()
+            let preparing = Task { @MainActor in await model.prepareToQuit() }
+            if !(await waitAtMost(preparing, ms: AppRules.QUIT_WAIT_MAX_MS)) {
+                PonteDiagnostics.log("quit: not ready after \(AppRules.QUIT_WAIT_MAX_MS) ms; quitting anyway")
+            }
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

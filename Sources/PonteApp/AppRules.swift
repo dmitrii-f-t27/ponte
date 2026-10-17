@@ -759,6 +759,8 @@ enum AppRules {
 
     /// Quitting during a call stops it first (and saves the transcript).
     static func quitWaits(runState: Int32, analysisWork: Bool, peerOn: Bool) -> Bool { ui_quit_waits(runState, analysisWork, peerOn) }
+    /// The longest a quit waits for the stop, the goodbye and the report; past it the app quits anyway.
+    static let QUIT_WAIT_MAX_MS = Int64(UI_QUIT_WAIT_MAX_MS)
 
     // MARK: - The checklist «Перед звонком»
 
