@@ -89,6 +89,8 @@ public final class AppAudioTapSource: AudioSource {
     private var processListListener: AudioObjectPropertyListenerBlock?
     private var tapFormatListener: AudioObjectPropertyListenerBlock?
     private var reconcileGeneration = 0
+    /// Rebuilds in a row that failed (AudioRules.rebuildFailuresNext); the next try waits AudioRules.restartDelayMs.
+    private var buildFailures: Int64 = 0
 
     public convenience init(target: CaptureTarget) {
         self.init(mode: .target(target))
@@ -127,6 +129,7 @@ public final class AppAudioTapSource: AudioSource {
             onDelivery { sink.handler = handler; sink.converter = nil }
             running = true
             fixedRate = 0
+            buildFailures = 0
             do {
                 try addProcessListListener()
                 try attachIfPossible()
@@ -147,6 +150,7 @@ public final class AppAudioTapSource: AudioSource {
         onControl {
             guard running else { return }
             running = false
+            reconcileGeneration += 1   // a reconcile or retry still scheduled does nothing after a later start
             removeProcessListListener()
             teardown()
             _status = .idle
@@ -203,8 +207,18 @@ public final class AppAudioTapSource: AudioSource {
         teardown()
         do {
             try build(objects: objects)
+            if buildFailures > 0 { PonteDiagnostics.log("tap rebuild ok after \(buildFailures) failure(s)") }
+            buildFailures = 0
         } catch {
+            // A half-built tap must not stay: the next process change would update it in place and report
+            // capturing with no IOProc running. Tear it down and try again while the source runs, at the
+            // microphone's pace (AudioRules.rebuildFailuresNext, restartDelayMs: audio_rules.t27).
+            teardown()
+            buildFailures = AudioRules.rebuildFailuresNext(buildFailures)
+            let delay = AudioRules.restartDelayMs(attempt: buildFailures)
+            PonteDiagnostics.log("tap rebuild \(buildFailures) FAILED: \(error); next try in \(delay) ms")
             _status = .failed(String(describing: error))
+            scheduleReconcile(force: true, afterMs: delay)
         }
     }
 
@@ -241,10 +255,12 @@ public final class AppAudioTapSource: AudioSource {
         }
     }
 
-    private func scheduleReconcile(force: Bool = false) {
+    /// A reconcile after the debounce, or after `afterMs` (a retry). A newer schedule replaces an older one.
+    private func scheduleReconcile(force: Bool = false, afterMs: Int64? = nil) {
         reconcileGeneration += 1
         let generation = reconcileGeneration
-        control.asyncAfter(deadline: .now() + AudioRules.reconcileDebounceSeconds) { [weak self] in
+        let wait = afterMs.map { Double($0) / 1000 } ?? AudioRules.reconcileDebounceSeconds
+        control.asyncAfter(deadline: .now() + wait) { [weak self] in
             guard let self, generation == self.reconcileGeneration else { return }
             self.reconcile(force: force)
         }

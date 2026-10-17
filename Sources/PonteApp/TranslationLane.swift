@@ -229,6 +229,10 @@ final class TranslationLane {
     private var sessionFailures: Int64 = 0
     /// How long closing a session waits for its last phrase (AppRules.SESSION_FINISH_WAIT_MS; shorter in tests).
     private let finishWaitMs: Int64
+    /// How long Stop waits for each open session's consumer and for pending translations
+    /// (AppRules.STOP_SEGMENT_WAIT_MS, STOP_TRANSLATE_WAIT_MS; shorter in tests).
+    private let stopSegmentWaitMs: Int64
+    private let stopTranslateWaitMs: Int64
     private var lastPartialAt: [UUID: Date] = [:]
 
     private var translateInput: AsyncStream<PendingPhrase>.Continuation?
@@ -253,9 +257,13 @@ final class TranslationLane {
          mode: CaptureMode = .continuous,
          speechOutputEnabled: Bool = true,
          clock: @escaping @Sendable () -> Date = { Date() },
-         finishWaitMs: Int64 = AppRules.SESSION_FINISH_WAIT_MS) {
+         finishWaitMs: Int64 = AppRules.SESSION_FINISH_WAIT_MS,
+         stopSegmentWaitMs: Int64 = AppRules.STOP_SEGMENT_WAIT_MS,
+         stopTranslateWaitMs: Int64 = AppRules.STOP_TRANSLATE_WAIT_MS) {
         self.direction = direction
         self.finishWaitMs = finishWaitMs
+        self.stopSegmentWaitMs = stopSegmentWaitMs
+        self.stopTranslateWaitMs = stopTranslateWaitMs
         self.source = source
         self.makeTranscriber = makeTranscriber
         self.translator = translator
@@ -340,6 +348,8 @@ final class TranslationLane {
 
     /// Stops capture, flushes the transcriber and waits for pending translations
     /// (so the transcript is complete). Queued speech is dropped.
+    /// Every wait has a real limit: a recognizer or translator that ignores cancellation is left behind, so
+    /// «Остановка…» always ends.
     func stop() async {
         guard isRunning else { return }
         isKeyHeld = false
@@ -347,13 +357,15 @@ final class TranslationLane {
         intake.setRelay(nil)
         source.stop()
         await gateEvent(AppRules.GEV_STOP)
-        for open in openSegments { await open.waitForConsumer(timeoutMs: AppRules.STOP_SEGMENT_WAIT_MS) }
+        for open in openSegments {
+            if !(await open.waitForConsumer(timeoutMs: stopSegmentWaitMs)) {
+                PonteDiagnostics.log("\(direction.rawValue) session did not end \(stopSegmentWaitMs) ms after stop; left behind")
+            }
+        }
         openSegments.removeAll()
         translateInput?.finish()
-        if let worker = translateWorker {
-            let watchdog = Task { try? await Task.sleep(for: .milliseconds(AppRules.STOP_TRANSLATE_WAIT_MS)); worker.cancel() }
-            await worker.value
-            watchdog.cancel()
+        if let worker = translateWorker, !(await waitAtMost(worker, ms: stopTranslateWaitMs)) {
+            PonteDiagnostics.log("\(direction.rawValue) translations did not finish \(stopTranslateWaitMs) ms after stop; left behind")
         }
         if AppRules.cancelsSpeech(event: AppRules.SCE_STOP, value: true) { cancelSpeech() }
         stopWorkers()
@@ -976,11 +988,12 @@ final class Segment: @unchecked Sendable {
         }
     }
 
-    func waitForConsumer(timeoutMs: Int64) async {
-        guard let consumer else { return }
-        let watchdog = Task { try? await Task.sleep(for: .milliseconds(timeoutMs)); consumer.cancel() }
-        await consumer.value
-        watchdog.cancel()
+    /// Waits for the consumer at most `timeoutMs`; true when it ended in time. Past the deadline it is cancelled
+    /// and left behind, not awaited.
+    @discardableResult
+    func waitForConsumer(timeoutMs: Int64) async -> Bool {
+        guard let consumer else { return true }
+        return await waitAtMost(consumer, ms: timeoutMs)
     }
 }
 

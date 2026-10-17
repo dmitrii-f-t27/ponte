@@ -122,6 +122,8 @@ final class AppTestTranslator: Translator {
     var realDelay: [String: Duration] = [:]
     /// Like a missing language pack: prepare and translate throw.
     var broken = false
+    /// Like a stalled Apple Translation: translate waits for this gate, whatever cancellation says.
+    var stuck: TestGate?
 
     func prepare(from: Lang, to: Lang) async throws {
         prepareCount += 1
@@ -131,6 +133,7 @@ final class AppTestTranslator: Translator {
     func translate(_ text: String, from: Lang, to: Lang, context: [String]) async throws -> String {
         calls.append((text, context))
         if broken { throw AppTestPacksMissing() }
+        if let stuck { await stuck.wait() }
         if let delay = realDelay[text] { try await Task.sleep(for: delay) }
         clock?.advance(cost)
         return "T(\(text))"
@@ -209,7 +212,8 @@ final class AppTestRig {
     let lane: TranslationLane
 
     init(direction: Direction = .outgoing, mode: CaptureMode = .continuous, speak: Bool = true,
-         memory: ConversationMemory = ConversationMemory(), finishWaitMs: Int64 = AppRules.SESSION_FINISH_WAIT_MS) {
+         memory: ConversationMemory = ConversationMemory(), finishWaitMs: Int64 = AppRules.SESSION_FINISH_WAIT_MS,
+         stopTranslateWaitMs: Int64 = AppRules.STOP_TRANSLATE_WAIT_MS) {
         translator.clock = clock
         let box = AppTestBox()
         lane = TranslationLane(direction: direction, source: source,
@@ -220,7 +224,8 @@ final class AppTestRig {
                                },
                                translator: translator, synth: synth, player: player,
                                memory: memory, mode: mode, speechOutputEnabled: speak,
-                               clock: clock.function, finishWaitMs: finishWaitMs)
+                               clock: clock.function, finishWaitMs: finishWaitMs,
+                               stopTranslateWaitMs: stopTranslateWaitMs)
         self.box = box
         lane.onEvent = { [weak self] in self?.events.append($0) }
     }
