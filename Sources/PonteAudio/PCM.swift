@@ -18,9 +18,10 @@ public enum PCM {
     /// Averages all channels of a raw Float32 AudioBufferList (interleaved or deinterleaved, any
     /// number of buffers) into `dst`. Buffers with a NULL `mData` (disabled streams) are skipped.
     /// Returns the number of frames written (the shortest buffer wins, capped at `maxFrames`).
-    /// Real-time safe: no allocation, no locks.
-    static func downmixFloat32(_ abl: UnsafePointer<AudioBufferList>,
-                               into dst: UnsafeMutablePointer<Float>, maxFrames: Int) -> Int {
+    /// Real-time safe: no allocation, no locks. The C blocks are copied through `scratch`, which the
+    /// caller made before the I/O callback started and uses from that one thread only.
+    static func downmixFloat32(_ abl: UnsafePointer<AudioBufferList>, into dst: UnsafeMutablePointer<Float>,
+                               maxFrames: Int, scratch: AudioRules.DownmixScratch) -> Int {
         let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: abl))
         let shape = AudioRules.bufferListShape(buffers, maxFrames: maxFrames)
         guard shape.frames > 0 else { return 0 }
@@ -30,9 +31,10 @@ public enum PCM {
             && AudioRules.usesBuffer(hasData: b.mData != nil, channels: Int(b.mNumberChannels)) {
             used += 1
             AudioRules.accumulateFrames(b.mData!.assumingMemoryBound(to: Float.self), channels: Int(b.mNumberChannels),
-                                        frames: shape.frames, into: dst)
+                                        frames: shape.frames, into: dst, scratch: scratch)
         }
-        AudioRules.scale(dst, frames: shape.frames, by: AudioRules.averageFactor(totalChannels: shape.channels))
+        AudioRules.scale(dst, frames: shape.frames, by: AudioRules.averageFactor(totalChannels: shape.channels),
+                         scratch: scratch)
         return shape.frames
     }
 
@@ -54,27 +56,33 @@ public enum PCM {
         let perBlock = AudioRules.monoPerBlock(interleaved: format.isInterleaved, channels: channels)
         let samplesPerBlock = frames * perBlock
         guard AudioRules.monoSupported(format: Int(format.commonFormat.rawValue)) else { return nil }
+        let scratch = AudioRules.DownmixScratch()
 
         // The sample type picks the channel-data accessor.
         switch format.commonFormat {
         case .pcmFormatFloat32:
             for k in 0..<blocks {
-                AudioRules.accumulateFrames(buffer.floatChannelData![k], channels: perBlock, frames: frames, into: dst)
+                AudioRules.accumulateFrames(buffer.floatChannelData![k], channels: perBlock, frames: frames, into: dst,
+                                            scratch: scratch)
             }
         case .pcmFormatInt16:
             for k in 0..<blocks {
                 let src = buffer.int16ChannelData![k]
                 let floats = (0..<samplesPerBlock).map { AudioRules.int16ToFloat(src[$0]) }
-                floats.withUnsafeBufferPointer { AudioRules.accumulateFrames($0.baseAddress!, channels: perBlock, frames: frames, into: dst) }
+                floats.withUnsafeBufferPointer {
+                    AudioRules.accumulateFrames($0.baseAddress!, channels: perBlock, frames: frames, into: dst, scratch: scratch)
+                }
             }
         default:
             for k in 0..<blocks {
                 let src = buffer.int32ChannelData![k]
                 let floats = (0..<samplesPerBlock).map { AudioRules.int32ToFloat(src[$0]) }
-                floats.withUnsafeBufferPointer { AudioRules.accumulateFrames($0.baseAddress!, channels: perBlock, frames: frames, into: dst) }
+                floats.withUnsafeBufferPointer {
+                    AudioRules.accumulateFrames($0.baseAddress!, channels: perBlock, frames: frames, into: dst, scratch: scratch)
+                }
             }
         }
-        AudioRules.scale(dst, frames: frames, by: AudioRules.averageFactor(totalChannels: channels))
+        AudioRules.scale(dst, frames: frames, by: AudioRules.averageFactor(totalChannels: channels), scratch: scratch)
         return out
     }
 

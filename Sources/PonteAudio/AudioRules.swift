@@ -54,20 +54,46 @@ public enum AudioRules {
         Int(au_frames_in_buffer(Int64(byteSize), Int64(channels), Int64(bytesPerSample)))
     }
 
+    /// The fixed blocks `accumulateFrames` and `scale` copy through: `AU_BLOCK_SAMPLES` input samples and
+    /// `AU_BLOCK_FRAMES` output frames, allocated and zeroed once. A HAL I/O callback owns one, made before
+    /// the callback starts, so the real-time thread never allocates. One scratch serves one thread at a time.
+    final class DownmixScratch {
+        let samples: UnsafeMutablePointer<Float>
+        let frames: UnsafeMutablePointer<Float>
+
+        init() {
+            samples = .allocate(capacity: AudioRules.blockSamples)
+            samples.initialize(repeating: 0, count: AudioRules.blockSamples)
+            frames = .allocate(capacity: AudioRules.blockFrames)
+            frames.initialize(repeating: 0, count: AudioRules.blockFrames)
+        }
+
+        deinit {
+            samples.deallocate()
+            frames.deallocate()
+        }
+    }
+
     /// Adds the per-frame channel sum of an interleaved block to `dst`:
     /// dst[i] += Σ_{c<channels} src[i*channels + c], for i < frames. A planar channel is channels = 1.
     public static func accumulateFrames(_ src: UnsafePointer<Float>, channels: Int, frames: Int,
                                         into dst: UnsafeMutablePointer<Float>) {
-        var srcBlock = [Float](repeating: 0, count: blockSamples)
-        var dstBlock = [Float](repeating: 0, count: blockFrames)
+        accumulateFrames(src, channels: channels, frames: frames, into: dst, scratch: DownmixScratch())
+    }
+
+    /// `accumulateFrames` through a scratch the caller keeps. Real-time safe: no allocation, no locks.
+    static func accumulateFrames(_ src: UnsafePointer<Float>, channels: Int, frames: Int,
+                                 into dst: UnsafeMutablePointer<Float>, scratch: DownmixScratch) {
+        let srcBlock = scratch.samples
+        let dstBlock = scratch.frames
         var done = 0
         while true {
             let n = Int(au_block_frames_for(Int64(channels), Int64(frames - done)))
             if n <= 0 { return }
-            srcBlock.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: src + done * channels, count: n * channels) }
-            dstBlock.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: dst + done, count: n) }
-            _ = au_accumulate_frames(&srcBlock, Int64(channels), Int64(n), &dstBlock)
-            dstBlock.withUnsafeBufferPointer { (dst + done).update(from: $0.baseAddress!, count: n) }
+            srcBlock.update(from: src + done * channels, count: n * channels)
+            dstBlock.update(from: dst + done, count: n)
+            _ = au_accumulate_frames(srcBlock, Int64(channels), Int64(n), dstBlock)
+            (dst + done).update(from: dstBlock, count: n)
             done += n
         }
     }
@@ -79,14 +105,19 @@ public enum AudioRules {
 
     /// dst[i] *= factor for i < frames.
     public static func scale(_ dst: UnsafeMutablePointer<Float>, frames: Int, by factor: Float) {
-        var block = [Float](repeating: 0, count: blockFrames)
+        scale(dst, frames: frames, by: factor, scratch: DownmixScratch())
+    }
+
+    /// `scale` through a scratch the caller keeps. Real-time safe: no allocation, no locks.
+    static func scale(_ dst: UnsafeMutablePointer<Float>, frames: Int, by factor: Float, scratch: DownmixScratch) {
+        let block = scratch.frames
         var done = 0
         while true {
             let n = Int(au_fit(Int64(frames - done), Int64(blockFrames)))
             if n <= 0 { return }
-            block.withUnsafeMutableBufferPointer { $0.baseAddress!.update(from: dst + done, count: n) }
-            if au_scale(&block, Int64(n), factor) == 0 { return }   // factor 1: nothing changes
-            block.withUnsafeBufferPointer { (dst + done).update(from: $0.baseAddress!, count: n) }
+            block.update(from: dst + done, count: n)
+            if au_scale(block, Int64(n), factor) == 0 { return }   // factor 1: nothing changes
+            (dst + done).update(from: block, count: n)
             done += n
         }
     }

@@ -323,13 +323,15 @@ public final class AppAudioTapSource: AudioSource {
         let sampleRate = asbd.mSampleRate
         let delivery = self.delivery
         let sink = self.sink
+        // One per IOProc, made here: the downmix on the I/O thread copies through it instead of allocating.
+        let scratch = AudioRules.DownmixScratch()
         var procID: AudioDeviceIOProcID?
         try HAL.check(AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, nil) { _, inInputData, inInputTime, _, _ in
             // HAL real-time thread: downmix, then hand off.
             let frames = Self.frameCount(inInputData)
             guard frames > 0,
                   let buffer = AVAudioPCMBuffer(pcmFormat: tapMono, frameCapacity: AVAudioFrameCount(frames)) else { return }
-            let written = PCM.downmixFloat32(inInputData, into: buffer.floatChannelData![0], maxFrames: frames)
+            let written = PCM.downmixFloat32(inInputData, into: buffer.floatChannelData![0], maxFrames: frames, scratch: scratch)
             buffer.frameLength = AVAudioFrameCount(written)
             let time = AVAudioTime(audioTimeStamp: inInputTime, sampleRate: sampleRate)
             delivery.async {

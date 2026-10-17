@@ -70,7 +70,9 @@ private func approx(_ a: Float, _ b: Float, _ tol: Float = 1e-4) -> Bool { abs(a
         abl[1] = AudioBuffer(mNumberChannels: 1, mDataByteSize: 12, mData: nil)
         #expect(AppAudioTapSource.frameCount(abl.unsafePointer) == 3)
         var out = [Float](repeating: 9, count: 8)
-        let n = out.withUnsafeMutableBufferPointer { PCM.downmixFloat32(abl.unsafePointer, into: $0.baseAddress!, maxFrames: 8) }
+        let n = out.withUnsafeMutableBufferPointer {
+            PCM.downmixFloat32(abl.unsafePointer, into: $0.baseAddress!, maxFrames: 8, scratch: AudioRules.DownmixScratch())
+        }
         #expect(n == 3)
         #expect(Array(out[0..<3]) == [0.5, 0.5, 0])
     }
@@ -87,11 +89,40 @@ private func approx(_ a: Float, _ b: Float, _ tol: Float = 1e-4) -> Bool { abs(a
             abl[1] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(r.count), mData: r.baseAddress)
             var out = [Float](repeating: 0, count: 2)
             // maxFrames caps the output even when more input is available.
-            let n = out.withUnsafeMutableBufferPointer { PCM.downmixFloat32(abl.unsafePointer, into: $0.baseAddress!, maxFrames: 2) }
+            let n = out.withUnsafeMutableBufferPointer {
+                PCM.downmixFloat32(abl.unsafePointer, into: $0.baseAddress!, maxFrames: 2, scratch: AudioRules.DownmixScratch())
+            }
             #expect(n == 2)
             #expect(out == [0.5, 0])
         }
     }
+}
+
+@Test func downmixScratchKeptAcrossCyclesGivesTheFreshResult() {
+    // An I/O callback keeps one scratch for every cycle: what a long, wide cycle leaves in it must not
+    // reach a later, shorter and narrower one.
+    func downmix(_ samples: [Float], channels: Int, scratch: AudioRules.DownmixScratch) -> [Float] {
+        let abl = AudioBufferList.allocate(maximumBuffers: 1)
+        defer { free(abl.unsafeMutablePointer) }
+        var data = samples
+        let frames = samples.count / channels
+        var out = [Float](repeating: 9, count: frames)
+        data.withUnsafeMutableBytes { raw in
+            abl[0] = AudioBuffer(mNumberChannels: UInt32(channels), mDataByteSize: UInt32(raw.count), mData: raw.baseAddress)
+            let n = out.withUnsafeMutableBufferPointer {
+                PCM.downmixFloat32(abl.unsafePointer, into: $0.baseAddress!, maxFrames: frames, scratch: scratch)
+            }
+            #expect(n == frames)
+        }
+        return out
+    }
+    let kept = AudioRules.DownmixScratch()
+    let wide = (0..<(6 * 5_000)).map { Float($0 % 97) / 97 }     // 6 channels, 5000 frames: several C blocks
+    let narrow = (0..<(2 * 300)).map { -Float($0 % 13) / 13 }
+    #expect(downmix(wide, channels: 6, scratch: kept) == downmix(wide, channels: 6, scratch: AudioRules.DownmixScratch()))
+    #expect(downmix(narrow, channels: 2, scratch: kept) == downmix(narrow, channels: 2, scratch: AudioRules.DownmixScratch()))
+    #expect(downmix(narrow, channels: 2, scratch: kept)
+            == AudioRulesLegacy.downmixInterleaved(narrow, channels: 2))
 }
 
 // MARK: Chunking
