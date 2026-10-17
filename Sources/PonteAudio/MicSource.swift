@@ -248,6 +248,8 @@ private final class InputCapture {
     private let rate: Double
     private let channels: Int
     private let list: UnsafeMutableAudioBufferListPointer
+    /// The downmix copies through it on the I/O thread instead of allocating there.
+    private let scratch = AudioRules.DownmixScratch()
     private let capacity: AVAudioFrameCount
     private let delivery: DispatchQueue
     private let handler: PCMHandler
@@ -392,7 +394,8 @@ private final class InputCapture {
             return status
         }
         guard let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: frames) else { return noErr }
-        let written = PCM.downmixFloat32(UnsafePointer(list.unsafeMutablePointer), into: mono.floatChannelData![0], maxFrames: Int(frames))
+        let written = PCM.downmixFloat32(UnsafePointer(list.unsafeMutablePointer), into: mono.floatChannelData![0],
+                                         maxFrames: Int(frames), scratch: scratch)
         mono.frameLength = AVAudioFrameCount(written)
         if !deliveredAny.load(ordering: .relaxed) { deliveredAny.store(true, ordering: .relaxed) }
         var stamp = timeStamp.pointee
